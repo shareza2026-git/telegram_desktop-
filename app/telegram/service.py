@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import mimetypes
 from datetime import datetime, timezone
 from typing import Any
 
@@ -23,6 +24,7 @@ from app.models import (
 )
 from app.storage import ChatStore
 from app.telegram.client import build_client
+from app.telegram.media import DownloadedMedia, media_path, safe_media_name
 from app.telegram.session import SessionManager
 from app.telegram.session_import import SessionImporter
 from app.telegram.transport import ProxyRoute, TransportCatalog
@@ -276,6 +278,7 @@ class TelegramDesktopService:
             size=getattr(file_info, "size", None),
             mime_type=getattr(file_info, "mime_type", None),
             playable=False,
+            downloadable=True,
         )
 
     @classmethod
@@ -347,6 +350,34 @@ class TelegramDesktopService:
         if self.client is None or not self.status.connected or not self.status.authorized:
             raise DesktopError("Telegram is not connected and authorized")
         return self.client
+
+    async def download_media(self, chat_id: int, message_id: int) -> DownloadedMedia:
+        client = self._require_authorized()
+        message = await client.get_messages(chat_id, ids=message_id)
+        if message is None or not getattr(message, "media", None):
+            raise DesktopError("Media is not available for this message")
+
+        file_info = getattr(message, "file", None)
+        mime_type = getattr(file_info, "mime_type", None)
+        raw_name = getattr(file_info, "name", None)
+        if not raw_name:
+            extension = mimetypes.guess_extension(mime_type or "") or ""
+            raw_name = f"media_{message_id}{extension}"
+        filename = safe_media_name(raw_name, fallback=f"media_{message_id}")
+
+        root = self.settings.project_root / "data" / "telegram_desktop" / "downloads"
+        root.mkdir(parents=True, exist_ok=True)
+        target = media_path(root, chat_id, message_id, filename)
+        if not target.is_file() or target.stat().st_size == 0:
+            downloaded = await client.download_media(message, file=str(target))
+            if downloaded is None or not target.is_file():
+                raise DesktopError("Media download failed")
+
+        return DownloadedMedia(
+            path=target,
+            filename=filename,
+            mime_type=mime_type or mimetypes.guess_type(filename)[0],
+        )
 
     async def list_dialogs(self, search: str | None = None) -> list[Dialog]:
         client = self._require_authorized()

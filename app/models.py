@@ -10,6 +10,7 @@ class MediaInfo(BaseModel):
     size: int | None = None
     mime_type: str | None = None
     playable: bool = False
+    downloadable: bool = True
 
 
 class Dialog(BaseModel):

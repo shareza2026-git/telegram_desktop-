@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 
 from app.models import (
     DesktopError,
@@ -67,6 +68,26 @@ async def mark_read(chat_id: int, request: Request):
         return await service(request).mark_read(chat_id)
     except DesktopError as exc:
         raise error_response(exc) from None
+
+
+@router.get("/api/telegram/chats/{chat_id}/messages/{message_id}/media")
+async def media(
+    chat_id: int,
+    message_id: int,
+    request: Request,
+    download: bool = False,
+):
+    try:
+        item = await service(request).download_media(chat_id, message_id)
+    except DesktopError as exc:
+        raise error_response(exc) from None
+
+    disposition = "attachment" if download else "inline"
+    return FileResponse(
+        path=item.path,
+        media_type=item.mime_type or "application/octet-stream",
+        headers={"Content-Disposition": f'{disposition}; filename="{item.filename}"'},
+    )
 
 
 @router.post("/api/telegram/chats/{chat_id}/messages")
