@@ -292,6 +292,7 @@ function App() {
     setMessageSearchOpen(false)
     setMessageQuery('')
     setSearchResults([])
+    setSearchPerformed(false)
     setForwarding(null)
     setForwardQuery('')
     api<ChatInfo>('/api/telegram/chats/' + selected.chat_id)
