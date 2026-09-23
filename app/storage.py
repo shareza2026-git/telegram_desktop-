@@ -95,6 +95,17 @@ class ChatStore:
                 ),
             )
 
+    async def mark_dialog_read(self, chat_id: int) -> None:
+        async with self._lock:
+            await asyncio.to_thread(self._mark_dialog_read_sync, chat_id)
+
+    def _mark_dialog_read_sync(self, chat_id: int) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE dialogs SET unread_count=0 WHERE chat_id=?",
+                (chat_id,),
+            )
+
     async def upsert_message(self, message: Message) -> None:
         async with self._lock:
             await asyncio.to_thread(self._upsert_message_sync, message)

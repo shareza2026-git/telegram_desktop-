@@ -37,14 +37,16 @@ Important: this bootstrap creates a separate local session file, but it reuses t
 
 ## Phase 3: local phone/code/2FA login
 
-If no source import is selected, the UI now supports:
+If no source import is selected, the UI supports sending a Telegram login code, verifying the code, requesting the 2FA password when needed, and refreshing dialogs after authorization. Authentication errors are returned without logging phone numbers, codes, passwords or session values.
 
-1. Sending a Telegram login code to the entered phone number.
-2. Verifying the code through the independent client session.
-3. Asking for the 2FA password when Telegram requires it.
-4. Refreshing the dialog list immediately after successful authorization.
+## Phase 4: dialogs, folders, unread and history paging
 
-Phone numbers, login codes and passwords stay in memory for the active login flow and are never written to Git or sent to the frontend after use.
+The client now supports:
+
+1. Refreshing the live dialog list from Telegram.
+2. Functional views for all chats, private chats, groups, channels and archived chats.
+3. Showing unread counts from Telegram and marking a chat read when it is opened.
+4. Loading older messages page by page with the existing independent local message store.
 
 ## Local configuration
 

@@ -57,6 +57,9 @@ button { border: 0; cursor: pointer; }
 .chat-header > div:nth-child(2) { flex: 1; display: flex; flex-direction: column; gap: 4px; }
 .header-actions { display: flex; gap: 2px; }
 .message-list { flex: 1; overflow: auto; padding: 24px 6%; display: flex; flex-direction: column; gap: 8px; background: radial-gradient(circle at center, #13283a, #0e1a25 70%); }
+.older-button { align-self: center; padding: 8px 14px; color: #cbeeff; background: #2aabee33; border-radius: 16px; font-size: 12px; }
+.older-button:hover { background: #2aabee55; }
+.older-button:disabled { cursor: wait; opacity: .65; }
 .message { max-width: min(72%, 640px); align-self: flex-start; padding: 9px 12px 6px; color: #eaf1f8; background: #1d2d3b; border-radius: 12px 12px 12px 4px; box-shadow: 0 1px 1px #0003; display: flex; flex-direction: column; gap: 5px; line-height: 1.7; white-space: pre-wrap; }
 .message.outgoing { align-self: flex-end; background: #214d66; border-radius: 12px 12px 4px 12px; }
 .message.deleted { opacity: .6; font-style: italic; }

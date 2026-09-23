@@ -51,7 +51,9 @@ type AuthResponse = {
 }
 
 type AuthStep = 'phone' | 'code' | 'password'
+type FolderKey = 'all' | 'private' | 'groups' | 'channels' | 'archived'
 
+const HISTORY_PAGE_SIZE = 80
 const backendBase = (import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8110').replace(/\/$/, '')
 const socketBase = backendBase.replace(/^http/, 'ws')
 
@@ -63,13 +65,14 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
   if (response.ok) return response.json() as Promise<T>
 
   const body = await response.text()
+  let message = body || 'درخواست انجام نشد.'
   try {
     const parsed = JSON.parse(body) as { detail?: string }
-    throw new Error(parsed.detail || 'درخواست انجام نشد.')
-  } catch (error) {
-    if (error instanceof Error && error.message !== 'درخواست انجام نشد.') throw error
-    throw new Error(body || 'درخواست انجام نشد.')
+    if (parsed.detail) message = parsed.detail
+  } catch {
+    // Keep the plain response body when the backend did not return JSON.
   }
+  throw new Error(message)
 }
 
 function formatTime(value: string) {
@@ -108,12 +111,22 @@ function App() {
   const [password, setPassword] = useState('')
   const [authBusy, setAuthBusy] = useState(false)
   const [authNotice, setAuthNotice] = useState('')
+  const [activeFolder, setActiveFolder] = useState<FolderKey>('all')
+  const [loadingOlder, setLoadingOlder] = useState(false)
+  const [hasOlder, setHasOlder] = useState(false)
 
   const visibleDialogs = useMemo(() => {
+    let values = dialogs
+    if (activeFolder === 'private') values = values.filter(item => item.dialog_type === 'user' && !item.archived)
+    if (activeFolder === 'groups') values = values.filter(item => (item.dialog_type === 'group' || item.dialog_type === 'supergroup') && !item.archived)
+    if (activeFolder === 'channels') values = values.filter(item => item.dialog_type === 'channel' && !item.archived)
+    if (activeFolder === 'archived') values = values.filter(item => item.archived)
+    if (activeFolder === 'all') values = values.filter(item => !item.archived)
+
     const value = query.trim().toLocaleLowerCase()
-    if (!value) return dialogs
-    return dialogs.filter(item => item.title.toLocaleLowerCase().includes(value))
-  }, [dialogs, query])
+    if (!value) return values
+    return values.filter(item => item.title.toLocaleLowerCase().includes(value))
+  }, [activeFolder, dialogs, query])
 
   useEffect(() => {
     api<Status>('/api/telegram/status').then(setStatus).catch(error => setError(errorMessage(error, 'اتصال به هسته تلگرام برقرار نشد.')))
@@ -145,19 +158,58 @@ function App() {
   useEffect(() => {
     if (!selected) {
       setMessages([])
+      setHasOlder(false)
       return
     }
-    api<Message[]>('/api/telegram/chats/' + selected.chat_id + '/messages?limit=80')
-      .then(setMessages)
+    setMessages([])
+    setHasOlder(false)
+    api<Message[]>('/api/telegram/chats/' + selected.chat_id + '/messages?limit=' + HISTORY_PAGE_SIZE)
+      .then(items => {
+        setMessages(items)
+        setHasOlder(items.length === HISTORY_PAGE_SIZE)
+      })
       .catch(error => setError(errorMessage(error, 'تاریخچه این گفتگو دریافت نشد.')))
+
+    api<{ chat_id: number; read: boolean }>('/api/telegram/chats/' + selected.chat_id + '/read', { method: 'POST' })
+      .then(() => {
+        setDialogs(current => current.map(item => item.chat_id === selected.chat_id ? { ...item, unread_count: 0 } : item))
+        setSelected(current => current && current.chat_id === selected.chat_id ? { ...current, unread_count: 0 } : current)
+      })
+      .catch(() => undefined)
   }, [selected?.chat_id])
+
+  async function refreshDialogs() {
+    try {
+      setDialogs(await api<Dialog[]>('/api/telegram/dialogs'))
+    } catch (caught) {
+      setError(errorMessage(caught, 'به‌روزرسانی گفتگوها انجام نشد.'))
+    }
+  }
+
+  async function loadOlder() {
+    if (!selected || loadingOlder || !hasOlder || !messages.length) return
+    setLoadingOlder(true)
+    const oldestId = messages[0].message_id
+    try {
+      const older = await api<Message[]>(
+        '/api/telegram/chats/' + selected.chat_id + '/messages?limit=' + HISTORY_PAGE_SIZE + '&offset_id=' + oldestId
+      )
+      setMessages(current => {
+        const known = new Set(current.map(item => item.message_id))
+        return [...older.filter(item => !known.has(item.message_id)), ...current]
+      })
+      setHasOlder(older.length === HISTORY_PAGE_SIZE)
+    } catch (caught) {
+      setError(errorMessage(caught, 'پیام‌های قدیمی‌تر دریافت نشد.'))
+    } finally {
+      setLoadingOlder(false)
+    }
+  }
 
   async function refreshAuthorizedState() {
     const nextStatus = await api<Status>('/api/telegram/status')
     setStatus(nextStatus)
-    if (nextStatus.authorized) {
-      setDialogs(await api<Dialog[]>('/api/telegram/dialogs'))
-    }
+    if (nextStatus.authorized) setDialogs(await api<Dialog[]>('/api/telegram/dialogs'))
   }
 
   async function importSession() {
@@ -349,13 +401,20 @@ function App() {
       <aside className="chat-sidebar">
         <header className="sidebar-header">
           <div className="brand-title"><span className="brand-mark small">✈</span> Telegram</div>
+          <button className="icon-button" aria-label="به‌روزرسانی گفتگوها" onClick={refreshDialogs}>↻</button>
           <button className="icon-button" aria-label="منو">☰</button>
         </header>
         <label className="search-box">
           <span>⌕</span>
           <input value={query} onChange={event => setQuery(event.target.value)} placeholder="جست‌وجو" />
         </label>
-        <div className="folder-tabs"><button className="active">همه</button><button>شخصی</button><button>گروه‌ها</button><button>کانال‌ها</button></div>
+        <div className="folder-tabs">
+          <button className={activeFolder === 'all' ? 'active' : ''} onClick={() => setActiveFolder('all')}>همه</button>
+          <button className={activeFolder === 'private' ? 'active' : ''} onClick={() => setActiveFolder('private')}>شخصی</button>
+          <button className={activeFolder === 'groups' ? 'active' : ''} onClick={() => setActiveFolder('groups')}>گروه‌ها</button>
+          <button className={activeFolder === 'channels' ? 'active' : ''} onClick={() => setActiveFolder('channels')}>کانال‌ها</button>
+          <button className={activeFolder === 'archived' ? 'active' : ''} onClick={() => setActiveFolder('archived')}>آرشیو</button>
+        </div>
         <div className="dialog-list">
           {visibleDialogs.map(dialog => (
             <button className={'dialog-row ' + (selected?.chat_id === dialog.chat_id ? 'selected' : '')} key={dialog.chat_id} onClick={() => setSelected(dialog)}>
@@ -377,6 +436,11 @@ function App() {
               <div className="header-actions"><button className="icon-button">⌕</button><button className="icon-button">⋮</button></div>
             </header>
             <div className="message-list">
+              {hasOlder && (
+                <button className="older-button" onClick={loadOlder} disabled={loadingOlder}>
+                  {loadingOlder ? 'در حال دریافت…' : 'پیام‌های قدیمی‌تر'}
+                </button>
+              )}
               {messages.map(message => (
                 <article className={'message ' + (message.outgoing ? 'outgoing' : '') + (message.deleted ? ' deleted' : '')} key={message.message_id}>
                   {!message.outgoing && message.sender_name && <strong className="sender-name">{message.sender_name}</strong>}

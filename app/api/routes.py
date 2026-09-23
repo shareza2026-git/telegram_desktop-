@@ -61,6 +61,14 @@ async def messages(
         raise error_response(exc) from None
 
 
+@router.post("/api/telegram/chats/{chat_id}/read")
+async def mark_read(chat_id: int, request: Request):
+    try:
+        return await service(request).mark_read(chat_id)
+    except DesktopError as exc:
+        raise error_response(exc) from None
+
+
 @router.post("/api/telegram/chats/{chat_id}/messages")
 async def send_message(chat_id: int, values: SendMessageRequest, request: Request):
     try:

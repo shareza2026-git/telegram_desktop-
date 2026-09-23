@@ -390,6 +390,12 @@ class TelegramDesktopService:
         await self.events.publish({"type": "MESSAGE_NEW", "data": message.model_dump(mode="json")})
         return message
 
+    async def mark_read(self, chat_id: int) -> dict:
+        client = self._require_authorized()
+        await client.send_read_acknowledge(chat_id)
+        await self.store.mark_dialog_read(chat_id)
+        return {"chat_id": chat_id, "read": True}
+
     async def send_login_code(self, phone: str) -> dict:
         if self.client is None or not self.status.connected:
             await self._connect()
