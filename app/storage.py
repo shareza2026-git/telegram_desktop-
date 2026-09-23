@@ -1,0 +1,243 @@
+import asyncio
+import json
+import sqlite3
+from datetime import datetime
+from pathlib import Path
+
+from app.models import Dialog, MediaInfo, Message
+
+
+class ChatStore:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._lock = asyncio.Lock()
+
+    async def initialize(self) -> None:
+        async with self._lock:
+            await asyncio.to_thread(self._initialize_sync)
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(str(self.path), timeout=5.0)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA foreign_keys=ON")
+        return connection
+
+    def _initialize_sync(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self._connect() as connection:
+            connection.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS dialogs (
+                    chat_id INTEGER PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    dialog_type TEXT NOT NULL,
+                    username TEXT,
+                    unread_count INTEGER NOT NULL DEFAULT 0,
+                    pinned INTEGER NOT NULL DEFAULT 0,
+                    archived INTEGER NOT NULL DEFAULT 0,
+                    last_message_id INTEGER,
+                    last_message_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS messages (
+                    chat_id INTEGER NOT NULL,
+                    message_id INTEGER NOT NULL,
+                    text TEXT NOT NULL DEFAULT '',
+                    date TEXT NOT NULL,
+                    sender_id INTEGER,
+                    sender_name TEXT,
+                    outgoing INTEGER NOT NULL DEFAULT 0,
+                    edited INTEGER NOT NULL DEFAULT 0,
+                    reply_to_message_id INTEGER,
+                    media_json TEXT,
+                    deleted INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (chat_id, message_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS ix_messages_chat_date
+                ON messages(chat_id, message_id DESC);
+                """
+            )
+
+    async def upsert_dialog(self, dialog: Dialog) -> None:
+        async with self._lock:
+            await asyncio.to_thread(self._upsert_dialog_sync, dialog)
+
+    def _upsert_dialog_sync(self, dialog: Dialog) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO dialogs (
+                    chat_id, title, dialog_type, username, unread_count,
+                    pinned, archived, last_message_id, last_message_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(chat_id) DO UPDATE SET
+                    title=excluded.title,
+                    dialog_type=excluded.dialog_type,
+                    username=excluded.username,
+                    unread_count=excluded.unread_count,
+                    pinned=excluded.pinned,
+                    archived=excluded.archived,
+                    last_message_id=excluded.last_message_id,
+                    last_message_at=excluded.last_message_at
+                """,
+                (
+                    dialog.chat_id,
+                    dialog.title,
+                    dialog.dialog_type,
+                    dialog.username,
+                    dialog.unread_count,
+                    int(dialog.pinned),
+                    int(dialog.archived),
+                    dialog.last_message_id,
+                    dialog.last_message_at.isoformat() if dialog.last_message_at else None,
+                ),
+            )
+
+    async def upsert_message(self, message: Message) -> None:
+        async with self._lock:
+            await asyncio.to_thread(self._upsert_message_sync, message)
+
+    def _upsert_message_sync(self, message: Message) -> None:
+        media_json = json.dumps(
+            message.media.model_dump(mode="json") if message.media else None,
+            ensure_ascii=False,
+        )
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO messages (
+                    chat_id, message_id, text, date, sender_id, sender_name,
+                    outgoing, edited, reply_to_message_id, media_json, deleted
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(chat_id, message_id) DO UPDATE SET
+                    text=excluded.text,
+                    date=excluded.date,
+                    sender_id=excluded.sender_id,
+                    sender_name=excluded.sender_name,
+                    outgoing=excluded.outgoing,
+                    edited=excluded.edited,
+                    reply_to_message_id=excluded.reply_to_message_id,
+                    media_json=excluded.media_json,
+                    deleted=excluded.deleted
+                """,
+                (
+                    message.chat_id,
+                    message.message_id,
+                    message.text,
+                    message.date.isoformat(),
+                    message.sender_id,
+                    message.sender_name,
+                    int(message.outgoing),
+                    int(message.edited),
+                    message.reply_to_message_id,
+                    media_json,
+                    int(message.deleted),
+                ),
+            )
+
+    async def mark_deleted(self, chat_id: int, message_id: int) -> None:
+        async with self._lock:
+            await asyncio.to_thread(self._mark_deleted_sync, chat_id, message_id)
+
+    def _mark_deleted_sync(self, chat_id: int, message_id: int) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO messages(chat_id, message_id, text, date, deleted)
+                VALUES (?, ?, '', ?, 1)
+                ON CONFLICT(chat_id, message_id) DO UPDATE SET
+                    text='',
+                    media_json=NULL,
+                    deleted=1
+                """,
+                (chat_id, message_id, datetime.now().astimezone().isoformat()),
+            )
+
+    async def list_dialogs(self, search: str | None = None) -> list[Dialog]:
+        async with self._lock:
+            return await asyncio.to_thread(self._list_dialogs_sync, search)
+
+    def _list_dialogs_sync(self, search: str | None) -> list[Dialog]:
+        with self._connect() as connection:
+            if search:
+                rows = connection.execute(
+                    """
+                    SELECT * FROM dialogs
+                    WHERE title LIKE ? OR username LIKE ?
+                    ORDER BY pinned DESC, last_message_at DESC, title COLLATE NOCASE
+                    """,
+                    (f"%{search}%", f"%{search}%"),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT * FROM dialogs
+                    ORDER BY pinned DESC, last_message_at DESC, title COLLATE NOCASE
+                    """
+                ).fetchall()
+        return [self._dialog_from_row(row) for row in rows]
+
+    async def history(self, chat_id: int, limit: int, offset_id: int = 0) -> list[Message]:
+        async with self._lock:
+            return await asyncio.to_thread(self._history_sync, chat_id, limit, offset_id)
+
+    def _history_sync(self, chat_id: int, limit: int, offset_id: int) -> list[Message]:
+        with self._connect() as connection:
+            if offset_id:
+                rows = connection.execute(
+                    """
+                    SELECT * FROM messages
+                    WHERE chat_id=? AND message_id < ?
+                    ORDER BY message_id DESC LIMIT ?
+                    """,
+                    (chat_id, offset_id, limit),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT * FROM messages
+                    WHERE chat_id=?
+                    ORDER BY message_id DESC LIMIT ?
+                    """,
+                    (chat_id, limit),
+                ).fetchall()
+        return [self._message_from_row(row) for row in reversed(rows)]
+
+    @staticmethod
+    def _dialog_from_row(row: sqlite3.Row) -> Dialog:
+        return Dialog(
+            chat_id=row["chat_id"],
+            title=row["title"],
+            dialog_type=row["dialog_type"],
+            username=row["username"],
+            unread_count=row["unread_count"],
+            pinned=bool(row["pinned"]),
+            archived=bool(row["archived"]),
+            last_message_id=row["last_message_id"],
+            last_message_at=(
+                datetime.fromisoformat(row["last_message_at"])
+                if row["last_message_at"] else None
+            ),
+        )
+
+    @staticmethod
+    def _message_from_row(row: sqlite3.Row) -> Message:
+        media_value = json.loads(row["media_json"]) if row["media_json"] else None
+        return Message(
+            chat_id=row["chat_id"],
+            message_id=row["message_id"],
+            text=row["text"],
+            date=datetime.fromisoformat(row["date"]),
+            sender_id=row["sender_id"],
+            sender_name=row["sender_name"],
+            outgoing=bool(row["outgoing"]),
+            edited=bool(row["edited"]),
+            reply_to_message_id=row["reply_to_message_id"],
+            media=MediaInfo.model_validate(media_value) if media_value else None,
+            deleted=bool(row["deleted"]),
+        )
+
+    async def close(self) -> None:
+        return None

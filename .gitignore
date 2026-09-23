@@ -1,0 +1,31 @@
+# Python
+.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest-tmp/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.session
+*.session-journal
+*.session-wal
+*.session-shm
+
+# Local Telegram desktop data
+data/telegram_desktop/*
+!data/telegram_desktop/.gitkeep
+*.db
+*.db-wal
+*.db-shm
+
+# Logs and build output
+logs/
+*.log
+frontend/node_modules/
+frontend/dist/
+frontend/src-tauri/target/
+frontend/src-tauri/gen/
