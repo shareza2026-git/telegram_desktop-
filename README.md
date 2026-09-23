@@ -24,6 +24,7 @@ The trading terminal remains a separate repository and its running session file 
 7. Reply, edit-own-message and delete-own-message actions.
 8. Server-side chat search and explicit-destination forwarding.
 9. Real chat/entity information and cached profile photos.
+10. Safe photo/document sending with caption and reply support.
 
 ## Phase 2: controlled session bootstrap
 
@@ -100,6 +101,20 @@ The client now supports:
 5. Caching profile photos for one hour under data/telegram_desktop/avatars.
 
 The profile API does not return phone numbers, API credentials, authorization keys, session paths or proxy configuration.
+
+## Phase 9: send photos and files
+
+The attachment button now supports:
+
+1. Selecting a local photo or document from the desktop file picker.
+2. Sending the current composer text as the Telegram caption.
+3. Preserving the selected reply target when an attachment is sent.
+4. Showing a visible upload state and preventing duplicate composer actions.
+5. Rejecting empty files and files larger than 2 GB.
+6. Staging the upload under data/telegram_desktop/uploads and deleting the temporary file after success or failure.
+7. Publishing the returned Telegram message through the existing store and WebSocket path.
+
+Audio and video files can be sent and downloaded, but playback remains disabled.
 
 ## Local configuration
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 
 type Dialog = {
   chat_id: number
@@ -208,6 +208,10 @@ function App() {
   const [replyingTo, setReplyingTo] = useState<Message | null>(null)
   const [editing, setEditing] = useState<Message | null>(null)
   const [composerBusy, setComposerBusy] = useState(false)
+  const [uploadBusy, setUploadBusy] = useState(false)
+  const [uploadName, setUploadName] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const selectedChatIdRef = useRef<number | null>(null)
   const [messageActionBusy, setMessageActionBusy] = useState<string | null>(null)
   const [messageSearchOpen, setMessageSearchOpen] = useState(false)
   const [messageQuery, setMessageQuery] = useState('')
@@ -230,6 +234,10 @@ function App() {
     if (!value) return values
     return values.filter(item => item.title.toLocaleLowerCase().includes(value))
   }, [activeFolder, dialogs, query])
+
+  useEffect(() => {
+    selectedChatIdRef.current = selected?.chat_id || null
+  }, [selected?.chat_id])
 
   const forwardDialogs = useMemo(() => {
     const value = forwardQuery.trim().toLocaleLowerCase()
@@ -700,6 +708,61 @@ function App() {
     }
   }
 
+  async function uploadFile(file: File) {
+    if (!selected || uploadBusy || editing) return
+    if (file.size > 2 * 1024 * 1024 * 1024) {
+      setError('حجم فایل نمی‌تواند بیشتر از ۲ گیگابایت باشد.')
+      return
+    }
+    if (file.size === 0) {
+      setError('فایل خالی قابل ارسال نیست.')
+      return
+    }
+
+    const chatId = selected.chat_id
+    const form = new FormData()
+    form.append('file', file, file.name)
+    if (draft.trim()) form.append('caption', draft.trim())
+    if (replyingTo) form.append('reply_to_message_id', String(replyingTo.message_id))
+
+    setUploadBusy(true)
+    setUploadName(file.name)
+    setError('')
+    try {
+      const response = await fetch(backendBase + '/api/telegram/chats/' + chatId + '/files', {
+        method: 'POST',
+        body: form
+      })
+      if (!response.ok) {
+        const body = await response.text()
+        let detail = body || 'ارسال فایل انجام نشد.'
+        try {
+          const parsed = JSON.parse(body) as { detail?: string }
+          if (parsed.detail) detail = parsed.detail
+        } catch {
+          // Keep the plain response body when the backend did not return JSON.
+        }
+        throw new Error(detail)
+      }
+
+      const message = await response.json() as Message
+      if (selectedChatIdRef.current === chatId) {
+        setMessages(current => [
+          ...current.filter(item => item.message_id !== message.message_id),
+          message
+        ].sort((a, b) => a.message_id - b.message_id))
+        setDraft('')
+        setReplyingTo(null)
+      }
+    } catch (caught) {
+      setError(errorMessage(caught, 'ارسال فایل انجام نشد.'))
+    } finally {
+      setUploadBusy(false)
+      setUploadName('')
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
   async function sendMessage(event: FormEvent) {
     event.preventDefault()
     const text = draft.trim()
@@ -925,6 +988,24 @@ function App() {
               ))}
             </div>
             <div className="composer-shell">
+              <input
+                ref={fileInputRef}
+                className="hidden-file-input"
+                type="file"
+                onChange={event => {
+                  const file = event.target.files?.[0]
+                  if (file) void uploadFile(file)
+                }}
+              />
+              {uploadBusy && (
+                <div className="upload-status">
+                  <span className="upload-spinner">↥</span>
+                  <div>
+                    <strong>در حال ارسال فایل</strong>
+                    <small>{uploadName}</small>
+                  </div>
+                </div>
+              )}
               {(replyingTo || editing) && (
                 <div className="composer-context">
                   <span className="composer-context-bar" />
@@ -936,13 +1017,22 @@ function App() {
                 </div>
               )}
               <form className="composer" onSubmit={sendMessage}>
-                <button type="button" className="icon-button">＋</button>
+                <button
+                  type="button"
+                  className="icon-button"
+                  aria-label="ارسال عکس یا فایل"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploadBusy || editing !== null}
+                >
+                  ＋
+                </button>
                 <input
                   value={draft}
                   onChange={event => setDraft(event.target.value)}
-                  placeholder={editing ? 'ویرایش پیام...' : replyingTo ? 'پاسخ...' : 'پیام...'}
+                  placeholder={editing ? 'ویرایش پیام...' : replyingTo ? 'کپشن یا پاسخ...' : 'پیام یا کپشن فایل...'}
+                  disabled={uploadBusy}
                 />
-                <button className="send-button" type="submit" disabled={composerBusy || !draft.trim()}>
+                <button className="send-button" type="submit" disabled={composerBusy || uploadBusy || !draft.trim()}>
                   {editing ? '✓' : '➤'}
                 </button>
               </form>

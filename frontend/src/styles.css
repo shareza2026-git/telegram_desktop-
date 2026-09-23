@@ -37,6 +37,7 @@ button { border: 0; cursor: pointer; }
 .brand-title { display: flex; align-items: center; gap: 9px; font-weight: 700; flex: 1; }
 .icon-button { width: 34px; height: 34px; color: #b7c8d9; background: transparent; border-radius: 9px; font-size: 20px; }
 .icon-button:hover, .icon-button.active { background: #2a3b4b; color: white; }
+.icon-button:disabled { cursor: default; opacity: .45; }
 .search-box { margin: 12px; height: 38px; padding: 0 11px; display: flex; align-items: center; gap: 8px; color: #8da1b3; background: #233342; border-radius: 10px; }
 .search-box input { width: 100%; border: 0; outline: 0; color: #e8edf5; background: transparent; }
 .folder-tabs { padding: 0 9px 8px; display: flex; gap: 4px; overflow: auto; }
@@ -105,6 +106,13 @@ button { border: 0; cursor: pointer; }
 .download-button:hover { background: #2aabee55; }
 .download-button:disabled { cursor: wait; opacity: .65; }
 .composer-shell { background: #1f2c38; border-top: 1px solid #263846; }
+.hidden-file-input { display: none; }
+.upload-status { min-height: 48px; padding: 8px 18px 0; display: flex; align-items: center; gap: 10px; color: #d7eaf5; text-align: right; }
+.upload-status > div { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.upload-status strong { color: #72cef5; font-size: 11px; }
+.upload-status small { overflow: hidden; color: #9db0c0; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.upload-spinner { width: 28px; height: 28px; display: grid; place-items: center; color: white; background: #2aabee; border-radius: 50%; animation: upload-pulse 1s ease-in-out infinite; }
+@keyframes upload-pulse { 50% { opacity: .45; transform: translateY(-2px); } }
 .composer-context { min-height: 48px; padding: 7px 16px 0; display: flex; align-items: center; gap: 9px; }
 .composer-context-bar { width: 3px; align-self: stretch; background: #2aabee; border-radius: 2px; }
 .composer-context-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; text-align: right; }
