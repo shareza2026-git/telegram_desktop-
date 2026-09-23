@@ -4,7 +4,14 @@ from datetime import datetime, timezone
 from typing import Any
 
 from telethon import TelegramClient, events
-from telethon.errors import SessionPasswordNeededError
+from telethon.errors import (
+    FloodWaitError,
+    PasswordHashInvalidError,
+    PhoneCodeExpiredError,
+    PhoneCodeInvalidError,
+    PhoneNumberInvalidError,
+    SessionPasswordNeededError,
+)
 
 from app.config import Settings
 from app.models import (
@@ -19,6 +26,9 @@ from app.telegram.client import build_client
 from app.telegram.session import SessionManager
 from app.telegram.session_import import SessionImporter
 from app.telegram.transport import ProxyRoute, TransportCatalog
+
+
+logger = logging.getLogger(__name__)
 
 
 class EventBroker:
@@ -170,6 +180,29 @@ class TelegramDesktopService:
             )
             await self._connect()
             return self.status
+
+    @staticmethod
+    def _auth_error(error: Exception, fallback: str) -> DesktopError:
+        if isinstance(error, PhoneNumberInvalidError):
+            return DesktopError("شماره تلفن نامعتبر است.")
+        if isinstance(error, PhoneCodeInvalidError):
+            return DesktopError("کد تأیید نادرست است.")
+        if isinstance(error, PhoneCodeExpiredError):
+            return DesktopError("کد تأیید منقضی شده است؛ دوباره کد بگیرید.")
+        if isinstance(error, PasswordHashInvalidError):
+            return DesktopError("رمز دومرحله‌ای نادرست است.")
+        if isinstance(error, FloodWaitError):
+            seconds = max(int(getattr(error, "seconds", 0) or 0), 1)
+            return DesktopError(f"تلاش‌های ورود محدود شده؛ {seconds} ثانیه بعد دوباره امتحان کنید.")
+        return DesktopError(fallback)
+
+    @staticmethod
+    def _log_auth_error(error: Exception) -> None:
+        logger.warning("Telegram authentication operation failed: %s", type(error).__name__)
+
+    def _clear_login_challenge(self) -> None:
+        self.login_phone = None
+        self.login_code_hash = None
 
     async def _mark_authorized(self) -> None:
         if self.client is None:
@@ -364,7 +397,11 @@ class TelegramDesktopService:
             raise DesktopError("Telegram connection is unavailable")
         if self.status.authorized:
             raise DesktopError("Log out before authorizing another account")
-        sent = await self.client.send_code_request(phone.strip())
+        try:
+            sent = await self.client.send_code_request(phone.strip())
+        except Exception as error:
+            self._log_auth_error(error)
+            raise self._auth_error(error, "ارسال کد تأیید انجام نشد.") from None
         self.login_phone = phone.strip()
         self.login_code_hash = sent.phone_code_hash
         self.status = self.status.model_copy(update={"state": "AUTH_REQUIRED", "last_error": None})
@@ -381,14 +418,23 @@ class TelegramDesktopService:
             )
         except SessionPasswordNeededError:
             return {"code_sent": True, "requires_2fa": True, "authorized": False}
+        except Exception as error:
+            self._log_auth_error(error)
+            raise self._auth_error(error, "تأیید کد انجام نشد.") from None
         await self._mark_authorized()
+        self._clear_login_challenge()
         return {"code_sent": True, "requires_2fa": False, "authorized": True}
 
     async def verify_password(self, password: str) -> dict:
         if self.client is None:
             raise DesktopError("Request a new login code")
-        await self.client.sign_in(password=password)
+        try:
+            await self.client.sign_in(password=password)
+        except Exception as error:
+            self._log_auth_error(error)
+            raise self._auth_error(error, "تأیید رمز دومرحله‌ای انجام نشد.") from None
         await self._mark_authorized()
+        self._clear_login_challenge()
         return {"code_sent": True, "requires_2fa": False, "authorized": True}
 
     async def logout(self) -> None:
@@ -397,7 +443,7 @@ class TelegramDesktopService:
             try:
                 await self.client.log_out()
             except Exception:
-                logging.getLogger(__name__).warning("Telegram logout request failed")
+                logger.warning("Telegram logout request failed")
             await self.client.disconnect()
         self.client = None
         self.route = None
