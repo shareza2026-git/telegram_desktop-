@@ -32,18 +32,25 @@ class SessionManager:
         target.parent.mkdir(parents=True, exist_ok=True)
         return target
 
+    def _client_candidates(self) -> tuple[Path, ...]:
+        bases = {self.client_path, Path(str(self.client_path) + ".session")}
+        candidates = []
+        for base in bases:
+            candidates.extend(Path(str(base) + suffix) for suffix in ("", "-journal", "-wal", "-shm"))
+        return tuple(candidates)
+
     def info(self) -> SessionInfo:
         source = self.source_path
         return SessionInfo(
             client_path=self.client_path,
             source_path=source,
-            client_exists=self.client_path.exists(),
+            client_exists=any(path.is_file() for path in self._client_candidates()),
             source_available=bool(source and source.exists()),
         )
 
     def remove_client_session(self) -> None:
         root = (self.settings.project_root / "data" / "telegram_desktop").resolve()
-        for suffix in ("", "-journal", "-wal", "-shm"):
-            candidate = Path(str(self.client_path) + suffix).resolve()
+        for candidate in self._client_candidates():
+            candidate = candidate.resolve()
             if candidate.is_relative_to(root) and candidate.is_file():
                 candidate.unlink()

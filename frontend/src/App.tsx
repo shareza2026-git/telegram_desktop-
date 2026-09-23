@@ -42,8 +42,11 @@ type Status = {
   last_error?: string | null
 }
 
+const backendBase = (import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8110').replace(/\/$/, '')
+const socketBase = backendBase.replace(/^http/, 'ws')
+
 const api = (path: string, options?: RequestInit) =>
-  fetch(path, {
+  fetch(backendBase + path, {
     ...options,
     headers: { 'Content-Type': 'application/json', ...(options?.headers || {}) }
   }).then(async response => {
@@ -74,9 +77,7 @@ function App() {
     api<Status>('/api/telegram/status').then(setStatus).catch(() => setError('اتصال به هسته تلگرام برقرار نشد.'))
     api<Dialog[]>('/api/telegram/dialogs').then(setDialogs).catch(() => undefined)
 
-    const socket = new WebSocket(
-      (location.protocol === 'https:' ? 'wss://' : 'ws://') + (location.host || '127.0.0.1:8110') + '/ws/telegram'
-    )
+    const socket = new WebSocket(socketBase + '/ws/telegram')
     socket.onmessage = event => {
       const packet = JSON.parse(event.data) as { type: string; data: Status | Message }
       if (packet.type === 'READY') setStatus(packet.data as Status)

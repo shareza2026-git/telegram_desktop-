@@ -92,6 +92,7 @@ class TelegramDesktopService:
             return
 
         for route in candidates:
+            client: TelegramClient | None = None
             try:
                 self.status = self.status.model_copy(
                     update={"state": "CONNECTING", "last_error": None}
@@ -117,10 +118,11 @@ class TelegramDesktopService:
                     )
                 return
             except Exception:
-                try:
-                    await client.disconnect()
-                except Exception:
-                    pass
+                if client is not None:
+                    try:
+                        await client.disconnect()
+                    except Exception:
+                        pass
 
         self.status = self.status.model_copy(
             update={"connected": False, "authorized": False, "state": "PROXY_ERROR", "last_error": "All Telegram routes failed"}
