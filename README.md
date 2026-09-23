@@ -35,6 +35,17 @@ When `TELEGRAM_SOURCE_SESSION_PATH` points to an existing Telethon `.session` fi
 
 Important: this bootstrap creates a separate local session file, but it reuses the Telegram authorization key from the source. It is not a new Telegram device authorization. For a separate Telegram authorization, use the normal phone/code/2FA login flow instead.
 
+## Phase 3: local phone/code/2FA login
+
+If no source import is selected, the UI now supports:
+
+1. Sending a Telegram login code to the entered phone number.
+2. Verifying the code through the independent client session.
+3. Asking for the 2FA password when Telegram requires it.
+4. Refreshing the dialog list immediately after successful authorization.
+
+Phone numbers, login codes and passwords stay in memory for the active login flow and are never written to Git or sent to the frontend after use.
+
 ## Local configuration
 
 Copy `.env.example` to `.env` locally and fill in values without committing the file.

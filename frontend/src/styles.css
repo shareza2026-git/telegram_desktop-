@@ -9,15 +9,27 @@ body { margin: 0; min-width: 900px; min-height: 100vh; direction: rtl; backgroun
 button, input { font: inherit; }
 button { border: 0; cursor: pointer; }
 .loading-screen, .auth-screen { min-height: 100vh; display: grid; place-items: center; background: radial-gradient(circle at 50% 35%, #223d59, #0c1622 60%); }
-.auth-card { width: 360px; padding: 42px 34px; text-align: center; background: #172434; border-radius: 18px; box-shadow: 0 16px 60px #0006; }
+.auth-screen { position: relative; padding: 24px; }
+.auth-card { width: 390px; max-width: 100%; padding: 42px 34px; text-align: center; background: #172434; border-radius: 18px; box-shadow: 0 16px 60px #0006; }
 .auth-card h1 { margin: 14px 0 8px; font-size: 24px; }
 .auth-card p { color: #aebed0; line-height: 1.8; }
-.auth-card small { display: block; margin-top: 12px; color: #eaa9ae; }
+.auth-card small { display: block; margin-top: 12px; }
+.auth-error { color: #eaa9ae; }
 .brand-mark { width: 70px; height: 70px; display: grid; place-items: center; margin: auto; border-radius: 50%; color: white; background: #2aabee; font-size: 36px; transform: rotate(-15deg); }
 .brand-mark.small { width: 32px; height: 32px; font-size: 17px; display: inline-grid; margin: 0; }
 .primary-action { margin-top: 12px; padding: 11px 16px; color: white; background: #2aabee; border-radius: 10px; font-weight: 700; }
 .primary-action:hover { background: #1f9ed9; }
 .primary-action:disabled { cursor: wait; opacity: .65; }
+.auth-divider { display: flex; align-items: center; gap: 10px; margin: 22px 0 14px; color: #738a9e; font-size: 12px; }
+.auth-divider::before, .auth-divider::after { content: ""; height: 1px; flex: 1; background: #2a3b49; }
+.auth-form { display: flex; flex-direction: column; gap: 10px; text-align: right; }
+.auth-field { display: flex; flex-direction: column; gap: 6px; color: #b6c9d9; font-size: 12px; }
+.auth-field input { height: 42px; padding: 0 12px; outline: 0; border: 1px solid #334a5b; color: #eaf1f8; background: #162531; border-radius: 9px; }
+.auth-field input:focus { border-color: #2aabee; box-shadow: 0 0 0 3px #2aabee22; }
+.auth-submit { width: 100%; margin-top: 4px; }
+.auth-notice { margin: 0 0 2px; color: #9ed8f0 !important; font-size: 12px; }
+.text-button { padding: 4px; color: #75c9ef; background: transparent; font-size: 12px; }
+.text-button:hover { color: white; }
 .telegram-shell { min-height: 100vh; display: grid; grid-template-columns: 320px minmax(0, 1fr) 260px; direction: ltr; background: #17212b; }
 .chat-sidebar, .info-panel, .chat-panel { direction: rtl; min-width: 0; }
 .chat-sidebar { background: #17212b; border-left: 1px solid #243544; display: flex; flex-direction: column; }

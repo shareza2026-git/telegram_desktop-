@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 
 type Dialog = {
   chat_id: number
@@ -44,20 +44,53 @@ type Status = {
   last_error?: string | null
 }
 
+type AuthResponse = {
+  code_sent: boolean
+  requires_2fa: boolean
+  authorized: boolean
+}
+
+type AuthStep = 'phone' | 'code' | 'password'
+
 const backendBase = (import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8110').replace(/\/$/, '')
 const socketBase = backendBase.replace(/^http/, 'ws')
 
-const api = (path: string, options?: RequestInit) =>
-  fetch(backendBase + path, {
+async function api<T>(path: string, options?: RequestInit): Promise<T> {
+  const response = await fetch(backendBase + path, {
     ...options,
     headers: { 'Content-Type': 'application/json', ...(options?.headers || {}) }
-  }).then(async response => {
-    if (!response.ok) throw new Error((await response.text()) || 'Request failed')
-    return response.json()
   })
+  if (response.ok) return response.json() as Promise<T>
+
+  const body = await response.text()
+  try {
+    const parsed = JSON.parse(body) as { detail?: string }
+    throw new Error(parsed.detail || 'درخواست انجام نشد.')
+  } catch (error) {
+    if (error instanceof Error && error.message !== 'درخواست انجام نشد.') throw error
+    throw new Error(body || 'درخواست انجام نشد.')
+  }
+}
 
 function formatTime(value: string) {
   return new Intl.DateTimeFormat('fa-IR', { hour: '2-digit', minute: '2-digit' }).format(new Date(value))
+}
+
+function statusLabel(value: string) {
+  const labels: Record<string, string> = {
+    UNCONFIGURED: 'تنظیمات ناقص',
+    IMPORT_READY: 'آماده انتقال سشن',
+    CONNECTING: 'در حال اتصال',
+    CONNECTED: 'متصل',
+    AUTH_REQUIRED: 'نیاز به ورود',
+    PROXY_ERROR: 'خطای مسیر اتصال',
+    STOPPED: 'متوقف'
+  }
+  return labels[value] || value
+}
+
+function errorMessage(error: unknown, fallback: string) {
+  return error instanceof Error && error.message ? error.message : fallback
 }
 
 function App() {
@@ -69,6 +102,12 @@ function App() {
   const [draft, setDraft] = useState('')
   const [error, setError] = useState('')
   const [importing, setImporting] = useState(false)
+  const [authStep, setAuthStep] = useState<AuthStep>('phone')
+  const [phone, setPhone] = useState('')
+  const [code, setCode] = useState('')
+  const [password, setPassword] = useState('')
+  const [authBusy, setAuthBusy] = useState(false)
+  const [authNotice, setAuthNotice] = useState('')
 
   const visibleDialogs = useMemo(() => {
     const value = query.trim().toLocaleLowerCase()
@@ -77,7 +116,7 @@ function App() {
   }, [dialogs, query])
 
   useEffect(() => {
-    api<Status>('/api/telegram/status').then(setStatus).catch(() => setError('اتصال به هسته تلگرام برقرار نشد.'))
+    api<Status>('/api/telegram/status').then(setStatus).catch(error => setError(errorMessage(error, 'اتصال به هسته تلگرام برقرار نشد.')))
     api<Dialog[]>('/api/telegram/dialogs').then(setDialogs).catch(() => undefined)
 
     const socket = new WebSocket(socketBase + '/ws/telegram')
@@ -110,8 +149,16 @@ function App() {
     }
     api<Message[]>('/api/telegram/chats/' + selected.chat_id + '/messages?limit=80')
       .then(setMessages)
-      .catch(() => setError('تاریخچه این گفتگو دریافت نشد.'))
+      .catch(error => setError(errorMessage(error, 'تاریخچه این گفتگو دریافت نشد.')))
   }, [selected?.chat_id])
+
+  async function refreshAuthorizedState() {
+    const nextStatus = await api<Status>('/api/telegram/status')
+    setStatus(nextStatus)
+    if (nextStatus.authorized) {
+      setDialogs(await api<Dialog[]>('/api/telegram/dialogs'))
+    }
+  }
 
   async function importSession() {
     setImporting(true)
@@ -119,17 +166,94 @@ function App() {
     try {
       const nextStatus = await api<Status>('/api/telegram/session/import', { method: 'POST' })
       setStatus(nextStatus)
-      if (nextStatus.authorized) {
-        setDialogs(await api<Dialog[]>('/api/telegram/dialogs'))
-      }
-    } catch {
-      setError('انتقال سشن انجام نشد؛ تنظیمات مسیر یا فایل منبع را بررسی کنید.')
+      if (nextStatus.authorized) setDialogs(await api<Dialog[]>('/api/telegram/dialogs'))
+    } catch (caught) {
+      setError(errorMessage(caught, 'انتقال سشن انجام نشد؛ تنظیمات مسیر یا فایل منبع را بررسی کنید.'))
     } finally {
       setImporting(false)
     }
   }
 
-  async function sendMessage(event: React.FormEvent) {
+  async function sendCode(event: FormEvent) {
+    event.preventDefault()
+    const value = phone.trim()
+    if (!value) {
+      setError('شماره تلفن را وارد کنید.')
+      return
+    }
+    setAuthBusy(true)
+    setError('')
+    setAuthNotice('')
+    try {
+      await api<AuthResponse>('/api/telegram/auth/send-code', {
+        method: 'POST',
+        body: JSON.stringify({ phone: value })
+      })
+      setAuthStep('code')
+      setAuthNotice('کد تأیید به تلگرام شما ارسال شد.')
+    } catch (caught) {
+      setError(errorMessage(caught, 'ارسال کد تأیید انجام نشد.'))
+    } finally {
+      setAuthBusy(false)
+    }
+  }
+
+  async function verifyCode(event: FormEvent) {
+    event.preventDefault()
+    if (!code.trim()) {
+      setError('کد تأیید را وارد کنید.')
+      return
+    }
+    setAuthBusy(true)
+    setError('')
+    try {
+      const result = await api<AuthResponse>('/api/telegram/auth/verify-code', {
+        method: 'POST',
+        body: JSON.stringify({ code: code.trim() })
+      })
+      if (result.requires_2fa) {
+        setAuthStep('password')
+        setAuthNotice('رمز دومرحله‌ای حساب را وارد کنید.')
+      } else {
+        await refreshAuthorizedState()
+      }
+    } catch (caught) {
+      setError(errorMessage(caught, 'تأیید کد انجام نشد.'))
+    } finally {
+      setAuthBusy(false)
+    }
+  }
+
+  async function verifyPassword(event: FormEvent) {
+    event.preventDefault()
+    if (!password) {
+      setError('رمز دومرحله‌ای را وارد کنید.')
+      return
+    }
+    setAuthBusy(true)
+    setError('')
+    try {
+      await api<AuthResponse>('/api/telegram/auth/verify-password', {
+        method: 'POST',
+        body: JSON.stringify({ password })
+      })
+      await refreshAuthorizedState()
+    } catch (caught) {
+      setError(errorMessage(caught, 'تأیید رمز دومرحله‌ای انجام نشد.'))
+    } finally {
+      setAuthBusy(false)
+    }
+  }
+
+  function resetAuth() {
+    setAuthStep('phone')
+    setCode('')
+    setPassword('')
+    setAuthNotice('')
+    setError('')
+  }
+
+  async function sendMessage(event: FormEvent) {
     event.preventDefault()
     const text = draft.trim()
     if (!selected || !text) return
@@ -140,8 +264,8 @@ function App() {
         body: JSON.stringify({ text })
       })
       setMessages(current => [...current.filter(item => item.message_id !== message.message_id), message])
-    } catch {
-      setError('ارسال پیام انجام نشد.')
+    } catch (caught) {
+      setError(errorMessage(caught, 'ارسال پیام انجام نشد.'))
     }
   }
 
@@ -155,20 +279,67 @@ function App() {
         <div className="auth-card">
           <div className="brand-mark">✈</div>
           <h1>Telegram Desktop</h1>
-          <p>سشن مستقل برنامه آماده نیست.</p>
-          <span className="status-pill">{status.state}</span>
-          {status.last_error && <small>{status.last_error}</small>}
-          {status.state === 'IMPORT_READY' && status.source_session_available ? (
+          <p>ورود به کلاینت مستقل</p>
+          <span className="status-pill">{statusLabel(status.state)}</span>
+          {status.last_error && <small className="auth-error">{status.last_error}</small>}
+
+          {status.state === 'IMPORT_READY' && status.source_session_available && (
             <>
               <p className="muted">فایل منبع فقط خوانده می‌شود و یک فایل سشن مستقل برای این برنامه ساخته می‌شود.</p>
               <button className="primary-action" onClick={importSession} disabled={importing}>
                 {importing ? 'در حال انتقال…' : 'انتقال کنترل‌شده از داشبورد'}
               </button>
+              <div className="auth-divider"><span>یا ورود مستقل</span></div>
             </>
+          )}
+
+          {status.state === 'UNCONFIGURED' ? (
+            <p className="muted">ابتدا API ID و API Hash را در فایل تنظیمات محلی وارد کنید.</p>
           ) : (
-            <p className="muted">برای ورود با شماره و کد تأیید، رابط ورود در مرحله بعد تکمیل می‌شود.</p>
+            <form className="auth-form" onSubmit={authStep === 'phone' ? sendCode : authStep === 'code' ? verifyCode : verifyPassword}>
+              {authStep === 'phone' && (
+                <>
+                  <label className="auth-field">
+                    <span>شماره تلفن</span>
+                    <input value={phone} onChange={event => setPhone(event.target.value)} placeholder="+98..." autoComplete="tel" dir="ltr" />
+                  </label>
+                  <button className="primary-action auth-submit" type="submit" disabled={authBusy}>
+                    {authBusy ? 'در حال ارسال…' : 'دریافت کد تأیید'}
+                  </button>
+                </>
+              )}
+
+              {authStep === 'code' && (
+                <>
+                  <p className="auth-notice">{authNotice || 'کد تأیید را وارد کنید.'}</p>
+                  <label className="auth-field">
+                    <span>کد تأیید</span>
+                    <input value={code} onChange={event => setCode(event.target.value)} placeholder="12345" inputMode="numeric" autoComplete="one-time-code" dir="ltr" />
+                  </label>
+                  <button className="primary-action auth-submit" type="submit" disabled={authBusy}>
+                    {authBusy ? 'در حال بررسی…' : 'تأیید و ورود'}
+                  </button>
+                  <button className="text-button" type="button" onClick={resetAuth}>تغییر شماره</button>
+                </>
+              )}
+
+              {authStep === 'password' && (
+                <>
+                  <p className="auth-notice">{authNotice || 'رمز دومرحله‌ای را وارد کنید.'}</p>
+                  <label className="auth-field">
+                    <span>رمز دومرحله‌ای</span>
+                    <input value={password} onChange={event => setPassword(event.target.value)} type="password" autoComplete="current-password" dir="ltr" />
+                  </label>
+                  <button className="primary-action auth-submit" type="submit" disabled={authBusy}>
+                    {authBusy ? 'در حال بررسی…' : 'تأیید رمز و ورود'}
+                  </button>
+                  <button className="text-button" type="button" onClick={resetAuth}>شروع دوباره</button>
+                </>
+              )}
+            </form>
           )}
         </div>
+        {error && <button className="error-toast" onClick={() => setError('')}>{error}</button>}
       </div>
     )
   }
