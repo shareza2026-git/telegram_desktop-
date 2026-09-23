@@ -25,6 +25,20 @@ class Dialog(BaseModel):
     last_message_at: datetime | None = None
 
 
+class ChatInfo(BaseModel):
+    chat_id: int
+    title: str
+    dialog_type: str
+    username: str | None = None
+    participants_count: int | None = None
+    status: str | None = None
+    is_bot: bool = False
+    verified: bool = False
+    scam: bool = False
+    fake: bool = False
+    photo_available: bool = False
+
+
 class Message(BaseModel):
     chat_id: int
     message_id: int

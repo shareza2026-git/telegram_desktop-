@@ -16,6 +16,7 @@ from telethon.errors import (
 
 from app.config import Settings
 from app.models import (
+    ChatInfo,
     ClientStatus,
     DesktopError,
     Dialog,
@@ -25,6 +26,7 @@ from app.models import (
 from app.storage import ChatStore
 from app.telegram.client import build_client
 from app.telegram.media import DownloadedMedia, media_path, safe_media_name
+from app.telegram.profile import chat_photo_path, is_fresh_chat_photo
 from app.telegram.session import SessionManager
 from app.telegram.session_import import SessionImporter
 from app.telegram.transport import ProxyRoute, TransportCatalog
@@ -297,6 +299,48 @@ class TelegramDesktopService:
         )
 
     @staticmethod
+    def _entity_dialog_type(entity: Any) -> str:
+        if hasattr(entity, "first_name"):
+            return "user"
+        if bool(getattr(entity, "megagroup", False)):
+            return "supergroup"
+        if bool(getattr(entity, "broadcast", False)):
+            return "channel"
+        if hasattr(entity, "title"):
+            return "group"
+        return "unknown"
+
+    @staticmethod
+    def _entity_title(entity: Any, chat_id: int) -> str:
+        title = getattr(entity, "title", None)
+        if title:
+            return str(title)
+        name = " ".join(
+            filter(
+                None,
+                [
+                    getattr(entity, "first_name", None),
+                    getattr(entity, "last_name", None),
+                ],
+            )
+        )
+        return name or getattr(entity, "username", None) or str(chat_id)
+
+    @staticmethod
+    def _entity_status(entity: Any) -> str | None:
+        status = getattr(entity, "status", None)
+        if status is None:
+            return None
+        labels = {
+            "UserStatusOnline": "online",
+            "UserStatusOffline": "offline",
+            "UserStatusRecently": "recently",
+            "UserStatusLastWeek": "last_week",
+            "UserStatusLastMonth": "last_month",
+        }
+        return labels.get(type(status).__name__)
+
+    @staticmethod
     def _dialog_model(dialog: Any) -> Dialog:
         entity = dialog.entity
         if dialog.is_user:
@@ -350,6 +394,43 @@ class TelegramDesktopService:
         if self.client is None or not self.status.connected or not self.status.authorized:
             raise DesktopError("Telegram is not connected and authorized")
         return self.client
+
+    async def chat_info(self, chat_id: int) -> ChatInfo:
+        client = self._require_authorized()
+        entity = await client.get_entity(chat_id)
+        return ChatInfo(
+            chat_id=chat_id,
+            title=self._entity_title(entity, chat_id),
+            dialog_type=self._entity_dialog_type(entity),
+            username=getattr(entity, "username", None),
+            participants_count=getattr(entity, "participants_count", None),
+            status=self._entity_status(entity),
+            is_bot=bool(getattr(entity, "bot", False)),
+            verified=bool(getattr(entity, "verified", False)),
+            scam=bool(getattr(entity, "scam", False)),
+            fake=bool(getattr(entity, "fake", False)),
+            photo_available=bool(getattr(entity, "photo", None)),
+        )
+
+    async def download_chat_photo(self, chat_id: int) -> DownloadedMedia:
+        client = self._require_authorized()
+        entity = await client.get_entity(chat_id)
+        if not getattr(entity, "photo", None):
+            raise DesktopError("Chat photo is not available")
+
+        root = self.settings.project_root / "data" / "telegram_desktop" / "avatars"
+        root.mkdir(parents=True, exist_ok=True)
+        target = chat_photo_path(root, chat_id)
+        if not is_fresh_chat_photo(target):
+            downloaded = await client.download_profile_photo(entity, file=str(target))
+            if downloaded is None or not target.is_file():
+                raise DesktopError("Chat photo download failed")
+
+        return DownloadedMedia(
+            path=target,
+            filename=target.name,
+            mime_type="image/jpeg",
+        )
 
     async def download_media(self, chat_id: int, message_id: int) -> DownloadedMedia:
         client = self._require_authorized()

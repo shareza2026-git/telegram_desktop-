@@ -51,6 +51,27 @@ async def dialogs(request: Request, search: str | None = None):
         raise error_response(exc) from None
 
 
+@router.get("/api/telegram/chats/{chat_id}")
+async def chat_info(chat_id: int, request: Request):
+    try:
+        return await service(request).chat_info(chat_id)
+    except DesktopError as exc:
+        raise error_response(exc) from None
+
+
+@router.get("/api/telegram/chats/{chat_id}/photo")
+async def chat_photo(chat_id: int, request: Request):
+    try:
+        item = await service(request).download_chat_photo(chat_id)
+    except DesktopError as exc:
+        raise error_response(exc) from None
+    return FileResponse(
+        path=item.path,
+        media_type=item.mime_type,
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
+
+
 @router.get("/api/telegram/chats/{chat_id}/messages")
 async def messages(
     chat_id: int,
