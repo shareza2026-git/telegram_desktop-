@@ -22,6 +22,7 @@ The trading terminal remains a separate repository and its running session file 
 5. Read-only media metadata and controlled media downloads.
 6. Inline photo rendering; no video/audio playback.
 7. Reply, edit-own-message and delete-own-message actions.
+8. Server-side chat search and explicit-destination forwarding.
 
 ## Phase 2: controlled session bootstrap
 
@@ -73,6 +74,19 @@ The message workflow now supports:
 5. Publishing local edit/delete events so the independent store and live UI stay synchronized.
 
 The backend checks Telegram's outgoing-message flag before editing or deleting. Incoming messages cannot be changed through the local API.
+
+## Phase 7: chat search and forwarding
+
+The client now supports:
+
+1. Server-side search inside the selected Telegram conversation.
+2. A compact result panel with sender, snippet and timestamp.
+3. Opening a result in the current message view and highlighting it.
+4. Forwarding any available message through an explicit destination dialog.
+5. Filtering the destination list by title or username.
+6. Persisting forwarded messages in the target chat and publishing them through the existing WebSocket flow.
+
+Search and forwarding use the authorized independent Telegram client. No dashboard database, source session, API hash or proxy secret is exposed to the frontend.
 
 ## Local configuration
 

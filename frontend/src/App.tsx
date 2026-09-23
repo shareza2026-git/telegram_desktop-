@@ -147,6 +147,13 @@ function App() {
   const [editing, setEditing] = useState<Message | null>(null)
   const [composerBusy, setComposerBusy] = useState(false)
   const [messageActionBusy, setMessageActionBusy] = useState<string | null>(null)
+  const [messageSearchOpen, setMessageSearchOpen] = useState(false)
+  const [messageQuery, setMessageQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<Message[]>([])
+  const [searchBusy, setSearchBusy] = useState(false)
+  const [forwarding, setForwarding] = useState<Message | null>(null)
+  const [forwardQuery, setForwardQuery] = useState('')
+  const [forwardTargetBusy, setForwardTargetBusy] = useState<number | null>(null)
 
   const visibleDialogs = useMemo(() => {
     let values = dialogs
@@ -160,6 +167,15 @@ function App() {
     if (!value) return values
     return values.filter(item => item.title.toLocaleLowerCase().includes(value))
   }, [activeFolder, dialogs, query])
+
+  const forwardDialogs = useMemo(() => {
+    const value = forwardQuery.trim().toLocaleLowerCase()
+    if (!value) return dialogs
+    return dialogs.filter(item => (
+      item.title.toLocaleLowerCase().includes(value)
+      || Boolean(item.username?.toLocaleLowerCase().includes(value))
+    ))
+  }, [dialogs, forwardQuery])
 
   useEffect(() => {
     api<Status>('/api/telegram/status').then(setStatus).catch(error => setError(errorMessage(error, 'اتصال به هسته تلگرام برقرار نشد.')))
@@ -195,6 +211,11 @@ function App() {
       setReplyingTo(null)
       setEditing(null)
       setDraft('')
+      setMessageSearchOpen(false)
+      setMessageQuery('')
+      setSearchResults([])
+      setForwarding(null)
+      setForwardQuery('')
       return
     }
     setMessages([])
@@ -202,6 +223,11 @@ function App() {
     setReplyingTo(null)
     setEditing(null)
     setDraft('')
+    setMessageSearchOpen(false)
+    setMessageQuery('')
+    setSearchResults([])
+    setForwarding(null)
+    setForwardQuery('')
     api<Message[]>('/api/telegram/chats/' + selected.chat_id + '/messages?limit=' + HISTORY_PAGE_SIZE)
       .then(items => {
         setMessages(items)
@@ -454,6 +480,46 @@ function App() {
     )
   }
 
+  function toggleMessageSearch() {
+    setMessageSearchOpen(current => {
+      if (current) {
+        setMessageQuery('')
+        setSearchResults([])
+      }
+      return !current
+    })
+  }
+
+  async function searchMessages(event: FormEvent) {
+    event.preventDefault()
+    if (!selected || searchBusy) return
+    const value = messageQuery.trim()
+    if (value.length < 2) {
+      setError('برای جست‌وجو حداقل دو حرف وارد کنید.')
+      return
+    }
+
+    setSearchBusy(true)
+    try {
+      const results = await api<Message[]>(
+        '/api/telegram/chats/' + selected.chat_id + '/search?q=' + encodeURIComponent(value) + '&limit=50'
+      )
+      setSearchResults(results)
+    } catch (caught) {
+      setError(errorMessage(caught, 'جست‌وجوی پیام انجام نشد.'))
+    } finally {
+      setSearchBusy(false)
+    }
+  }
+
+  function openSearchResult(message: Message) {
+    setMessages(current => {
+      if (current.some(item => item.message_id === message.message_id)) return current
+      return [...current, message].sort((a, b) => a.message_id - b.message_id)
+    })
+    window.setTimeout(() => jumpToMessage(message.message_id), 0)
+  }
+
   function messageSnippet(message: Message | null) {
     if (!message) return 'پیام قبلی'
     const text = message.text.trim()
@@ -465,6 +531,37 @@ function App() {
   function beginReply(message: Message) {
     setEditing(null)
     setReplyingTo(message)
+  }
+
+  function beginForward(message: Message) {
+    setForwardQuery('')
+    setForwarding(message)
+  }
+
+  async function forwardMessageTo(dialog: Dialog) {
+    if (!forwarding || forwardTargetBusy !== null) return
+    setForwardTargetBusy(dialog.chat_id)
+    try {
+      const message = await api<Message>(
+        '/api/telegram/chats/' + forwarding.chat_id + '/messages/' + forwarding.message_id + '/forward',
+        {
+          method: 'POST',
+          body: JSON.stringify({ target_chat_id: dialog.chat_id })
+        }
+      )
+      if (selected?.chat_id === dialog.chat_id) {
+        setMessages(current => [
+          ...current.filter(item => item.message_id !== message.message_id),
+          message
+        ].sort((a, b) => a.message_id - b.message_id))
+      }
+      setForwarding(null)
+      setForwardQuery('')
+    } catch (caught) {
+      setError(errorMessage(caught, 'فوروارد پیام انجام نشد.'))
+    } finally {
+      setForwardTargetBusy(null)
+    }
   }
 
   function beginEdit(message: Message) {
@@ -677,8 +774,39 @@ function App() {
             <header className="chat-header">
               <div className="avatar large">{selected.title.slice(0, 1)}</div>
               <div><strong>{selected.title}</strong><small>{selected.dialog_type}</small></div>
-              <div className="header-actions"><button className="icon-button">⌕</button><button className="icon-button">⋮</button></div>
+              <div className="header-actions">
+                <button className={'icon-button ' + (messageSearchOpen ? 'active' : '')} aria-label="جست‌وجوی پیام" onClick={toggleMessageSearch}>⌕</button>
+                <button className="icon-button">⋮</button>
+              </div>
             </header>
+            {messageSearchOpen && (
+              <section className="message-search-panel">
+                <form className="message-search-form" onSubmit={searchMessages}>
+                  <input
+                    value={messageQuery}
+                    onChange={event => setMessageQuery(event.target.value)}
+                    placeholder="جست‌وجو در این گفتگو"
+                    autoFocus
+                  />
+                  <button type="submit" disabled={searchBusy}>{searchBusy ? '…' : 'جست‌وجو'}</button>
+                  <button type="button" aria-label="بستن جست‌وجو" onClick={toggleMessageSearch}>×</button>
+                </form>
+                {searchResults.length > 0 && (
+                  <div className="message-search-results">
+                    {searchResults.map(result => (
+                      <button type="button" key={result.message_id} onClick={() => openSearchResult(result)}>
+                        <strong>{result.outgoing ? 'شما' : result.sender_name || selected.title}</strong>
+                        <span>{messageSnippet(result)}</span>
+                        <small>{formatTime(result.date)}</small>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {!searchBusy && messageQuery.trim().length >= 2 && searchResults.length === 0 && (
+                  <div className="search-empty">نتیجه‌ای پیدا نشد.</div>
+                )}
+              </section>
+            )}
             <div className="message-list">
               {hasOlder && (
                 <button className="older-button" onClick={loadOlder} disabled={loadingOlder}>
@@ -698,6 +826,7 @@ function App() {
                   {!message.deleted && (
                     <div className="message-actions">
                       <button type="button" onClick={() => beginReply(message)}>↩ پاسخ</button>
+                      <button type="button" onClick={() => beginForward(message)}>↗ فوروارد</button>
                       {message.outgoing && message.text && <button type="button" onClick={() => beginEdit(message)}>✎ ویرایش</button>}
                       {message.outgoing && (
                         <button
@@ -747,6 +876,46 @@ function App() {
       <aside className="info-panel">
         {selected ? <><div className="info-avatar avatar huge">{selected.title.slice(0, 1)}</div><h2>{selected.title}</h2><p>{selected.dialog_type}</p><hr /><p className="muted">جزئیات بیشتر در فاز بعد اضافه می‌شود.</p></> : <div className="muted">اطلاعات گفتگو</div>}
       </aside>
+
+      {forwarding && (
+        <div className="forward-backdrop" onMouseDown={() => setForwarding(null)}>
+          <section className="forward-modal" role="dialog" aria-modal="true" aria-label="انتخاب مقصد فوروارد" onMouseDown={event => event.stopPropagation()}>
+            <header>
+              <div>
+                <strong>فوروارد پیام</strong>
+                <small>{messageSnippet(forwarding)}</small>
+              </div>
+              <button className="icon-button" type="button" aria-label="بستن" onClick={() => setForwarding(null)}>×</button>
+            </header>
+            <input
+              className="forward-search"
+              value={forwardQuery}
+              onChange={event => setForwardQuery(event.target.value)}
+              placeholder="جست‌وجوی مقصد"
+              autoFocus
+            />
+            <div className="forward-dialogs">
+              {forwardDialogs.map(dialog => (
+                <button
+                  className="forward-dialog-row"
+                  type="button"
+                  key={dialog.chat_id}
+                  onClick={() => forwardMessageTo(dialog)}
+                  disabled={forwardTargetBusy !== null}
+                >
+                  <span className="avatar">{dialog.title.slice(0, 1)}</span>
+                  <span>
+                    <strong>{dialog.title}</strong>
+                    <small>{dialog.dialog_type}{dialog.username ? ' · @' + dialog.username : ''}</small>
+                  </span>
+                  {forwardTargetBusy === dialog.chat_id && <span className="forwarding-state">در حال ارسال…</span>}
+                </button>
+              ))}
+              {!forwardDialogs.length && <div className="search-empty">مقصدی پیدا نشد.</div>}
+            </div>
+          </section>
+        </div>
+      )}
 
       {error && <button className="error-toast" onClick={() => setError('')}>{error}</button>}
     </main>
