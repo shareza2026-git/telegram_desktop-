@@ -21,6 +21,7 @@ The trading terminal remains a separate repository and its running session file 
 4. Telegram Desktop-style three-column UI shell.
 5. Read-only media metadata and controlled media downloads.
 6. Inline photo rendering; no video/audio playback.
+7. Reply, edit-own-message and delete-own-message actions.
 
 ## Phase 2: controlled session bootstrap
 
@@ -60,6 +61,18 @@ The client now supports:
 5. Keeping audio/video playback disabled as requested.
 
 The media endpoint re-fetches the exact Telegram message through the authorized independent client; it does not expose session values, API credentials, proxy settings or arbitrary filesystem paths.
+
+## Phase 6: reply, edit and delete
+
+The message workflow now supports:
+
+1. Replying to any available message while preserving its Telegram reply reference.
+2. Showing the referenced message inside the message bubble and jumping to it when it is loaded.
+3. Editing text on the current account's own messages.
+4. Deleting only the current account's own messages for everyone after confirmation.
+5. Publishing local edit/delete events so the independent store and live UI stay synchronized.
+
+The backend checks Telegram's outgoing-message flag before editing or deleting. Incoming messages cannot be changed through the local API.
 
 ## Local configuration
 

@@ -60,11 +60,21 @@ button { border: 0; cursor: pointer; }
 .older-button { align-self: center; padding: 8px 14px; color: #cbeeff; background: #2aabee33; border-radius: 16px; font-size: 12px; }
 .older-button:hover { background: #2aabee55; }
 .older-button:disabled { cursor: wait; opacity: .65; }
-.message { max-width: min(72%, 640px); align-self: flex-start; padding: 9px 12px 6px; color: #eaf1f8; background: #1d2d3b; border-radius: 12px 12px 12px 4px; box-shadow: 0 1px 1px #0003; display: flex; flex-direction: column; gap: 5px; line-height: 1.7; white-space: pre-wrap; }
+.message { max-width: min(72%, 640px); align-self: flex-start; padding: 9px 12px 6px; color: #eaf1f8; background: #1d2d3b; border-radius: 12px 12px 12px 4px; box-shadow: 0 1px 1px #0003; display: flex; flex-direction: column; gap: 5px; line-height: 1.7; white-space: pre-wrap; transition: outline-color .2s, box-shadow .2s; }
 .message.outgoing { align-self: flex-end; background: #214d66; border-radius: 12px 12px 4px 12px; }
 .message.deleted { opacity: .6; font-style: italic; }
+.message.message-focus { outline: 2px solid #2aabee; box-shadow: 0 0 0 5px #2aabee22; }
 .message small { align-self: flex-end; color: #8ea4b6; font-size: 10px; }
 .sender-name { color: #6fc7f4; font-size: 12px; }
+.reply-reference { width: 100%; padding: 5px 8px; display: flex; flex-direction: column; gap: 1px; color: #bfeaff; background: #2aabee18; border-right: 3px solid #2aabee; border-radius: 6px; text-align: right; }
+.reply-reference:disabled { cursor: default; opacity: .7; }
+.reply-reference strong { font-size: 11px; }
+.reply-reference span { max-width: 100%; overflow: hidden; color: #a9bbc9; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.message-actions { align-self: flex-end; display: flex; gap: 3px; }
+.message-actions button { padding: 2px 5px; color: #91b6cd; background: transparent; border-radius: 5px; font-size: 9px; }
+.message-actions button:hover { color: white; background: #ffffff12; }
+.message-actions button.danger:hover { color: #ffb9c0; background: #d85b6822; }
+.message-actions button:disabled { cursor: wait; opacity: .5; }
 .media-card { min-width: 280px; display: flex; align-items: center; gap: 10px; padding: 10px 12px; color: #bdd4e6; background: #ffffff10; border: 1px solid #ffffff16; border-radius: 8px; }
 .media-icon { width: 34px; height: 34px; display: grid; place-items: center; flex: 0 0 34px; color: #d7f2ff; background: #2aabee44; border-radius: 9px; font-size: 18px; }
 .media-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
@@ -78,9 +88,16 @@ button { border: 0; cursor: pointer; }
 .download-button { flex: 0 0 auto; padding: 7px 10px; color: #cbeeff; background: #2aabee33; border-radius: 8px; font-size: 11px; white-space: nowrap; }
 .download-button:hover { background: #2aabee55; }
 .download-button:disabled { cursor: wait; opacity: .65; }
-.composer { min-height: 64px; padding: 12px 16px; display: flex; align-items: center; gap: 8px; background: #1f2c38; }
+.composer-shell { background: #1f2c38; border-top: 1px solid #263846; }
+.composer-context { min-height: 48px; padding: 7px 16px 0; display: flex; align-items: center; gap: 9px; }
+.composer-context-bar { width: 3px; align-self: stretch; background: #2aabee; border-radius: 2px; }
+.composer-context-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; text-align: right; }
+.composer-context-copy strong { color: #72cef5; font-size: 11px; }
+.composer-context-copy small { overflow: hidden; color: #9db0c0; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.composer { min-height: 64px; padding: 10px 16px 12px; display: flex; align-items: center; gap: 8px; background: transparent; }
 .composer input { flex: 1; height: 40px; padding: 0 14px; outline: 0; border: 1px solid #334a5b; color: #eaf1f8; background: #162531; border-radius: 20px; }
 .send-button { width: 42px; height: 42px; color: white; background: #2aabee; border-radius: 50%; font-size: 20px; }
+.send-button:disabled { cursor: default; opacity: .5; }
 .info-panel { padding: 0 20px; color: #dce8f2; background: #17212b; text-align: center; border-right: 1px solid #243544; }
 .info-panel h2 { margin: 6px 0; font-size: 18px; overflow-wrap: anywhere; }
 .info-panel p { color: #91a7b9; }

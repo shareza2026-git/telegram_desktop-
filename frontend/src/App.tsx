@@ -143,6 +143,10 @@ function App() {
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [hasOlder, setHasOlder] = useState(false)
   const [mediaStates, setMediaStates] = useState<Record<string, MediaState>>({})
+  const [replyingTo, setReplyingTo] = useState<Message | null>(null)
+  const [editing, setEditing] = useState<Message | null>(null)
+  const [composerBusy, setComposerBusy] = useState(false)
+  const [messageActionBusy, setMessageActionBusy] = useState<string | null>(null)
 
   const visibleDialogs = useMemo(() => {
     let values = dialogs
@@ -188,10 +192,16 @@ function App() {
     if (!selected) {
       setMessages([])
       setHasOlder(false)
+      setReplyingTo(null)
+      setEditing(null)
+      setDraft('')
       return
     }
     setMessages([])
     setHasOlder(false)
+    setReplyingTo(null)
+    setEditing(null)
+    setDraft('')
     api<Message[]>('/api/telegram/chats/' + selected.chat_id + '/messages?limit=' + HISTORY_PAGE_SIZE)
       .then(items => {
         setMessages(items)
@@ -444,19 +454,114 @@ function App() {
     )
   }
 
+  function messageSnippet(message: Message | null) {
+    if (!message) return 'پیام قبلی'
+    const text = message.text.trim()
+    if (text) return text.length > 110 ? text.slice(0, 110) + '…' : text
+    if (message.media) return mediaKindLabel(message.media.kind)
+    return 'پیام'
+  }
+
+  function beginReply(message: Message) {
+    setEditing(null)
+    setReplyingTo(message)
+  }
+
+  function beginEdit(message: Message) {
+    setReplyingTo(null)
+    setEditing(message)
+    setDraft(message.text)
+  }
+
+  function cancelComposerContext() {
+    const wasEditing = editing !== null
+    setReplyingTo(null)
+    setEditing(null)
+    if (wasEditing) setDraft('')
+  }
+
+  function jumpToMessage(messageId: number) {
+    if (!selected) return
+    const element = document.getElementById('message-' + selected.chat_id + '-' + messageId)
+    if (!element) return
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    element.classList.add('message-focus')
+    window.setTimeout(() => element.classList.remove('message-focus'), 1400)
+  }
+
+  function renderReplyReference(message: Message) {
+    if (!message.reply_to_message_id) return null
+    const source = messages.find(item => item.message_id === message.reply_to_message_id) || null
+    const sender = source ? (source.outgoing ? 'شما' : source.sender_name || 'پیام') : 'پیام قبلی'
+    return (
+      <button
+        className="reply-reference"
+        type="button"
+        onClick={() => jumpToMessage(message.reply_to_message_id as number)}
+        disabled={!source}
+      >
+        <strong>{sender}</strong>
+        <span>{messageSnippet(source)}</span>
+      </button>
+    )
+  }
+
+  async function deleteMessage(message: Message) {
+    if (!selected || !message.outgoing || message.deleted) return
+    if (!window.confirm('این پیام برای همه حذف شود؟')) return
+
+    const actionKey = 'delete:' + mediaKey(message)
+    setMessageActionBusy(actionKey)
+    try {
+      await api<{ chat_id: number; message_id: number; deleted: boolean }>(
+        '/api/telegram/chats/' + selected.chat_id + '/messages/' + message.message_id + '/delete',
+        { method: 'POST' }
+      )
+      setMessages(current => current.map(item => item.message_id === message.message_id
+        ? { ...item, deleted: true, text: '' }
+        : item
+      ))
+      if (editing?.message_id === message.message_id) cancelComposerContext()
+    } catch (caught) {
+      setError(errorMessage(caught, 'حذف پیام انجام نشد.'))
+    } finally {
+      setMessageActionBusy(null)
+    }
+  }
+
   async function sendMessage(event: FormEvent) {
     event.preventDefault()
     const text = draft.trim()
-    if (!selected || !text) return
-    setDraft('')
+    if (!selected || !text || composerBusy) return
+
+    setComposerBusy(true)
     try {
-      const message = await api<Message>('/api/telegram/chats/' + selected.chat_id + '/messages', {
-        method: 'POST',
-        body: JSON.stringify({ text })
-      })
-      setMessages(current => [...current.filter(item => item.message_id !== message.message_id), message])
+      if (editing) {
+        const message = await api<Message>(
+          '/api/telegram/chats/' + selected.chat_id + '/messages/' + editing.message_id + '/edit',
+          {
+            method: 'POST',
+            body: JSON.stringify({ text })
+          }
+        )
+        setMessages(current => current.map(item => item.message_id === message.message_id ? message : item))
+        setEditing(null)
+      } else {
+        const message = await api<Message>('/api/telegram/chats/' + selected.chat_id + '/messages', {
+          method: 'POST',
+          body: JSON.stringify({
+            text,
+            reply_to_message_id: replyingTo?.message_id || null
+          })
+        })
+        setMessages(current => [...current.filter(item => item.message_id !== message.message_id), message])
+        setReplyingTo(null)
+      }
+      setDraft('')
     } catch (caught) {
-      setError(errorMessage(caught, 'ارسال پیام انجام نشد.'))
+      setError(errorMessage(caught, editing ? 'ویرایش پیام انجام نشد.' : 'ارسال پیام انجام نشد.'))
+    } finally {
+      setComposerBusy(false)
     }
   }
 
@@ -581,19 +686,58 @@ function App() {
                 </button>
               )}
               {messages.map(message => (
-                <article className={'message ' + (message.outgoing ? 'outgoing' : '') + (message.deleted ? ' deleted' : '')} key={message.message_id}>
+                <article
+                  id={'message-' + message.chat_id + '-' + message.message_id}
+                  className={'message ' + (message.outgoing ? 'outgoing' : '') + (message.deleted ? ' deleted' : '')}
+                  key={message.message_id}
+                >
                   {!message.outgoing && message.sender_name && <strong className="sender-name">{message.sender_name}</strong>}
+                  {renderReplyReference(message)}
                   {message.media && renderMedia(message)}
                   {message.deleted ? <span>پیام حذف شده است</span> : message.text && <span>{message.text}</span>}
+                  {!message.deleted && (
+                    <div className="message-actions">
+                      <button type="button" onClick={() => beginReply(message)}>↩ پاسخ</button>
+                      {message.outgoing && message.text && <button type="button" onClick={() => beginEdit(message)}>✎ ویرایش</button>}
+                      {message.outgoing && (
+                        <button
+                          type="button"
+                          className="danger"
+                          onClick={() => deleteMessage(message)}
+                          disabled={messageActionBusy === 'delete:' + mediaKey(message)}
+                        >
+                          حذف
+                        </button>
+                      )}
+                    </div>
+                  )}
                   <small>{formatTime(message.date)}{message.edited ? ' · ویرایش‌شده' : ''}</small>
                 </article>
               ))}
             </div>
-            <form className="composer" onSubmit={sendMessage}>
-              <button type="button" className="icon-button">＋</button>
-              <input value={draft} onChange={event => setDraft(event.target.value)} placeholder="پیام..." />
-              <button className="send-button" type="submit">➤</button>
-            </form>
+            <div className="composer-shell">
+              {(replyingTo || editing) && (
+                <div className="composer-context">
+                  <span className="composer-context-bar" />
+                  <div className="composer-context-copy">
+                    <strong>{editing ? 'ویرایش پیام' : 'پاسخ به ' + (replyingTo?.outgoing ? 'خودتان' : replyingTo?.sender_name || 'پیام')}</strong>
+                    <small>{messageSnippet(editing || replyingTo)}</small>
+                  </div>
+                  <button className="icon-button" type="button" aria-label="بستن" onClick={cancelComposerContext}>×</button>
+                </div>
+              )}
+              <form className="composer" onSubmit={sendMessage}>
+                <button type="button" className="icon-button">＋</button>
+                <input
+                  value={draft}
+                  onChange={event => setDraft(event.target.value)}
+                  placeholder={editing ? 'ویرایش پیام...' : replyingTo ? 'پاسخ...' : 'پیام...'}
+                />
+                <button className="send-button" type="submit" disabled={composerBusy || !draft.trim()}>
+                  {editing ? '✓' : '➤'}
+                </button>
+              </form>
+            </div>
           </>
         ) : (
           <div className="empty-chat"><div className="brand-mark">✈</div><h2>یک گفتگو را انتخاب کنید</h2><p>پیام‌های تلگرام در اینجا نمایش داده می‌شوند.</p></div>
