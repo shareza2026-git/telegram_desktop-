@@ -39,6 +39,8 @@ type Status = {
   state: string
   display_name?: string | null
   active_route?: string | null
+  source_session_available: boolean
+  client_session_exists: boolean
   last_error?: string | null
 }
 
@@ -66,6 +68,7 @@ function App() {
   const [query, setQuery] = useState('')
   const [draft, setDraft] = useState('')
   const [error, setError] = useState('')
+  const [importing, setImporting] = useState(false)
 
   const visibleDialogs = useMemo(() => {
     const value = query.trim().toLocaleLowerCase()
@@ -110,6 +113,22 @@ function App() {
       .catch(() => setError('تاریخچه این گفتگو دریافت نشد.'))
   }, [selected?.chat_id])
 
+  async function importSession() {
+    setImporting(true)
+    setError('')
+    try {
+      const nextStatus = await api<Status>('/api/telegram/session/import', { method: 'POST' })
+      setStatus(nextStatus)
+      if (nextStatus.authorized) {
+        setDialogs(await api<Dialog[]>('/api/telegram/dialogs'))
+      }
+    } catch {
+      setError('انتقال سشن انجام نشد؛ تنظیمات مسیر یا فایل منبع را بررسی کنید.')
+    } finally {
+      setImporting(false)
+    }
+  }
+
   async function sendMessage(event: React.FormEvent) {
     event.preventDefault()
     const text = draft.trim()
@@ -139,7 +158,16 @@ function App() {
           <p>سشن مستقل برنامه آماده نیست.</p>
           <span className="status-pill">{status.state}</span>
           {status.last_error && <small>{status.last_error}</small>}
-          <p className="muted">ورود و انتقال کنترل‌شده سشن در مرحله بعد اضافه می‌شود.</p>
+          {status.state === 'IMPORT_READY' && status.source_session_available ? (
+            <>
+              <p className="muted">فایل منبع فقط خوانده می‌شود و یک فایل سشن مستقل برای این برنامه ساخته می‌شود.</p>
+              <button className="primary-action" onClick={importSession} disabled={importing}>
+                {importing ? 'در حال انتقال…' : 'انتقال کنترل‌شده از داشبورد'}
+              </button>
+            </>
+          ) : (
+            <p className="muted">برای ورود با شماره و کد تأیید، رابط ورود در مرحله بعد تکمیل می‌شود.</p>
+          )}
         </div>
       </div>
     )

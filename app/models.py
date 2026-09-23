@@ -44,6 +44,7 @@ class ClientStatus(BaseModel):
     authorized: bool = False
     state: Literal[
         "UNCONFIGURED",
+        "IMPORT_READY",
         "CONNECTING",
         "CONNECTED",
         "AUTH_REQUIRED",

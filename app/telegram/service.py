@@ -17,6 +17,7 @@ from app.models import (
 from app.storage import ChatStore
 from app.telegram.client import build_client
 from app.telegram.session import SessionManager
+from app.telegram.session_import import SessionImporter
 from app.telegram.transport import ProxyRoute, TransportCatalog
 
 
@@ -60,23 +61,42 @@ class TelegramDesktopService:
         self.handlers: list[tuple[Any, Any]] = []
         self.login_phone: str | None = None
         self.login_code_hash: str | None = None
+        self._lifecycle_lock = asyncio.Lock()
+        info = self.sessions.info()
         self.status = ClientStatus(
             configured=settings.telegram_configured,
-            source_session_available=self.sessions.info().source_available,
-            client_session_exists=self.sessions.info().client_exists,
+            source_session_available=info.source_available,
+            client_session_exists=info.client_exists,
         )
 
     async def start(self) -> None:
         self.sessions.ensure_client_path()
+        info = self.sessions.info()
         self.status = self.status.model_copy(
             update={
                 "configured": self.settings.telegram_configured,
-                "source_session_available": self.sessions.info().source_available,
-                "client_session_exists": self.sessions.info().client_exists,
+                "source_session_available": info.source_available,
+                "client_session_exists": info.client_exists,
             }
         )
         if not self.settings.telegram_configured:
             self.status = self.status.model_copy(update={"state": "UNCONFIGURED"})
+            return
+        if info.source_available and not info.client_exists:
+            if not self.settings.telegram_auto_import_source:
+                self.status = self.status.model_copy(
+                    update={"state": "IMPORT_READY", "last_error": None}
+                )
+                return
+            try:
+                await self.import_source()
+            except DesktopError:
+                self.status = self.status.model_copy(
+                    update={
+                        "state": "IMPORT_READY",
+                        "last_error": "Automatic source session import failed",
+                    }
+                )
             return
         await self._connect()
 
@@ -127,6 +147,29 @@ class TelegramDesktopService:
         self.status = self.status.model_copy(
             update={"connected": False, "authorized": False, "state": "PROXY_ERROR", "last_error": "All Telegram routes failed"}
         )
+
+    async def import_source(self) -> ClientStatus:
+        if not self.settings.telegram_configured:
+            raise DesktopError("Telegram API credentials are not configured")
+        async with self._lifecycle_lock:
+            if self.client is not None and self.status.connected:
+                raise DesktopError("Disconnect the current Telegram connection before importing")
+            try:
+                await asyncio.to_thread(SessionImporter(self.sessions).import_source)
+            except ValueError as exc:
+                raise DesktopError(str(exc)) from None
+
+            info = self.sessions.info()
+            self.status = self.status.model_copy(
+                update={
+                    "client_session_exists": info.client_exists,
+                    "source_session_available": info.source_available,
+                    "state": "CONNECTING",
+                    "last_error": None,
+                }
+            )
+            await self._connect()
+            return self.status
 
     async def _mark_authorized(self) -> None:
         if self.client is None:

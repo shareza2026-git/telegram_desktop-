@@ -28,6 +28,10 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="TELEGRAM_SOURCE_SESSION_PATH",
     )
+    telegram_auto_import_source: bool = Field(
+        default=False,
+        validation_alias="TELEGRAM_AUTO_IMPORT_SOURCE",
+    )
     telegram_proxy_config: Path = Field(
         default=Path("data/telegram/proxies.json"),
         validation_alias="TELEGRAM_PROXY_CONFIG",

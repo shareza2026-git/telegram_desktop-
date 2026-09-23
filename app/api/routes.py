@@ -32,6 +32,14 @@ async def transport(request: Request):
     }
 
 
+@router.post("/api/telegram/session/import")
+async def import_session(request: Request):
+    try:
+        return await service(request).import_source()
+    except DesktopError as exc:
+        raise error_response(exc) from None
+
+
 @router.get("/api/telegram/dialogs")
 async def dialogs(request: Request, search: str | None = None):
     try:

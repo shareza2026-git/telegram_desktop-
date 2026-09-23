@@ -12,8 +12,12 @@ button { border: 0; cursor: pointer; }
 .auth-card { width: 360px; padding: 42px 34px; text-align: center; background: #172434; border-radius: 18px; box-shadow: 0 16px 60px #0006; }
 .auth-card h1 { margin: 14px 0 8px; font-size: 24px; }
 .auth-card p { color: #aebed0; line-height: 1.8; }
+.auth-card small { display: block; margin-top: 12px; color: #eaa9ae; }
 .brand-mark { width: 70px; height: 70px; display: grid; place-items: center; margin: auto; border-radius: 50%; color: white; background: #2aabee; font-size: 36px; transform: rotate(-15deg); }
 .brand-mark.small { width: 32px; height: 32px; font-size: 17px; display: inline-grid; margin: 0; }
+.primary-action { margin-top: 12px; padding: 11px 16px; color: white; background: #2aabee; border-radius: 10px; font-weight: 700; }
+.primary-action:hover { background: #1f9ed9; }
+.primary-action:disabled { cursor: wait; opacity: .65; }
 .telegram-shell { min-height: 100vh; display: grid; grid-template-columns: 320px minmax(0, 1fr) 260px; direction: ltr; background: #17212b; }
 .chat-sidebar, .info-panel, .chat-panel { direction: rtl; min-width: 0; }
 .chat-sidebar { background: #17212b; border-left: 1px solid #243544; display: flex; flex-direction: column; }
