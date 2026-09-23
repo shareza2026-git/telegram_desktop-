@@ -34,6 +34,7 @@ class FakeClient:
         self.deleted: list[tuple[int, list[int], bool]] = []
         self.searched: list[tuple[int, str, int]] = []
         self.forwarded: list[tuple[int, int]] = []
+        self.files: list[tuple[int, str, str | None, int | None]] = []
 
     async def get_messages(self, chat_id: int, ids: int):
         return self.existing
@@ -50,6 +51,24 @@ class FakeClient:
     async def forward_messages(self, target_chat_id: int, source: FakeMessage):
         self.forwarded.append((target_chat_id, source.id))
         return FakeMessage(30, source.raw_text, outgoing=True)
+
+    async def send_file(
+        self,
+        chat_id: int,
+        file: str,
+        caption: str | None,
+        reply_to: int | None,
+    ):
+        self.files.append((chat_id, file, caption, reply_to))
+        message = FakeMessage(40, caption or "", reply_to_message_id=reply_to)
+        message.media = object()
+        message.document = object()
+        message.file = type("File", (), {
+            "name": "report.pdf",
+            "size": 4,
+            "mime_type": "application/pdf",
+        })()
+        return message
 
     async def edit_message(self, chat_id: int, message_id: int, text: str):
         self.edited.append((chat_id, message_id, text))
@@ -179,4 +198,22 @@ async def test_forward_message_persists_in_target_chat_and_publishes():
     assert result.chat_id == 99
     assert result.message_id == 30
     assert service.store.messages[-1].chat_id == 99
+    assert service.events.packets[-1]["type"] == "MESSAGE_NEW"
+
+
+@pytest.mark.asyncio
+async def test_send_file_keeps_caption_reply_and_live_event(tmp_path):
+    client = FakeClient()
+    service = build_service(client)
+    path = tmp_path / "report.pdf"
+    path.write_bytes(b"test")
+
+    result = await service.send_file(7, str(path), "caption", reply_to_message_id=3)
+
+    assert client.files == [(7, str(path), "caption", 3)]
+    assert result.message_id == 40
+    assert result.text == "caption"
+    assert result.reply_to_message_id == 3
+    assert result.media is not None
+    assert service.store.messages[-1].message_id == 40
     assert service.events.packets[-1]["type"] == "MESSAGE_NEW"

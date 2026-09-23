@@ -1,4 +1,6 @@
-from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
+import asyncio
+
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 
 from app.models import (
@@ -10,6 +12,7 @@ from app.models import (
     LoginPhoneRequest,
     SendMessageRequest,
 )
+from app.telegram.uploads import cleanup_staged_upload, stage_upload
 
 router = APIRouter()
 
@@ -136,6 +139,41 @@ async def send_message(chat_id: int, values: SendMessageRequest, request: Reques
         )
     except DesktopError as exc:
         raise error_response(exc) from None
+
+
+@router.post("/api/telegram/chats/{chat_id}/files")
+async def send_file(
+    chat_id: int,
+    request: Request,
+    file: UploadFile = File(...),
+    caption: str = Form(""),
+    reply_to_message_id: int | None = Form(None),
+):
+    desktop = service(request)
+    if not desktop.status.connected or not desktop.status.authorized:
+        raise error_response(DesktopError("Telegram is not connected and authorized"))
+
+    staged = None
+    try:
+        root = desktop.settings.project_root / "data" / "telegram_desktop" / "uploads"
+        staged = await asyncio.to_thread(
+            stage_upload,
+            file.file,
+            root,
+            file.filename,
+        )
+        return await desktop.send_file(
+            chat_id,
+            str(staged.path),
+            caption.strip(),
+            reply_to_message_id,
+        )
+    except (DesktopError, ValueError) as exc:
+        raise error_response(exc) from None
+    finally:
+        await file.close()
+        if staged is not None:
+            await asyncio.to_thread(cleanup_staged_upload, staged.path)
 
 
 @router.post("/api/telegram/chats/{chat_id}/messages/{message_id}/edit")

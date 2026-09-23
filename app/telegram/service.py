@@ -540,6 +540,30 @@ class TelegramDesktopService:
         await self.events.publish({"type": "MESSAGE_NEW", "data": message.model_dump(mode="json")})
         return message
 
+    async def send_file(
+        self,
+        chat_id: int,
+        path: str,
+        caption: str = "",
+        reply_to_message_id: int | None = None,
+    ) -> Message:
+        client = self._require_authorized()
+        value = await client.send_file(
+            chat_id,
+            file=path,
+            caption=caption or None,
+            reply_to=reply_to_message_id,
+        )
+        if isinstance(value, list):
+            if not value:
+                raise DesktopError("Telegram did not return the uploaded message")
+            value = value[0]
+
+        message = self._message_model(value, chat_id)
+        await self.store.upsert_message(message)
+        await self.events.publish({"type": "MESSAGE_NEW", "data": message.model_dump(mode="json")})
+        return message
+
     async def edit_text(self, chat_id: int, message_id: int, text: str) -> Message:
         client, _ = await self._own_message(chat_id, message_id)
         value = await client.edit_message(chat_id, message_id, text)
