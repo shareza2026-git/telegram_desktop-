@@ -151,6 +151,7 @@ function App() {
   const [messageQuery, setMessageQuery] = useState('')
   const [searchResults, setSearchResults] = useState<Message[]>([])
   const [searchBusy, setSearchBusy] = useState(false)
+  const [searchPerformed, setSearchPerformed] = useState(false)
   const [forwarding, setForwarding] = useState<Message | null>(null)
   const [forwardQuery, setForwardQuery] = useState('')
   const [forwardTargetBusy, setForwardTargetBusy] = useState<number | null>(null)
@@ -214,6 +215,7 @@ function App() {
       setMessageSearchOpen(false)
       setMessageQuery('')
       setSearchResults([])
+      setSearchPerformed(false)
       setForwarding(null)
       setForwardQuery('')
       return
@@ -485,6 +487,7 @@ function App() {
       if (current) {
         setMessageQuery('')
         setSearchResults([])
+        setSearchPerformed(false)
       }
       return !current
     })
@@ -500,11 +503,13 @@ function App() {
     }
 
     setSearchBusy(true)
+    setSearchPerformed(false)
     try {
       const results = await api<Message[]>(
         '/api/telegram/chats/' + selected.chat_id + '/search?q=' + encodeURIComponent(value) + '&limit=50'
       )
       setSearchResults(results)
+      setSearchPerformed(true)
     } catch (caught) {
       setError(errorMessage(caught, 'جست‌وجوی پیام انجام نشد.'))
     } finally {
@@ -784,7 +789,10 @@ function App() {
                 <form className="message-search-form" onSubmit={searchMessages}>
                   <input
                     value={messageQuery}
-                    onChange={event => setMessageQuery(event.target.value)}
+                    onChange={event => {
+                      setMessageQuery(event.target.value)
+                      setSearchPerformed(false)
+                    }}
                     placeholder="جست‌وجو در این گفتگو"
                     autoFocus
                   />
@@ -802,7 +810,7 @@ function App() {
                     ))}
                   </div>
                 )}
-                {!searchBusy && messageQuery.trim().length >= 2 && searchResults.length === 0 && (
+                {!searchBusy && searchPerformed && searchResults.length === 0 && (
                   <div className="search-empty">نتیجه‌ای پیدا نشد.</div>
                 )}
               </section>
