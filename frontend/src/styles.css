@@ -45,7 +45,9 @@ button { border: 0; cursor: pointer; }
 .dialog-list { overflow: auto; flex: 1; padding: 2px 6px 12px; }
 .dialog-row { width: 100%; min-height: 68px; display: flex; align-items: center; gap: 10px; padding: 8px 10px; color: #dce8f2; background: transparent; border-radius: 10px; text-align: right; }
 .dialog-row:hover, .dialog-row.selected { background: #2aabee2e; }
-.avatar { width: 44px; height: 44px; flex: 0 0 44px; display: grid; place-items: center; color: white; background: linear-gradient(135deg, #3f86c5, #7b58ae); border-radius: 50%; font-size: 20px; }
+.avatar { position: relative; width: 44px; height: 44px; flex: 0 0 44px; overflow: hidden; display: grid; place-items: center; color: white; background: linear-gradient(135deg, #3f86c5, #7b58ae); border-radius: 50%; font-size: 20px; }
+.avatar-fallback { position: absolute; inset: 0; display: grid; place-items: center; }
+.avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .avatar.large { width: 42px; height: 42px; font-size: 18px; }
 .avatar.huge { width: 92px; height: 92px; margin: 22px auto 12px; font-size: 38px; }
 .dialog-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 5px; }
@@ -115,7 +117,15 @@ button { border: 0; cursor: pointer; }
 .info-panel { padding: 0 20px; color: #dce8f2; background: #17212b; text-align: center; border-right: 1px solid #243544; }
 .info-panel h2 { margin: 6px 0; font-size: 18px; overflow-wrap: anywhere; }
 .info-panel p { color: #91a7b9; }
-.info-panel hr { border: 0; border-top: 1px solid #2a3b49; }
+.info-panel hr { margin: 15px 0; border: 0; border-top: 1px solid #2a3b49; }
+.profile-username { margin: 4px 0 10px; direction: ltr; }
+.info-badges { display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; }
+.info-badges span { padding: 4px 7px; color: #aee5fb; background: #2aabee22; border-radius: 8px; font-size: 10px; }
+.info-badges span.warning { color: #ffbac1; background: #d85b6822; }
+.info-details { display: flex; flex-direction: column; text-align: right; }
+.info-details > div { min-height: 42px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #243544; }
+.info-details span { color: #8299aa; font-size: 11px; }
+.info-details strong { max-width: 150px; overflow: hidden; color: #dce8f2; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .empty-chat { margin: auto; color: #a8bac8; text-align: center; }
 .empty-chat .brand-mark { width: 58px; height: 58px; font-size: 28px; }
 .empty-list { padding: 34px 14px; color: #8fa3b5; text-align: center; }

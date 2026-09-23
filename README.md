@@ -23,6 +23,7 @@ The trading terminal remains a separate repository and its running session file 
 6. Inline photo rendering; no video/audio playback.
 7. Reply, edit-own-message and delete-own-message actions.
 8. Server-side chat search and explicit-destination forwarding.
+9. Real chat/entity information and cached profile photos.
 
 ## Phase 2: controlled session bootstrap
 
@@ -87,6 +88,18 @@ The client now supports:
 6. Persisting forwarded messages in the target chat and publishing them through the existing WebSocket flow.
 
 Search and forwarding use the authorized independent Telegram client. No dashboard database, source session, API hash or proxy secret is exposed to the frontend.
+
+## Phase 8: chat information and avatars
+
+The client now supports:
+
+1. Reading safe Telegram entity metadata for the selected private chat, group, supergroup or channel.
+2. Showing username, account status, member count when Telegram provides it, verification and safety flags.
+3. Loading profile photos in the dialog list, chat header, forwarding dialog and information panel.
+4. Falling back to the title initial when no profile photo is available.
+5. Caching profile photos for one hour under data/telegram_desktop/avatars.
+
+The profile API does not return phone numbers, API credentials, authorization keys, session paths or proxy configuration.
 
 ## Local configuration
 

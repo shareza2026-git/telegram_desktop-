@@ -10,6 +10,20 @@ type Dialog = {
   archived: boolean
 }
 
+type ChatInfo = {
+  chat_id: number
+  title: string
+  dialog_type: string
+  username?: string | null
+  participants_count?: number | null
+  status?: string | null
+  is_bot: boolean
+  verified: boolean
+  scam: boolean
+  fake: boolean
+  photo_available: boolean
+}
+
 type MediaInfo = {
   kind: 'photo' | 'video' | 'audio' | 'file' | 'other'
   name?: string | null
@@ -124,10 +138,58 @@ function errorMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback
 }
 
+function dialogTypeLabel(value: string) {
+  const labels: Record<string, string> = {
+    user: 'گفت‌وگوی شخصی',
+    group: 'گروه',
+    supergroup: 'سوپرگروه',
+    channel: 'کانال'
+  }
+  return labels[value] || value
+}
+
+function presenceLabel(value: string | null | undefined) {
+  const labels: Record<string, string> = {
+    online: 'آنلاین',
+    offline: 'آفلاین',
+    recently: 'اخیراً آنلاین',
+    last_week: 'آخرین بازدید این هفته',
+    last_month: 'آخرین بازدید این ماه'
+  }
+  return value ? labels[value] || value : ''
+}
+
+function avatarUrl(chatId: number) {
+  return backendBase + '/api/telegram/chats/' + encodeURIComponent(String(chatId)) + '/photo'
+}
+
+function ChatAvatar({ chatId, title, className = '' }: { chatId: number; title: string; className?: string }) {
+  const [failed, setFailed] = useState(false)
+
+  useEffect(() => {
+    setFailed(false)
+  }, [chatId])
+
+  return (
+    <span className={'avatar ' + className}>
+      <span className="avatar-fallback">{title.slice(0, 1)}</span>
+      {!failed && (
+        <img
+          src={avatarUrl(chatId)}
+          alt=""
+          loading="lazy"
+          onError={() => setFailed(true)}
+        />
+      )}
+    </span>
+  )
+}
+
 function App() {
   const [status, setStatus] = useState<Status | null>(null)
   const [dialogs, setDialogs] = useState<Dialog[]>([])
   const [selected, setSelected] = useState<Dialog | null>(null)
+  const [chatInfo, setChatInfo] = useState<ChatInfo | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [query, setQuery] = useState('')
   const [draft, setDraft] = useState('')
@@ -209,6 +271,7 @@ function App() {
     if (!selected) {
       setMessages([])
       setHasOlder(false)
+      setChatInfo(null)
       setReplyingTo(null)
       setEditing(null)
       setDraft('')
@@ -222,6 +285,7 @@ function App() {
     }
     setMessages([])
     setHasOlder(false)
+    setChatInfo(null)
     setReplyingTo(null)
     setEditing(null)
     setDraft('')
@@ -230,6 +294,10 @@ function App() {
     setSearchResults([])
     setForwarding(null)
     setForwardQuery('')
+    api<ChatInfo>('/api/telegram/chats/' + selected.chat_id)
+      .then(setChatInfo)
+      .catch(() => setChatInfo(null))
+
     api<Message[]>('/api/telegram/chats/' + selected.chat_id + '/messages?limit=' + HISTORY_PAGE_SIZE)
       .then(items => {
         setMessages(items)
@@ -764,7 +832,7 @@ function App() {
         <div className="dialog-list">
           {visibleDialogs.map(dialog => (
             <button className={'dialog-row ' + (selected?.chat_id === dialog.chat_id ? 'selected' : '')} key={dialog.chat_id} onClick={() => setSelected(dialog)}>
-              <span className="avatar">{dialog.title.slice(0, 1)}</span>
+              <ChatAvatar chatId={dialog.chat_id} title={dialog.title} />
               <span className="dialog-copy"><strong>{dialog.title}</strong><small>{dialog.dialog_type}</small></span>
               {dialog.unread_count > 0 && <span className="unread">{dialog.unread_count}</span>}
             </button>
@@ -777,8 +845,11 @@ function App() {
         {selected ? (
           <>
             <header className="chat-header">
-              <div className="avatar large">{selected.title.slice(0, 1)}</div>
-              <div><strong>{selected.title}</strong><small>{selected.dialog_type}</small></div>
+              <ChatAvatar chatId={selected.chat_id} title={selected.title} className="large" />
+              <div>
+                <strong>{selected.title}</strong>
+                <small>{presenceLabel(chatInfo?.status) || dialogTypeLabel(chatInfo?.dialog_type || selected.dialog_type)}</small>
+              </div>
               <div className="header-actions">
                 <button className={'icon-button ' + (messageSearchOpen ? 'active' : '')} aria-label="جست‌وجوی پیام" onClick={toggleMessageSearch}>⌕</button>
                 <button className="icon-button">⋮</button>
@@ -882,7 +953,28 @@ function App() {
       </section>
 
       <aside className="info-panel">
-        {selected ? <><div className="info-avatar avatar huge">{selected.title.slice(0, 1)}</div><h2>{selected.title}</h2><p>{selected.dialog_type}</p><hr /><p className="muted">جزئیات بیشتر در فاز بعد اضافه می‌شود.</p></> : <div className="muted">اطلاعات گفتگو</div>}
+        {selected ? (
+          <>
+            <ChatAvatar chatId={selected.chat_id} title={selected.title} className="huge" />
+            <h2>{chatInfo?.title || selected.title}</h2>
+            {chatInfo?.username && <p className="profile-username">@{chatInfo.username}</p>}
+            <div className="info-badges">
+              {chatInfo?.verified && <span>تأییدشده</span>}
+              {chatInfo?.is_bot && <span>ربات</span>}
+              {chatInfo?.scam && <span className="warning">کلاهبرداری</span>}
+              {chatInfo?.fake && <span className="warning">جعلی</span>}
+            </div>
+            <hr />
+            <div className="info-details">
+              <div><span>نوع</span><strong>{dialogTypeLabel(chatInfo?.dialog_type || selected.dialog_type)}</strong></div>
+              {chatInfo?.status && <div><span>وضعیت</span><strong>{presenceLabel(chatInfo.status)}</strong></div>}
+              {chatInfo?.participants_count != null && (
+                <div><span>اعضا</span><strong>{new Intl.NumberFormat('fa-IR').format(chatInfo.participants_count)}</strong></div>
+              )}
+              <div><span>شناسه</span><strong dir="ltr">{selected.chat_id}</strong></div>
+            </div>
+          </>
+        ) : <div className="muted">اطلاعات گفتگو</div>}
       </aside>
 
       {forwarding && (
@@ -911,7 +1003,7 @@ function App() {
                   onClick={() => forwardMessageTo(dialog)}
                   disabled={forwardTargetBusy !== null}
                 >
-                  <span className="avatar">{dialog.title.slice(0, 1)}</span>
+                  <ChatAvatar chatId={dialog.chat_id} title={dialog.title} />
                   <span>
                     <strong>{dialog.title}</strong>
                     <small>{dialog.dialog_type}{dialog.username ? ' · @' + dialog.username : ''}</small>
