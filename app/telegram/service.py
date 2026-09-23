@@ -413,13 +413,47 @@ class TelegramDesktopService:
             await self.store.upsert_message(value)
         return list(reversed(values))
 
-    async def send_text(self, chat_id: int, text: str) -> Message:
+    async def _own_message(self, chat_id: int, message_id: int) -> tuple[TelegramClient, Any]:
         client = self._require_authorized()
-        value = await client.send_message(chat_id, text)
+        value = await client.get_messages(chat_id, ids=message_id)
+        if value is None:
+            raise DesktopError("Message was not found")
+        if not bool(getattr(value, "out", False)):
+            raise DesktopError("Only your own messages can be changed")
+        return client, value
+
+    async def send_text(
+        self,
+        chat_id: int,
+        text: str,
+        reply_to_message_id: int | None = None,
+    ) -> Message:
+        client = self._require_authorized()
+        value = await client.send_message(
+            chat_id,
+            text,
+            reply_to=reply_to_message_id,
+        )
         message = self._message_model(value, chat_id)
         await self.store.upsert_message(message)
         await self.events.publish({"type": "MESSAGE_NEW", "data": message.model_dump(mode="json")})
         return message
+
+    async def edit_text(self, chat_id: int, message_id: int, text: str) -> Message:
+        client, _ = await self._own_message(chat_id, message_id)
+        value = await client.edit_message(chat_id, message_id, text)
+        message = self._message_model(value, chat_id, edited=True)
+        await self.store.upsert_message(message)
+        await self.events.publish({"type": "MESSAGE_EDITED", "data": message.model_dump(mode="json")})
+        return message
+
+    async def delete_message(self, chat_id: int, message_id: int) -> dict:
+        client, _ = await self._own_message(chat_id, message_id)
+        await client.delete_messages(chat_id, [message_id], revoke=True)
+        await self.store.mark_deleted(chat_id, message_id)
+        packet = {"chat_id": chat_id, "message_id": message_id}
+        await self.events.publish({"type": "MESSAGE_DELETED", "data": packet})
+        return {**packet, "deleted": True}
 
     async def mark_read(self, chat_id: int) -> dict:
         client = self._require_authorized()

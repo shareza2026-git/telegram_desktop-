@@ -62,6 +62,11 @@ class ClientStatus(BaseModel):
 
 class SendMessageRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4096)
+    reply_to_message_id: int | None = Field(default=None, ge=1)
+
+
+class EditMessageRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=4096)
 
 
 class LoginPhoneRequest(BaseModel):

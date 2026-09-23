@@ -3,6 +3,7 @@ from fastapi.responses import FileResponse
 
 from app.models import (
     DesktopError,
+    EditMessageRequest,
     LoginCodeRequest,
     LoginPasswordRequest,
     LoginPhoneRequest,
@@ -93,7 +94,32 @@ async def media(
 @router.post("/api/telegram/chats/{chat_id}/messages")
 async def send_message(chat_id: int, values: SendMessageRequest, request: Request):
     try:
-        return await service(request).send_text(chat_id, values.text)
+        return await service(request).send_text(
+            chat_id,
+            values.text,
+            values.reply_to_message_id,
+        )
+    except DesktopError as exc:
+        raise error_response(exc) from None
+
+
+@router.post("/api/telegram/chats/{chat_id}/messages/{message_id}/edit")
+async def edit_message(
+    chat_id: int,
+    message_id: int,
+    values: EditMessageRequest,
+    request: Request,
+):
+    try:
+        return await service(request).edit_text(chat_id, message_id, values.text)
+    except DesktopError as exc:
+        raise error_response(exc) from None
+
+
+@router.post("/api/telegram/chats/{chat_id}/messages/{message_id}/delete")
+async def delete_message(chat_id: int, message_id: int, request: Request):
+    try:
+        return await service(request).delete_message(chat_id, message_id)
     except DesktopError as exc:
         raise error_response(exc) from None
 
