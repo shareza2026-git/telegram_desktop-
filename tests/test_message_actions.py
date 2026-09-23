@@ -32,13 +32,24 @@ class FakeClient:
         self.sent: list[tuple[int, str, int | None]] = []
         self.edited: list[tuple[int, int, str]] = []
         self.deleted: list[tuple[int, list[int], bool]] = []
+        self.searched: list[tuple[int, str, int]] = []
+        self.forwarded: list[tuple[int, int]] = []
 
     async def get_messages(self, chat_id: int, ids: int):
         return self.existing
 
+    async def iter_messages(self, chat_id: int, search: str, limit: int):
+        self.searched.append((chat_id, search, limit))
+        yield FakeMessage(14, "new result", outgoing=False)
+        yield FakeMessage(9, "old result", outgoing=False)
+
     async def send_message(self, chat_id: int, text: str, reply_to: int | None = None):
         self.sent.append((chat_id, text, reply_to))
         return FakeMessage(20, text, reply_to_message_id=reply_to)
+
+    async def forward_messages(self, target_chat_id: int, source: FakeMessage):
+        self.forwarded.append((target_chat_id, source.id))
+        return FakeMessage(30, source.raw_text, outgoing=True)
 
     async def edit_message(self, chat_id: int, message_id: int, text: str):
         self.edited.append((chat_id, message_id, text))
@@ -134,3 +145,38 @@ async def test_delete_own_message_marks_local_store_and_event():
         "data": {"chat_id": 7, "message_id": 11},
     }
     assert result["deleted"] is True
+
+
+@pytest.mark.asyncio
+async def test_search_messages_uses_telegram_and_persists_results():
+    client = FakeClient()
+    service = build_service(client)
+
+    results = await service.search_messages(7, "  gold  ", limit=25)
+
+    assert client.searched == [(7, "gold", 25)]
+    assert [message.message_id for message in results] == [14, 9]
+    assert [message.message_id for message in service.store.messages] == [14, 9]
+
+
+@pytest.mark.asyncio
+async def test_search_messages_rejects_short_query():
+    client = FakeClient()
+    service = build_service(client)
+
+    with pytest.raises(ValueError, match="at least 2"):
+        await service.search_messages(7, " ")
+
+
+@pytest.mark.asyncio
+async def test_forward_message_persists_in_target_chat_and_publishes():
+    client = FakeClient(FakeMessage(11, "forward me", outgoing=False))
+    service = build_service(client)
+
+    result = await service.forward_message(7, 11, 99)
+
+    assert client.forwarded == [(99, 11)]
+    assert result.chat_id == 99
+    assert result.message_id == 30
+    assert service.store.messages[-1].chat_id == 99
+    assert service.events.packets[-1]["type"] == "MESSAGE_NEW"

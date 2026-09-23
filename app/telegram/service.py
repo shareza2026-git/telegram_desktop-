@@ -422,6 +422,26 @@ class TelegramDesktopService:
             raise DesktopError("Only your own messages can be changed")
         return client, value
 
+    async def search_messages(
+        self,
+        chat_id: int,
+        query: str,
+        limit: int = 50,
+    ) -> list[Message]:
+        value = query.strip()
+        if len(value) < 2:
+            raise ValueError("search query must contain at least 2 characters")
+        if limit < 1 or limit > 100:
+            raise ValueError("limit must be between 1 and 100")
+
+        client = self._require_authorized()
+        messages = []
+        async for item in client.iter_messages(chat_id, search=value, limit=limit):
+            message = self._message_model(item, chat_id)
+            messages.append(message)
+            await self.store.upsert_message(message)
+        return messages
+
     async def send_text(
         self,
         chat_id: int,
@@ -454,6 +474,28 @@ class TelegramDesktopService:
         packet = {"chat_id": chat_id, "message_id": message_id}
         await self.events.publish({"type": "MESSAGE_DELETED", "data": packet})
         return {**packet, "deleted": True}
+
+    async def forward_message(
+        self,
+        source_chat_id: int,
+        message_id: int,
+        target_chat_id: int,
+    ) -> Message:
+        client = self._require_authorized()
+        source = await client.get_messages(source_chat_id, ids=message_id)
+        if source is None:
+            raise DesktopError("Message was not found")
+
+        value = await client.forward_messages(target_chat_id, source)
+        if isinstance(value, list):
+            if not value:
+                raise DesktopError("Telegram did not return the forwarded message")
+            value = value[0]
+
+        message = self._message_model(value, target_chat_id)
+        await self.store.upsert_message(message)
+        await self.events.publish({"type": "MESSAGE_NEW", "data": message.model_dump(mode="json")})
+        return message
 
     async def mark_read(self, chat_id: int) -> dict:
         client = self._require_authorized()

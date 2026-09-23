@@ -4,6 +4,7 @@ from fastapi.responses import FileResponse
 from app.models import (
     DesktopError,
     EditMessageRequest,
+    ForwardMessageRequest,
     LoginCodeRequest,
     LoginPasswordRequest,
     LoginPhoneRequest,
@@ -59,6 +60,19 @@ async def messages(
 ):
     try:
         return await service(request).history(chat_id, limit, offset_id)
+    except (DesktopError, ValueError) as exc:
+        raise error_response(exc) from None
+
+
+@router.get("/api/telegram/chats/{chat_id}/search")
+async def search_messages(
+    chat_id: int,
+    request: Request,
+    q: str,
+    limit: int = 50,
+):
+    try:
+        return await service(request).search_messages(chat_id, q, limit)
     except (DesktopError, ValueError) as exc:
         raise error_response(exc) from None
 
@@ -120,6 +134,23 @@ async def edit_message(
 async def delete_message(chat_id: int, message_id: int, request: Request):
     try:
         return await service(request).delete_message(chat_id, message_id)
+    except DesktopError as exc:
+        raise error_response(exc) from None
+
+
+@router.post("/api/telegram/chats/{chat_id}/messages/{message_id}/forward")
+async def forward_message(
+    chat_id: int,
+    message_id: int,
+    values: ForwardMessageRequest,
+    request: Request,
+):
+    try:
+        return await service(request).forward_message(
+            chat_id,
+            message_id,
+            values.target_chat_id,
+        )
     except DesktopError as exc:
         raise error_response(exc) from None
 

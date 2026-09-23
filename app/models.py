@@ -69,6 +69,10 @@ class EditMessageRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4096)
 
 
+class ForwardMessageRequest(BaseModel):
+    target_chat_id: int
+
+
 class LoginPhoneRequest(BaseModel):
     phone: str = Field(min_length=7, max_length=20)
 
