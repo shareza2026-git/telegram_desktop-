@@ -16,6 +16,7 @@ type MediaInfo = {
   size?: number | null
   mime_type?: string | null
   playable: boolean
+  downloadable: boolean
 }
 
 type Message = {
@@ -52,10 +53,18 @@ type AuthResponse = {
 
 type AuthStep = 'phone' | 'code' | 'password'
 type FolderKey = 'all' | 'private' | 'groups' | 'channels' | 'archived'
+type MediaState = 'loading' | 'ready' | 'downloading' | 'done' | 'error'
 
 const HISTORY_PAGE_SIZE = 80
 const backendBase = (import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8110').replace(/\/$/, '')
 const socketBase = backendBase.replace(/^http/, 'ws')
+const mediaLabels: Record<MediaInfo['kind'], string> = {
+  photo: 'تصویر',
+  video: 'ویدئو',
+  audio: 'صدا',
+  file: 'فایل',
+  other: 'رسانه'
+}
 
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(backendBase + path, {
@@ -77,6 +86,25 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
 
 function formatTime(value: string) {
   return new Intl.DateTimeFormat('fa-IR', { hour: '2-digit', minute: '2-digit' }).format(new Date(value))
+}
+
+function formatBytes(value: number | null | undefined) {
+  if (value == null || value < 0) return 'اندازه نامشخص'
+  if (value < 1024) return value + ' B'
+
+  const units = ['KB', 'MB', 'GB']
+  let amount = value
+  let index = -1
+  while (amount >= 1024 && index < units.length - 1) {
+    amount /= 1024
+    index += 1
+  }
+  const digits = amount >= 10 || index === 0 ? 0 : 1
+  return amount.toFixed(digits) + ' ' + units[index]
+}
+
+function mediaKindLabel(kind: MediaInfo['kind']) {
+  return mediaLabels[kind]
 }
 
 function statusLabel(value: string) {
@@ -114,6 +142,7 @@ function App() {
   const [activeFolder, setActiveFolder] = useState<FolderKey>('all')
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [hasOlder, setHasOlder] = useState(false)
+  const [mediaStates, setMediaStates] = useState<Record<string, MediaState>>({})
 
   const visibleDialogs = useMemo(() => {
     let values = dialogs
@@ -305,6 +334,116 @@ function App() {
     setError('')
   }
 
+  function mediaKey(message: Message) {
+    return message.chat_id + ':' + message.message_id
+  }
+
+  function mediaUrl(message: Message, download = false) {
+    const path = backendBase + '/api/telegram/chats/' + encodeURIComponent(String(message.chat_id)) + '/messages/' + encodeURIComponent(String(message.message_id)) + '/media'
+    return download ? path + '?download=true' : path
+  }
+
+  function mediaState(message: Message): MediaState {
+    return mediaStates[mediaKey(message)] || (message.media?.kind === 'photo' ? 'loading' : 'ready')
+  }
+
+  function setMessageMediaState(message: Message, value: MediaState) {
+    setMediaStates(current => ({ ...current, [mediaKey(message)]: value }))
+  }
+
+  function mediaDownloadName(message: Message) {
+    const preferred = message.media?.name?.trim() || mediaKindLabel(message.media?.kind || 'other') + '-' + message.message_id
+    const cleaned = preferred.replace(/[\\/:*?"<>|]+/g, '_')
+    return cleaned || 'media-' + message.message_id
+  }
+
+  async function downloadMedia(message: Message) {
+    if (!message.media || message.media.downloadable === false) return
+    setMessageMediaState(message, 'downloading')
+    try {
+      const response = await fetch(mediaUrl(message, true))
+      if (!response.ok) {
+        const body = await response.text()
+        let detail = body || 'دانلود رسانه انجام نشد.'
+        try {
+          const parsed = JSON.parse(body) as { detail?: string }
+          if (parsed.detail) detail = parsed.detail
+        } catch {
+          // Keep the plain response body when the backend did not return JSON.
+        }
+        throw new Error(detail)
+      }
+
+      const blob = await response.blob()
+      const objectUrl = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = objectUrl
+      anchor.download = mediaDownloadName(message)
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
+      setMessageMediaState(message, 'done')
+    } catch (caught) {
+      setMessageMediaState(message, 'error')
+      setError(errorMessage(caught, 'دانلود رسانه انجام نشد.'))
+    }
+  }
+
+  function mediaButtonLabel(state: MediaState) {
+    if (state === 'downloading') return 'در حال دانلود…'
+    if (state === 'done') return 'دانلود شد'
+    if (state === 'error') return 'تلاش دوباره'
+    return 'دانلود'
+  }
+
+  function renderMedia(message: Message) {
+    if (!message.media || message.deleted) return null
+    const state = mediaState(message)
+    const label = mediaKindLabel(message.media.kind)
+
+    if (message.media.kind === 'photo') {
+      return (
+        <div className="media-photo-card">
+          <img
+            className="message-photo"
+            src={mediaUrl(message)}
+            alt={message.media.name || 'تصویر پیام'}
+            loading="lazy"
+            onLoad={() => setMessageMediaState(message, 'ready')}
+            onError={() => setMessageMediaState(message, 'error')}
+          />
+          <div className="media-toolbar">
+            <div className="media-copy">
+              <strong>{message.media.name || label}</strong>
+              <small>{formatBytes(message.media.size)}</small>
+            </div>
+            <button className="download-button" type="button" onClick={() => downloadMedia(message)} disabled={state === 'downloading'}>
+              {mediaButtonLabel(state)}
+            </button>
+          </div>
+          {state === 'error' && <small className="media-status error">نمایش یا دریافت رسانه انجام نشد.</small>}
+        </div>
+      )
+    }
+
+    return (
+      <div className="media-card">
+        <span className="media-icon">{message.media.kind === 'audio' ? '♫' : message.media.kind === 'video' ? '▣' : '□'}</span>
+        <div className="media-copy">
+          <strong>{message.media.name || label}</strong>
+          <small>{label} · {formatBytes(message.media.size)}</small>
+          {message.media.kind === 'audio' || message.media.kind === 'video'
+            ? <small className="media-status">پخش در این فاز فعال نیست.</small>
+            : null}
+        </div>
+        <button className="download-button" type="button" onClick={() => downloadMedia(message)} disabled={state === 'downloading'}>
+          {mediaButtonLabel(state)}
+        </button>
+      </div>
+    )
+  }
+
   async function sendMessage(event: FormEvent) {
     event.preventDefault()
     const text = draft.trim()
@@ -444,7 +583,7 @@ function App() {
               {messages.map(message => (
                 <article className={'message ' + (message.outgoing ? 'outgoing' : '') + (message.deleted ? ' deleted' : '')} key={message.message_id}>
                   {!message.outgoing && message.sender_name && <strong className="sender-name">{message.sender_name}</strong>}
-                  {message.media && <div className="media-card">فایل {message.media.kind === 'video' ? 'ویدئو' : message.media.kind === 'audio' ? 'صدا' : message.media.kind}</div>}
+                  {message.media && renderMedia(message)}
                   {message.deleted ? <span>پیام حذف شده است</span> : message.text && <span>{message.text}</span>}
                   <small>{formatTime(message.date)}{message.edited ? ' · ویرایش‌شده' : ''}</small>
                 </article>
