@@ -610,7 +610,17 @@ function App() {
       })
       notification.onclick = () => {
         window.focus()
-        if (dialog) setSelected(dialog)
+        if (dialog) {
+          const opened = { ...dialog, unread_count: 0 }
+          setSelected(opened)
+          setDialogs(current => current.map(item => (
+            item.chat_id === dialog.chat_id ? { ...item, unread_count: 0 } : item
+          )))
+          void api<{ chat_id: number; read: boolean }>(
+            '/api/telegram/chats/' + dialog.chat_id + '/read',
+            { method: 'POST' }
+          ).catch(() => undefined)
+        }
         notification.close()
       }
     } catch {
@@ -628,11 +638,15 @@ function App() {
       setError('اعلان دسکتاپ در این محیط پشتیبانی نمی‌شود.')
       return
     }
-    const permission = await Notification.requestPermission()
-    const enabled = permission === 'granted'
-    window.localStorage.setItem('telegram-notifications', enabled ? '1' : '0')
-    setNotificationsEnabled(enabled)
-    if (!enabled) setError('مجوز اعلان دسکتاپ صادر نشد.')
+    try {
+      const permission = await Notification.requestPermission()
+      const enabled = permission === 'granted'
+      window.localStorage.setItem('telegram-notifications', enabled ? '1' : '0')
+      setNotificationsEnabled(enabled)
+      if (!enabled) setError('مجوز اعلان دسکتاپ صادر نشد.')
+    } catch {
+      setError('فعال‌کردن اعلان دسکتاپ در این محیط انجام نشد.')
+    }
   }
 
   async function updateDialogState(
