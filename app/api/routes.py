@@ -199,7 +199,7 @@ async def send_file(
 
     staged = None
     try:
-        root = desktop.settings.project_root / "data" / "telegram_desktop" / "uploads"
+        root = desktop.settings.data_root / "uploads"
         staged = await asyncio.to_thread(
             stage_upload,
             file.file,
@@ -235,7 +235,7 @@ async def send_files(
     staged = []
     try:
         validate_album_size(len(files))
-        root = desktop.settings.project_root / "data" / "telegram_desktop" / "uploads"
+        root = desktop.settings.data_root / "uploads"
         for item in files:
             staged.append(
                 await asyncio.to_thread(

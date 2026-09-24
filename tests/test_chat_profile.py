@@ -48,7 +48,7 @@ def build_service(tmp_path, client: FakeClient) -> TelegramDesktopService:
         authorized=True,
         state="CONNECTED",
     )
-    service.settings = SimpleNamespace(project_root=tmp_path)
+    service.settings = SimpleNamespace(data_root=tmp_path / "data" / "telegram_desktop")
     return service
 
 

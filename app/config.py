@@ -1,7 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     telegram_session_path: Path = Field(
         default=Path("data/telegram_desktop/accounts/default/client"),
         validation_alias="TELEGRAM_SESSION_PATH",
+    )
+    telegram_client_data_root: Path | None = Field(
+        default=None,
+        validation_alias="TELEGRAM_CLIENT_DATA_ROOT",
     )
     telegram_source_session_path: Path | None = Field(
         default=None,
@@ -60,15 +64,25 @@ class Settings(BaseSettings):
     def empty_source_path(cls, value):
         return None if value in (None, "") else value
 
-    @field_validator("telegram_session_path", "database_path")
-    @classmethod
-    def keep_local_data_under_client_root(cls, value: Path) -> Path:
-        root = Path(__file__).resolve().parents[1]
-        resolved = (root / value).resolve() if not value.is_absolute() else value.resolve()
-        allowed = (root / "data" / "telegram_desktop").resolve()
-        if not resolved.is_relative_to(allowed):
-            raise ValueError("Client session and database must stay inside data/telegram_desktop")
-        return resolved
+    @model_validator(mode="after")
+    def keep_local_data_under_client_root(self):
+        allowed = self.data_root
+
+        def resolve(value: Path) -> Path:
+            if value.is_absolute():
+                resolved = value.resolve()
+            else:
+                parts = value.parts
+                if parts[:2] == ("data", "telegram_desktop"):
+                    value = Path(*parts[2:])
+                resolved = (allowed / value).resolve()
+            if not resolved.is_relative_to(allowed):
+                raise ValueError("Client session and database must stay inside the client data root")
+            return resolved
+
+        self.telegram_session_path = resolve(self.telegram_session_path)
+        self.database_path = resolve(self.database_path)
+        return self
 
     @property
     def telegram_configured(self) -> bool:
@@ -77,6 +91,13 @@ class Settings(BaseSettings):
     @property
     def project_root(self) -> Path:
         return Path(__file__).resolve().parents[1]
+
+    @property
+    def data_root(self) -> Path:
+        if self.telegram_client_data_root is None:
+            return (self.project_root / "data" / "telegram_desktop").resolve()
+        value = self.telegram_client_data_root
+        return (self.project_root / value).resolve() if not value.is_absolute() else value.resolve()
 
     @property
     def source_session_file(self) -> Path | None:

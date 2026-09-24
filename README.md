@@ -32,6 +32,7 @@ The trading terminal remains a separate repository and its running session file 
 15. Per-chat drafts, message context menus, multi-selection and keyboard shortcuts.
 16. Multi-file albums, drag-and-drop/paste attachments and recent emoji/sticker/GIF tools.
 17. Safe account settings, local appearance preferences and connection diagnostics.
+18. Connection recovery, packaged backend sidecar and reproducible Windows installer pipeline.
 
 ## Phase 2: controlled session bootstrap
 
@@ -225,6 +226,29 @@ The settings surface now provides:
 6. A per-device automatic photo-loading preference; files remain explicit downloads.
 
 Audio and video playback remains disabled. API credentials, proxy passwords, V2Ray links and dashboard session data are never returned to the frontend.
+
+## Phase 17: production hardening and Windows installer
+
+The release path now includes:
+
+1. Exponential WebSocket reconnection with a full dialog and active-chat resync after interruption.
+2. A backend connection monitor that rebuilds an authorized Telegram connection when Telethon is no longer connected.
+3. A writable per-user client data root so an installed application never writes sessions, downloads or SQLite files under Program Files.
+4. A PyInstaller entry point for a self-contained Python backend sidecar.
+5. Tauri lifecycle management that starts the release sidecar and stops it when the desktop app exits.
+6. A Windows GitHub Actions workflow that runs all tests, builds the sidecar, creates an unsigned current-user NSIS installer and uploads it as a workflow artifact.
+
+The installer workflow is `.github/workflows/windows-installer.yml`. It runs on every push to `feature/telegram-desktop-foundation` and can also be started manually. The downloadable artifact is named `telegram-desktop-windows-installer`.
+
+The packaged backend reads optional secrets from `settings.env` inside Tauri's private per-user application data directory. The file is never bundled or committed. It may contain the same `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_SOURCE_SESSION_PATH` and `TELEGRAM_PROXY_CONFIG` values already used locally; source-session and proxy catalog paths remain read-only.
+
+For a local Windows release build:
+
+1. Install the package dependencies with `python -m pip install -e ".[test,package]"`.
+2. Build `app/desktop.py` with PyInstaller and copy the resulting executable to `frontend/src-tauri/binaries/telegram-desktop-backend-x86_64-pc-windows-msvc.exe`.
+3. Run `npm run tauri build -- --config src-tauri/tauri.windows.conf.json` from `frontend`.
+
+The standard development build does not auto-start a Python process; run the backend with Uvicorn during `npm run tauri dev`. Audio/video playback, calls and Stories remain outside this release.
 
 ## Local configuration
 

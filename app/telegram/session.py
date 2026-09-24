@@ -77,7 +77,7 @@ class SessionManager:
         )
 
     def remove_client_session(self) -> None:
-        root = (self.settings.project_root / "data" / "telegram_desktop").resolve()
+        root = self.settings.data_root
         for candidate in self._client_candidates():
             candidate = candidate.resolve()
             if candidate.is_relative_to(root) and candidate.is_file():

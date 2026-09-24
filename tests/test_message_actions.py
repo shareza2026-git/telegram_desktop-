@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 
 import pytest
@@ -39,6 +40,15 @@ class FakeClient:
         self.reaction_requests = []
         self.typing_requests = []
         self.pinned_requests = []
+        self.connected = True
+        self.disconnects = 0
+
+    def is_connected(self) -> bool:
+        return self.connected
+
+    async def disconnect(self):
+        self.connected = False
+        self.disconnects += 1
 
     async def get_messages(
         self,
@@ -156,6 +166,9 @@ def build_service(client: FakeClient) -> TelegramDesktopService:
     service.events = FakeEvents()
     service._outbox_read_max = {}
     service._recent_media = {}
+    service._lifecycle_lock = asyncio.Lock()
+    service.handlers = []
+    service.route = None
     return service
 
 
@@ -358,3 +371,24 @@ async def test_outbox_read_event_marks_store_and_publishes():
         "type": "MESSAGES_READ",
         "data": {"chat_id": 7, "max_id": 25},
     }
+
+
+@pytest.mark.asyncio
+async def test_disconnected_authorized_client_is_recovered_and_published():
+    client = FakeClient()
+    client.connected = False
+    service = build_service(client)
+
+    async def reconnect():
+        client.connected = True
+        service.client = client
+        service.status = service.status.model_copy(update={"connected": True, "state": "CONNECTED"})
+
+    service._connect = reconnect
+
+    recovered = await service._recover_connection_once()
+
+    assert recovered is True
+    assert client.disconnects == 1
+    assert [packet["type"] for packet in service.events.packets] == ["READY", "READY"]
+    assert service.events.packets[-1]["data"]["connected"] is True

@@ -14,6 +14,7 @@ def test_remove_client_session_keeps_source_session_untouched(tmp_path):
 
     settings = SimpleNamespace(
         project_root=root,
+        data_root=root / "data" / "telegram_desktop",
         telegram_session_path=client,
         source_session_file=source,
     )

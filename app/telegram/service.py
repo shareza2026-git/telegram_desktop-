@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import suppress
 import logging
 import mimetypes
 from datetime import datetime, timezone
@@ -80,6 +81,7 @@ class TelegramDesktopService:
         self._lifecycle_lock = asyncio.Lock()
         self._outbox_read_max: dict[int, int] = {}
         self._recent_media: dict[tuple[str, str], Any] = {}
+        self._connection_monitor: asyncio.Task | None = None
         info = self.sessions.info()
         self.status = ClientStatus(
             configured=settings.telegram_configured,
@@ -88,6 +90,8 @@ class TelegramDesktopService:
         )
 
     async def start(self) -> None:
+        if self._connection_monitor is None:
+            self._connection_monitor = asyncio.create_task(self._monitor_connection())
         self.sessions.ensure_client_path()
         info = self.sessions.info()
         self.status = self.status.model_copy(
@@ -117,6 +121,41 @@ class TelegramDesktopService:
                 )
             return
         await self._connect()
+
+    async def _monitor_connection(self) -> None:
+        while True:
+            await asyncio.sleep(5)
+            try:
+                await self._recover_connection_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning("Telegram connection monitor failed", exc_info=True)
+
+    async def _recover_connection_once(self) -> bool:
+        client = self.client
+        if client is None or not self.status.authorized or client.is_connected():
+            return False
+        async with self._lifecycle_lock:
+            client = self.client
+            if client is None or not self.status.authorized or client.is_connected():
+                return False
+            self._unregister_handlers()
+            with suppress(Exception):
+                await client.disconnect()
+            self.client = None
+            self.route = None
+            self.status = self.status.model_copy(
+                update={"connected": False, "state": "CONNECTING", "last_error": None}
+            )
+            await self.events.publish(
+                {"type": "READY", "data": self.status.model_dump(mode="json")}
+            )
+            await self._connect()
+            await self.events.publish(
+                {"type": "READY", "data": self.status.model_dump(mode="json")}
+            )
+            return self.status.connected
 
     async def _connect(self) -> None:
         routes = self.transport.load()
@@ -545,7 +584,7 @@ class TelegramDesktopService:
         if not getattr(entity, "photo", None):
             raise DesktopError("Chat photo is not available")
 
-        root = self.settings.project_root / "data" / "telegram_desktop" / "avatars"
+        root = self.settings.data_root / "avatars"
         root.mkdir(parents=True, exist_ok=True)
         target = chat_photo_path(root, chat_id)
         if not is_fresh_chat_photo(target):
@@ -573,7 +612,7 @@ class TelegramDesktopService:
             raw_name = f"media_{message_id}{extension}"
         filename = safe_media_name(raw_name, fallback=f"media_{message_id}")
 
-        root = self.settings.project_root / "data" / "telegram_desktop" / "downloads"
+        root = self.settings.data_root / "downloads"
         root.mkdir(parents=True, exist_ok=True)
         target = media_path(root, chat_id, message_id, filename)
         if not target.is_file() or target.stat().st_size == 0:
@@ -1032,6 +1071,11 @@ class TelegramDesktopService:
         )
 
     async def close(self) -> None:
+        if self._connection_monitor is not None:
+            self._connection_monitor.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._connection_monitor
+            self._connection_monitor = None
         self._unregister_handlers()
         if self.client is not None:
             await self.client.disconnect()

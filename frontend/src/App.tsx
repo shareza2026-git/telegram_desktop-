@@ -445,16 +445,51 @@ function App() {
   }, [dialogs, forwardQuery])
 
   useEffect(() => {
-    api<Status>('/api/telegram/status').then(setStatus).catch(error => setError(errorMessage(error, 'اتصال به هسته تلگرام برقرار نشد.')))
-    api<Dialog[]>('/api/telegram/dialogs').then(setDialogs).catch(() => undefined)
+    let disposed = false
+    let retryTimer: number | undefined
+    let retryCount = 0
+    let socket: WebSocket | undefined
 
-    const socket = new WebSocket(socketBase + '/ws/telegram')
-    socket.onmessage = event => {
+    async function refreshSnapshot() {
+      try {
+        const nextStatus = await api<Status>('/api/telegram/status')
+        if (disposed) return
+        setStatus(nextStatus)
+        if (nextStatus.authorized) setDialogs(await api<Dialog[]>('/api/telegram/dialogs'))
+      } catch {
+        // The packaged backend can need a moment to start. WebSocket retry handles recovery.
+      }
+    }
+
+    async function resyncActiveChat() {
+      await refreshSnapshot()
+      const chatId = selectedChatIdRef.current
+      if (!chatId || disposed) return
+      try {
+        const current = await api<Message[]>('/api/telegram/chats/' + chatId + '/messages?limit=' + HISTORY_PAGE_SIZE)
+        if (!disposed && selectedChatIdRef.current === chatId) setMessages(current)
+      } catch {
+        // A later reconnect or explicit refresh will retry the snapshot.
+      }
+    }
+
+    function connectSocket() {
+      if (disposed) return
+      socket = new WebSocket(socketBase + '/ws/telegram')
+      socket.onopen = () => {
+        retryCount = 0
+      }
+      socket.onmessage = event => {
       const packet = JSON.parse(event.data) as {
         type: string
         data: Status | Message | ChatAction | ReadReceipt | DialogPatch
       }
-      if (packet.type === 'READY') setStatus(packet.data as Status)
+      if (packet.type === 'READY') {
+        const ready = packet.data as Status
+        setStatus(ready)
+        if (ready.authorized) void refreshSnapshot()
+      }
+      if (packet.type === 'RESYNC') void resyncActiveChat()
       if (packet.type === 'MESSAGE_NEW' || packet.type === 'MESSAGE_EDITED') {
         const message = packet.data as Message
         if (packet.type === 'MESSAGE_NEW' && !message.outgoing) {
@@ -471,7 +506,7 @@ function App() {
             showDesktopNotification(message)
           }
         }
-        if (selected?.chat_id === message.chat_id) {
+        if (selectedChatIdRef.current === message.chat_id) {
           const shouldFollow = message.outgoing || isNearBottom()
           setMessages(current => {
             const exists = current.some(item => item.message_id === message.message_id)
@@ -491,7 +526,7 @@ function App() {
       }
       if (packet.type === 'CHAT_ACTION') {
         const action = packet.data as ChatAction
-        if (selected?.chat_id === action.chat_id) {
+        if (selectedChatIdRef.current === action.chat_id) {
           if (!action.active || action.action === 'cancel') {
             setSelectedChatAction(null)
           } else {
@@ -507,7 +542,7 @@ function App() {
       }
       if (packet.type === 'MESSAGES_READ') {
         const receipt = packet.data as ReadReceipt
-        if (selected?.chat_id === receipt.chat_id) {
+        if (selectedChatIdRef.current === receipt.chat_id) {
           setMessages(current => current.map(item => (
             item.outgoing && item.message_id <= receipt.max_id
               ? { ...item, read: true }
@@ -517,13 +552,29 @@ function App() {
       }
       if (packet.type === 'MESSAGE_DELETED') {
         const deleted = packet.data as { chat_id: number; message_id: number }
-        if (selected?.chat_id === deleted.chat_id) {
+        if (selectedChatIdRef.current === deleted.chat_id) {
           setMessages(current => current.map(item => item.message_id === deleted.message_id ? { ...item, deleted: true, text: '' } : item))
         }
       }
+      }
+      socket.onclose = () => {
+        if (disposed) return
+        setStatus(current => current ? { ...current, connected: false, state: 'CONNECTING' } : current)
+        const delay = Math.min(1000 * 2 ** retryCount, 10000)
+        retryCount += 1
+        retryTimer = window.setTimeout(connectSocket, delay)
+      }
+      socket.onerror = () => socket?.close()
     }
-    return () => socket.close()
-  }, [selected?.chat_id])
+
+    void refreshSnapshot()
+    connectSocket()
+    return () => {
+      disposed = true
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer)
+      socket?.close()
+    }
+  }, [])
 
   useEffect(() => {
     if (!selected) {
