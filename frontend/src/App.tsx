@@ -1,5 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 
+import { DRAFT_STORAGE_KEY, parseDraftMap, updateDraftMap } from './drafts'
+
 type Dialog = {
   chat_id: number
   title: string
@@ -269,6 +271,7 @@ function App() {
   const [uploadBusy, setUploadBusy] = useState(false)
   const [uploadName, setUploadName] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const composerFormRef = useRef<HTMLFormElement>(null)
   const messageListRef = useRef<HTMLDivElement>(null)
   const stickToBottomRef = useRef(true)
   const selectedChatIdRef = useRef<number | null>(null)
@@ -295,6 +298,9 @@ function App() {
   const [dialogActionBusy, setDialogActionBusy] = useState<string | null>(null)
   const dialogsRef = useRef<Dialog[]>([])
   const notificationsEnabledRef = useRef(notificationsEnabled)
+  const draftsRef = useRef(parseDraftMap(window.localStorage.getItem(DRAFT_STORAGE_KEY)))
+  const draftSwitchRef = useRef<number | null>(null)
+  const draftBeforeEditRef = useRef('')
 
   const visibleDialogs = useMemo(() => {
     let values = dialogs
@@ -444,6 +450,7 @@ function App() {
       setReplyingTo(null)
       setEditing(null)
       setDraft('')
+      draftSwitchRef.current = null
       setMessageSearchOpen(false)
       setMessageQuery('')
       setSearchResults([])
@@ -465,7 +472,7 @@ function App() {
     stickToBottomRef.current = true
     setReplyingTo(null)
     setEditing(null)
-    setDraft('')
+    setDraft(draftsRef.current[String(selected.chat_id)] || '')
     setMessageSearchOpen(false)
     setMessageQuery('')
     setSearchResults([])
@@ -500,6 +507,16 @@ function App() {
       })
       .catch(() => undefined)
   }, [selected?.chat_id])
+
+  useEffect(() => {
+    if (!selected || editing) return
+    if (draftSwitchRef.current === selected.chat_id) {
+      draftSwitchRef.current = null
+      return
+    }
+    draftsRef.current = updateDraftMap(draftsRef.current, selected.chat_id, draft)
+    window.localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draftsRef.current))
+  }, [draft, selected?.chat_id, editing])
 
   const newestMessageId = messages.length ? messages[messages.length - 1].message_id : null
 
@@ -612,7 +629,7 @@ function App() {
         window.focus()
         if (dialog) {
           const opened = { ...dialog, unread_count: 0 }
-          setSelected(opened)
+          openDialog(opened)
           setDialogs(current => current.map(item => (
             item.chat_id === dialog.chat_id ? { ...item, unread_count: 0 } : item
           )))
@@ -671,6 +688,17 @@ function App() {
     } finally {
       setDialogActionBusy(null)
     }
+  }
+
+  function openDialog(dialog: Dialog) {
+    const currentChatId = selectedChatIdRef.current
+    if (currentChatId === dialog.chat_id) return
+    if (currentChatId !== null && !editing) {
+      draftsRef.current = updateDraftMap(draftsRef.current, currentChatId, draft)
+      window.localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draftsRef.current))
+    }
+    draftSwitchRef.current = dialog.chat_id
+    setSelected(dialog)
   }
 
   async function refreshDialogs() {
@@ -1005,6 +1033,7 @@ function App() {
   }
 
   function beginEdit(message: Message) {
+    draftBeforeEditRef.current = draft
     setReplyingTo(null)
     setEditing(message)
     setDraft(message.text)
@@ -1014,7 +1043,7 @@ function App() {
     const wasEditing = editing !== null
     setReplyingTo(null)
     setEditing(null)
-    if (wasEditing) setDraft('')
+    if (wasEditing) setDraft(draftBeforeEditRef.current)
   }
 
   function jumpToMessage(messageId: number) {
@@ -1170,6 +1199,7 @@ function App() {
         )
         setMessages(current => current.map(item => item.message_id === message.message_id ? message : item))
         setEditing(null)
+        setDraft(draftBeforeEditRef.current)
       } else {
         const message = await api<Message>('/api/telegram/chats/' + selected.chat_id + '/messages', {
           method: 'POST',
@@ -1180,8 +1210,8 @@ function App() {
         })
         setMessages(current => [...current.filter(item => item.message_id !== message.message_id), message])
         setReplyingTo(null)
+        setDraft('')
       }
-      setDraft('')
     } catch (caught) {
       setError(errorMessage(caught, editing ? 'ویرایش پیام انجام نشد.' : 'ارسال پیام انجام نشد.'))
     } finally {
@@ -1297,7 +1327,7 @@ function App() {
         </div>
         <div className="dialog-list">
           {visibleDialogs.map(dialog => (
-            <button className={'dialog-row ' + (selected?.chat_id === dialog.chat_id ? 'selected' : '')} key={dialog.chat_id} onClick={() => setSelected(dialog)}>
+            <button className={'dialog-row ' + (selected?.chat_id === dialog.chat_id ? 'selected' : '')} key={dialog.chat_id} onClick={() => openDialog(dialog)}>
               <ChatAvatar chatId={dialog.chat_id} title={dialog.title} />
               <span className="dialog-copy">
                 <strong>{dialog.title}</strong>
@@ -1542,7 +1572,7 @@ function App() {
                   <button className="icon-button" type="button" aria-label="بستن" onClick={cancelComposerContext}>×</button>
                 </div>
               )}
-              <form className="composer" onSubmit={sendMessage}>
+              <form className="composer" ref={composerFormRef} onSubmit={sendMessage}>
                 <button
                   type="button"
                   className="icon-button"
