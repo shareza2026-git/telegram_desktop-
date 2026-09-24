@@ -35,6 +35,7 @@ button { border: 0; cursor: pointer; }
 .chat-sidebar { background: #17212b; border-left: 1px solid #243544; display: flex; flex-direction: column; }
 .sidebar-header, .chat-header { height: 66px; padding: 0 16px; display: flex; align-items: center; gap: 12px; background: #1f2c38; }
 .brand-title { display: flex; align-items: center; gap: 9px; font-weight: 700; flex: 1; }
+.global-unread { min-width: 23px; padding: 3px 6px; color: white; background: #2aabee; border-radius: 12px; font-size: 10px; text-align: center; }
 .icon-button { width: 34px; height: 34px; color: #b7c8d9; background: transparent; border-radius: 9px; font-size: 20px; }
 .icon-button:hover, .icon-button.active { background: #2a3b4b; color: white; }
 .icon-button:disabled { cursor: default; opacity: .45; }
@@ -59,7 +60,12 @@ button { border: 0; cursor: pointer; }
 .chat-header { border-left: 1px solid #243544; }
 .chat-header > div:nth-child(2) { flex: 1; display: flex; flex-direction: column; gap: 4px; }
 .chat-action-live { color: #55c7f3 !important; }
-.header-actions { display: flex; gap: 2px; }
+.header-actions { position: relative; display: flex; gap: 2px; }
+.chat-menu { position: absolute; z-index: 12; top: 42px; left: 0; width: 220px; padding: 6px; display: flex; flex-direction: column; gap: 2px; color: #dce8f2; background: #1b2b38; border: 1px solid #304657; border-radius: 11px; box-shadow: 0 12px 34px #0008; }
+.chat-menu button { min-height: 38px; padding: 7px 9px; display: flex; align-items: center; gap: 9px; color: inherit; background: transparent; border-radius: 7px; text-align: right; }
+.chat-menu button:hover { background: #2aabee2b; }
+.chat-menu button:disabled { cursor: wait; opacity: .55; }
+.chat-menu button span { width: 22px; text-align: center; }
 .message-search-panel { max-height: 250px; padding: 9px 12px; overflow: auto; background: #172532; border-bottom: 1px solid #263846; }
 .message-search-form { display: flex; gap: 6px; }
 .message-search-form input, .forward-search { min-width: 0; flex: 1; height: 36px; padding: 0 11px; outline: 0; border: 1px solid #334a5b; color: #eaf1f8; background: #101d28; border-radius: 9px; }

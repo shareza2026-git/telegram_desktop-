@@ -8,6 +8,14 @@ type Dialog = {
   unread_count: number
   pinned: boolean
   archived: boolean
+  muted: boolean
+}
+
+type DialogPatch = {
+  chat_id: number
+  pinned?: boolean
+  archived?: boolean
+  muted?: boolean
 }
 
 type ChatInfo = {
@@ -278,6 +286,15 @@ function App() {
   const [forwarding, setForwarding] = useState<Message | null>(null)
   const [forwardQuery, setForwardQuery] = useState('')
   const [forwardTargetBusy, setForwardTargetBusy] = useState<number | null>(null)
+  const [notificationsEnabled, setNotificationsEnabled] = useState(() => (
+    typeof Notification !== 'undefined'
+    && Notification.permission === 'granted'
+    && window.localStorage.getItem('telegram-notifications') === '1'
+  ))
+  const [chatMenuOpen, setChatMenuOpen] = useState(false)
+  const [dialogActionBusy, setDialogActionBusy] = useState<string | null>(null)
+  const dialogsRef = useRef<Dialog[]>([])
+  const notificationsEnabledRef = useRef(notificationsEnabled)
 
   const visibleDialogs = useMemo(() => {
     let values = dialogs
@@ -292,9 +309,37 @@ function App() {
     return values.filter(item => item.title.toLocaleLowerCase().includes(value))
   }, [activeFolder, dialogs, query])
 
+  const totalUnread = useMemo(
+    () => dialogs.reduce((total, dialog) => total + dialog.unread_count, 0),
+    [dialogs]
+  )
+
   useEffect(() => {
     selectedChatIdRef.current = selected?.chat_id || null
+    setChatMenuOpen(false)
   }, [selected?.chat_id])
+
+  useEffect(() => {
+    dialogsRef.current = dialogs
+  }, [dialogs])
+
+  useEffect(() => {
+    notificationsEnabledRef.current = notificationsEnabled
+  }, [notificationsEnabled])
+
+  useEffect(() => {
+    document.title = totalUnread > 0
+      ? '(' + new Intl.NumberFormat('fa-IR').format(totalUnread) + ') Telegram'
+      : 'Telegram Desktop'
+    const badgeNavigator = navigator as Navigator & {
+      setAppBadge?: (count?: number) => Promise<void>
+      clearAppBadge?: () => Promise<void>
+    }
+    const operation = totalUnread > 0
+      ? badgeNavigator.setAppBadge?.(totalUnread)
+      : badgeNavigator.clearAppBadge?.()
+    operation?.catch(() => undefined)
+  }, [totalUnread])
 
   const forwardDialogs = useMemo(() => {
     const value = forwardQuery.trim().toLocaleLowerCase()
@@ -313,11 +358,25 @@ function App() {
     socket.onmessage = event => {
       const packet = JSON.parse(event.data) as {
         type: string
-        data: Status | Message | ChatAction | ReadReceipt
+        data: Status | Message | ChatAction | ReadReceipt | DialogPatch
       }
       if (packet.type === 'READY') setStatus(packet.data as Status)
       if (packet.type === 'MESSAGE_NEW' || packet.type === 'MESSAGE_EDITED') {
         const message = packet.data as Message
+        if (packet.type === 'MESSAGE_NEW' && !message.outgoing) {
+          const activeAndVisible = (
+            selectedChatIdRef.current === message.chat_id
+            && document.visibilityState === 'visible'
+          )
+          if (!activeAndVisible) {
+            setDialogs(current => current.map(dialog => (
+              dialog.chat_id === message.chat_id
+                ? { ...dialog, unread_count: dialog.unread_count + 1 }
+                : dialog
+            )))
+            showDesktopNotification(message)
+          }
+        }
         if (selected?.chat_id === message.chat_id) {
           const shouldFollow = message.outgoing || isNearBottom()
           setMessages(current => {
@@ -332,6 +391,9 @@ function App() {
             window.requestAnimationFrame(() => scrollToBottom(message.outgoing ? 'smooth' : 'auto'))
           }
         }
+      }
+      if (packet.type === 'DIALOG_UPDATED') {
+        applyDialogPatch(packet.data as DialogPatch)
       }
       if (packet.type === 'CHAT_ACTION') {
         const action = packet.data as ChatAction
@@ -522,6 +584,79 @@ function App() {
     stickToBottomRef.current = nearBottom
     setShowJumpToBottom(!nearBottom)
     if (nearBottom) setNewBelowCount(0)
+  }
+
+  function applyDialogPatch(patch: DialogPatch) {
+    setDialogs(current => current.map(dialog => (
+      dialog.chat_id === patch.chat_id ? { ...dialog, ...patch } : dialog
+    )))
+    setSelected(current => (
+      current?.chat_id === patch.chat_id ? { ...current, ...patch } : current
+    ))
+  }
+
+  function showDesktopNotification(message: Message) {
+    if (
+      !notificationsEnabledRef.current
+      || typeof Notification === 'undefined'
+      || Notification.permission !== 'granted'
+    ) return
+    const dialog = dialogsRef.current.find(item => item.chat_id === message.chat_id)
+    if (dialog?.muted) return
+    try {
+      const notification = new Notification(dialog?.title || message.sender_name || 'Telegram', {
+        body: messageSnippet(message),
+        tag: 'telegram-chat-' + message.chat_id
+      })
+      notification.onclick = () => {
+        window.focus()
+        if (dialog) setSelected(dialog)
+        notification.close()
+      }
+    } catch {
+      // Desktop notification support differs between WebView runtimes.
+    }
+  }
+
+  async function toggleNotifications() {
+    if (notificationsEnabled) {
+      window.localStorage.setItem('telegram-notifications', '0')
+      setNotificationsEnabled(false)
+      return
+    }
+    if (typeof Notification === 'undefined') {
+      setError('اعلان دسکتاپ در این محیط پشتیبانی نمی‌شود.')
+      return
+    }
+    const permission = await Notification.requestPermission()
+    const enabled = permission === 'granted'
+    window.localStorage.setItem('telegram-notifications', enabled ? '1' : '0')
+    setNotificationsEnabled(enabled)
+    if (!enabled) setError('مجوز اعلان دسکتاپ صادر نشد.')
+  }
+
+  async function updateDialogState(
+    action: 'pin' | 'archive' | 'mute',
+    enabled: boolean
+  ) {
+    if (!selected || dialogActionBusy !== null) return
+    setDialogActionBusy(action)
+    setError('')
+    try {
+      const patch = await api<DialogPatch>(
+        '/api/telegram/chats/' + selected.chat_id + '/' + action,
+        {
+          method: 'POST',
+          body: JSON.stringify({ enabled })
+        }
+      )
+      applyDialogPatch(patch)
+      setChatMenuOpen(false)
+    } catch (caught) {
+      setError(errorMessage(caught, 'تنظیم گفتگو انجام نشد.'))
+    } finally {
+      setDialogActionBusy(null)
+    }
   }
 
   async function refreshDialogs() {
@@ -1119,7 +1254,19 @@ function App() {
     <main className="telegram-shell">
       <aside className="chat-sidebar">
         <header className="sidebar-header">
-          <div className="brand-title"><span className="brand-mark small">✈</span> Telegram</div>
+          <div className="brand-title">
+            <span className="brand-mark small">✈</span>
+            Telegram
+            {totalUnread > 0 && <span className="global-unread">{new Intl.NumberFormat('fa-IR').format(totalUnread)}</span>}
+          </div>
+          <button
+            className={'icon-button ' + (notificationsEnabled ? 'active' : '')}
+            aria-label={notificationsEnabled ? 'غیرفعال‌کردن اعلان‌ها' : 'فعال‌کردن اعلان‌ها'}
+            title={notificationsEnabled ? 'اعلان‌ها فعال است' : 'فعال‌کردن اعلان‌ها'}
+            onClick={toggleNotifications}
+          >
+            {notificationsEnabled ? '🔔' : '♢'}
+          </button>
           <button className="icon-button" aria-label="به‌روزرسانی گفتگوها" onClick={refreshDialogs}>↻</button>
           <button className="icon-button" aria-label="منو">☰</button>
         </header>
@@ -1138,7 +1285,14 @@ function App() {
           {visibleDialogs.map(dialog => (
             <button className={'dialog-row ' + (selected?.chat_id === dialog.chat_id ? 'selected' : '')} key={dialog.chat_id} onClick={() => setSelected(dialog)}>
               <ChatAvatar chatId={dialog.chat_id} title={dialog.title} />
-              <span className="dialog-copy"><strong>{dialog.title}</strong><small>{dialog.dialog_type}</small></span>
+              <span className="dialog-copy">
+                <strong>{dialog.title}</strong>
+                <small>
+                  {dialog.pinned ? '⌖ ' : ''}
+                  {dialog.muted ? '🔕 ' : ''}
+                  {dialogTypeLabel(dialog.dialog_type)}
+                </small>
+              </span>
               {dialog.unread_count > 0 && <span className="unread">{dialog.unread_count}</span>}
             </button>
           ))}
@@ -1161,12 +1315,46 @@ function App() {
                     {chatActionLabel(selectedChatAction.action)}
                   </small>
                 ) : (
-                  <small>{presenceLabel(chatInfo?.status) || dialogTypeLabel(chatInfo?.dialog_type || selected.dialog_type)}</small>
+                  <small>
+                    {selected.muted ? 'بی‌صدا · ' : ''}
+                    {presenceLabel(chatInfo?.status) || dialogTypeLabel(chatInfo?.dialog_type || selected.dialog_type)}
+                  </small>
                 )}
               </div>
               <div className="header-actions">
                 <button className={'icon-button ' + (messageSearchOpen ? 'active' : '')} aria-label="جست‌وجوی پیام" onClick={toggleMessageSearch}>⌕</button>
-                <button className="icon-button">⋮</button>
+                <button
+                  className={'icon-button ' + (chatMenuOpen ? 'active' : '')}
+                  aria-label="تنظیمات گفتگو"
+                  onClick={() => setChatMenuOpen(value => !value)}
+                >
+                  ⋮
+                </button>
+                {chatMenuOpen && (
+                  <div className="chat-menu">
+                    <button
+                      type="button"
+                      onClick={() => updateDialogState('pin', !selected.pinned)}
+                      disabled={dialogActionBusy !== null}
+                    >
+                      <span>⌖</span>{selected.pinned ? 'برداشتن سنجاق گفتگو' : 'سنجاق‌کردن گفتگو'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateDialogState('mute', !selected.muted)}
+                      disabled={dialogActionBusy !== null}
+                    >
+                      <span>🔕</span>{selected.muted ? 'فعال‌کردن اعلان گفتگو' : 'بی‌صداکردن گفتگو'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateDialogState('archive', !selected.archived)}
+                      disabled={dialogActionBusy !== null}
+                    >
+                      <span>▣</span>{selected.archived ? 'خارج‌کردن از آرشیو' : 'انتقال به آرشیو'}
+                    </button>
+                  </div>
+                )}
               </div>
             </header>
             {messageSearchOpen && (

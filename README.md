@@ -28,6 +28,7 @@ The trading terminal remains a separate repository and its running session file 
 11. Standard Telegram message reactions with live synchronization.
 12. Live typing presence and outgoing read receipts.
 13. Telegram-style history navigation, unread boundary and pinned messages.
+14. Desktop notifications, unread app badge and Telegram dialog controls.
 
 ## Phase 2: controlled session bootstrap
 
@@ -160,6 +161,22 @@ The conversation view now supports:
 7. Caching the pinned message only in the independent local message store.
 
 Pinned retrieval does not expose source-session data, API credentials or transport secrets. Audio and video playback remains disabled.
+
+## Phase 13: notifications and dialog controls
+
+The desktop shell now supports:
+
+1. Opt-in native desktop notifications for incoming messages while another chat is open or the window is hidden.
+2. Suppressing notifications for Telegram-muted conversations.
+3. A total unread counter in the sidebar, document title and app badge where the desktop WebView supports it.
+4. Opening the related conversation by selecting its desktop notification.
+5. Pinning and unpinning a dialog through Telegram's dialog API.
+6. Moving a dialog into or out of Telegram's archive folder.
+7. Muting or unmuting a dialog through Telegram peer notification settings.
+8. Live synchronization of dialog-state changes through the existing WebSocket.
+9. An in-place nullable-safe local database migration for the muted state.
+
+Notification permission is requested only after the user presses the notification control. Dashboard configuration, source sessions and proxy secrets remain read-only and are never returned to the frontend. Audio and video playback remains disabled.
 
 ## Local configuration
 
