@@ -59,10 +59,18 @@ class Settings(BaseSettings):
         validation_alias="TELEGRAM_DATABASE_PATH",
     )
 
-    @field_validator("telegram_source_session_path", mode="before")
+    @field_validator(
+        "telegram_api_id",
+        "telegram_api_hash",
+        "telegram_client_data_root",
+        "telegram_source_session_path",
+        mode="before",
+    )
     @classmethod
-    def empty_source_path(cls, value):
-        return None if value in (None, "") else value
+    def empty_optional_value(cls, value):
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        return value
 
     @model_validator(mode="after")
     def keep_local_data_under_client_root(self):
