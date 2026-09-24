@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type FormEvent, type MouseEvent as ReactMouseEvent } from 'react'
 
 import { DRAFT_STORAGE_KEY, parseDraftMap, updateDraftMap } from './drafts'
+import { PREFERENCES_STORAGE_KEY, parsePreferences, resolvedTheme, type ClientPreferences } from './preferences'
 
 type Dialog = {
   chat_id: number
@@ -113,6 +114,18 @@ type RecentMediaItem = {
 type RecentMediaCatalog = {
   stickers: RecentMediaItem[]
   gifs: RecentMediaItem[]
+}
+
+type TransportStatus = {
+  routes: Array<{
+    index: number
+    type: string
+    host: string
+    port: number
+    managed_v2ray: boolean
+    name: string
+  }>
+  allow_direct: boolean
 }
 
 type AuthResponse = {
@@ -336,6 +349,14 @@ function App() {
   const [messageContextMenu, setMessageContextMenu] = useState<MessageContextMenu | null>(null)
   const [selectedMessageIds, setSelectedMessageIds] = useState<Set<number>>(() => new Set())
   const [bulkBusy, setBulkBusy] = useState<'delete' | 'forward' | null>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [transportStatus, setTransportStatus] = useState<TransportStatus | null>(null)
+  const [settingsBusy, setSettingsBusy] = useState(false)
+  const [logoutBusy, setLogoutBusy] = useState(false)
+  const [preferences, setPreferences] = useState<ClientPreferences>(() => (
+    parsePreferences(window.localStorage.getItem(PREFERENCES_STORAGE_KEY))
+  ))
+  const [revealedPhotos, setRevealedPhotos] = useState<Set<string>>(() => new Set())
   const dialogsRef = useRef<Dialog[]>([])
   const notificationsEnabledRef = useRef(notificationsEnabled)
   const draftsRef = useRef(parseDraftMap(window.localStorage.getItem(DRAFT_STORAGE_KEY)))
@@ -378,6 +399,17 @@ function App() {
   useEffect(() => {
     notificationsEnabledRef.current = notificationsEnabled
   }, [notificationsEnabled])
+
+  useEffect(() => {
+    window.localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify(preferences))
+    const media = window.matchMedia('(prefers-color-scheme: light)')
+    const applyTheme = () => {
+      document.documentElement.dataset.theme = resolvedTheme(preferences.theme, media.matches)
+    }
+    applyTheme()
+    media.addEventListener('change', applyTheme)
+    return () => media.removeEventListener('change', applyTheme)
+  }, [preferences])
 
   useEffect(() => {
     pendingAttachmentsRef.current = pendingAttachments
@@ -1044,6 +1076,41 @@ function App() {
     setError('')
   }
 
+  function updatePreferences(values: Partial<ClientPreferences>) {
+    setPreferences(current => ({ ...current, ...values }))
+  }
+
+  async function openSettings() {
+    setSettingsOpen(true)
+    setSettingsBusy(true)
+    try {
+      setTransportStatus(await api<TransportStatus>('/api/telegram/transport'))
+    } catch (caught) {
+      setError(errorMessage(caught, 'وضعیت مسیر اتصال دریافت نشد.'))
+    } finally {
+      setSettingsBusy(false)
+    }
+  }
+
+  async function logoutAccount() {
+    if (logoutBusy) return
+    if (!window.confirm('از حساب این برنامه خارج شوید؟ فقط سشن مستقل حذف می‌شود و سشن داشبورد دست‌نخورده می‌ماند.')) return
+    setLogoutBusy(true)
+    setError('')
+    try {
+      const nextStatus = await api<Status>('/api/telegram/auth/logout', { method: 'POST' })
+      setStatus(nextStatus)
+      setDialogs([])
+      setSelected(null)
+      setSettingsOpen(false)
+      resetAuth()
+    } catch (caught) {
+      setError(errorMessage(caught, 'خروج امن از حساب انجام نشد.'))
+    } finally {
+      setLogoutBusy(false)
+    }
+  }
+
   function mediaKey(message: Message) {
     return message.chat_id + ':' + message.message_id
   }
@@ -1113,6 +1180,25 @@ function App() {
     const label = mediaKindLabel(message.media.kind)
 
     if (message.media.kind === 'photo') {
+      const key = mediaKey(message)
+      if (!preferences.autoLoadPhotos && !revealedPhotos.has(key)) {
+        return (
+          <div className="media-card photo-placeholder">
+            <span className="media-icon">▧</span>
+            <div className="media-copy">
+              <strong>{message.media.name || label}</strong>
+              <small>{formatBytes(message.media.size)} · بارگیری خودکار خاموش است</small>
+            </div>
+            <button
+              className="download-button"
+              type="button"
+              onClick={() => setRevealedPhotos(current => new Set(current).add(key))}
+            >
+              نمایش تصویر
+            </button>
+          </div>
+        )
+      }
       return (
         <div className="media-photo-card">
           <img
@@ -1650,7 +1736,7 @@ function App() {
   }
 
   return (
-    <main className="telegram-shell" onMouseDown={() => setMessageContextMenu(null)}>
+    <main className={'telegram-shell' + (preferences.compact ? ' compact-mode' : '')} onMouseDown={() => setMessageContextMenu(null)}>
       <aside className="chat-sidebar">
         <header className="sidebar-header">
           <div className="brand-title">
@@ -1667,7 +1753,7 @@ function App() {
             {notificationsEnabled ? '🔔' : '♢'}
           </button>
           <button className="icon-button" aria-label="به‌روزرسانی گفتگوها" onClick={refreshDialogs}>↻</button>
-          <button className="icon-button" aria-label="منو">☰</button>
+          <button className="icon-button" aria-label="تنظیمات" title="تنظیمات" onClick={openSettings}>☰</button>
         </header>
         <label className="search-box">
           <span>⌕</span>
@@ -2167,6 +2253,80 @@ function App() {
                 </button>
               ))}
               {!forwardDialogs.length && <div className="search-empty">مقصدی پیدا نشد.</div>}
+            </div>
+          </section>
+        </div>
+      )}
+
+      {settingsOpen && (
+        <div className="settings-backdrop" onMouseDown={() => setSettingsOpen(false)}>
+          <section className="settings-modal" role="dialog" aria-modal="true" aria-label="تنظیمات برنامه" onMouseDown={event => event.stopPropagation()}>
+            <header>
+              <div>
+                <strong>تنظیمات</strong>
+                <small>حساب مستقل و تنظیمات همین دستگاه</small>
+              </div>
+              <button className="icon-button" type="button" aria-label="بستن تنظیمات" onClick={() => setSettingsOpen(false)}>×</button>
+            </header>
+
+            <div className="settings-scroll">
+              <section className="settings-section">
+                <h3>حساب تلگرام</h3>
+                <div className="account-summary">
+                  <span className="brand-mark small">✈</span>
+                  <div>
+                    <strong>{status.display_name || 'حساب تلگرام'}</strong>
+                    <small>{status.connected ? 'متصل' : 'قطع'} · سشن مستقل {status.client_session_exists ? 'فعال' : 'ایجاد نشده'}</small>
+                  </div>
+                </div>
+                <div className="safe-note">خروج فقط سشن مستقل این برنامه را حذف می‌کند؛ سشن و تنظیمات داشبورد فقط‌خواندنی و دست‌نخورده می‌مانند.</div>
+                <button className="danger-action" type="button" onClick={logoutAccount} disabled={logoutBusy}>
+                  {logoutBusy ? 'در حال خروج…' : 'خروج امن از حساب'}
+                </button>
+              </section>
+
+              <section className="settings-section">
+                <h3>اتصال و پراکسی</h3>
+                {settingsBusy ? (
+                  <div className="settings-muted">در حال دریافت وضعیت…</div>
+                ) : (
+                  <>
+                    <div className="settings-row"><span>مسیر فعال</span><strong>{status.active_route || (transportStatus?.allow_direct ? 'اتصال مستقیم' : 'نامشخص')}</strong></div>
+                    <div className="settings-row"><span>مسیرهای امن موجود</span><strong>{new Intl.NumberFormat('fa-IR').format(transportStatus?.routes.length || 0)}</strong></div>
+                    {transportStatus?.routes.map(route => (
+                      <div className="transport-row" key={route.index}>
+                        <span>{route.name}{route.managed_v2ray ? ' · V2Ray' : ''}</span>
+                        <small dir="ltr">{route.type} · {route.host}:{route.port}</small>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </section>
+
+              <section className="settings-section">
+                <h3>ظاهر</h3>
+                <label className="settings-select">
+                  <span>پوسته</span>
+                  <select value={preferences.theme} onChange={event => updatePreferences({ theme: event.target.value as ClientPreferences['theme'] })}>
+                    <option value="system">مطابق ویندوز</option>
+                    <option value="dark">تیره</option>
+                    <option value="light">روشن</option>
+                  </select>
+                </label>
+                <label className="settings-toggle">
+                  <span><strong>حالت فشرده</strong><small>فاصله کمتر در فهرست گفتگوها و پیام‌ها</small></span>
+                  <input type="checkbox" checked={preferences.compact} onChange={event => updatePreferences({ compact: event.target.checked })} />
+                </label>
+              </section>
+
+              <section className="settings-section">
+                <h3>رسانه و دانلود</h3>
+                <label className="settings-toggle">
+                  <span><strong>بارگیری خودکار تصاویر</strong><small>در حالت خاموش، هر تصویر فقط با انتخاب شما نمایش داده می‌شود.</small></span>
+                  <input type="checkbox" checked={preferences.autoLoadPhotos} onChange={event => updatePreferences({ autoLoadPhotos: event.target.checked })} />
+                </label>
+                <div className="safe-note">پخش صوت و ویدئو همچنان غیرفعال است. دانلود فایل‌ها فقط با دکمه دانلود انجام می‌شود.</div>
+              </section>
             </div>
           </section>
         </div>

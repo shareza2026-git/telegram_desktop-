@@ -31,6 +31,7 @@ The trading terminal remains a separate repository and its running session file 
 14. Desktop notifications, unread app badge and Telegram dialog controls.
 15. Per-chat drafts, message context menus, multi-selection and keyboard shortcuts.
 16. Multi-file albums, drag-and-drop/paste attachments and recent emoji/sticker/GIF tools.
+17. Safe account settings, local appearance preferences and connection diagnostics.
 
 ## Phase 2: controlled session bootstrap
 
@@ -211,6 +212,19 @@ The composer now supports:
 9. Persisting and publishing every returned album message through the existing independent store and WebSocket flow.
 
 The recent-media catalog lives only in backend memory and is rebuilt from the independently authorized Telegram client. Dashboard data remains read-only. Video and audio playback remains disabled; GIFs are treated as sendable media only.
+
+## Phase 16: settings and account management
+
+The settings surface now provides:
+
+1. Safe account and independent-session status without exposing a phone number, authorization key or session path.
+2. Redacted proxy/V2Ray route diagnostics from the existing read-only transport catalog.
+3. A guarded logout action that removes only this client's independent session and leaves the dashboard source session untouched.
+4. System, dark and light appearance modes stored only in local WebView preferences.
+5. A compact conversation layout for smaller desktop windows.
+6. A per-device automatic photo-loading preference; files remain explicit downloads.
+
+Audio and video playback remains disabled. API credentials, proxy passwords, V2Ray links and dashboard session data are never returned to the frontend.
 
 ## Local configuration
 
