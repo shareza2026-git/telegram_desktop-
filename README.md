@@ -26,6 +26,7 @@ The trading terminal remains a separate repository and its running session file 
 9. Real chat/entity information and cached profile photos.
 10. Safe photo/document sending with caption and reply support.
 11. Standard Telegram message reactions with live synchronization.
+12. Live typing presence and outgoing read receipts.
 
 ## Phase 2: controlled session bootstrap
 
@@ -130,6 +131,20 @@ The message view now supports:
 7. Migrating existing local databases in place with a nullable reactions column.
 
 Custom emoji and paid reactions are displayed only when Telegram exposes a standard emoji representation. Audio and video playback remains disabled.
+
+## Phase 11: typing and read receipts
+
+The live conversation view now supports:
+
+1. Receiving Telegram typing, upload and recording actions through UserUpdate events.
+2. Showing the active action in the selected chat header and expiring stale actions automatically.
+3. Sending a rate-limited typing pulse while the local composer contains text.
+4. Cancelling the typing action after inactivity, chat changes, editing mode or upload mode.
+5. Receiving outbox MessageRead events and marking every eligible outgoing message as read.
+6. Rendering one check for sent messages and two highlighted checks for messages read by the peer.
+7. Persisting outgoing read state in the independent SQLite store with an in-place schema migration.
+
+Typing presence is ephemeral and is not stored. Audio and video playback remains disabled.
 
 ## Local configuration
 

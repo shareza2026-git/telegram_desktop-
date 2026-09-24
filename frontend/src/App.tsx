@@ -51,6 +51,7 @@ type Message = {
   reply_to_message_id?: number | null
   media?: MediaInfo | null
   reactions: ReactionSummary[]
+  read: boolean
   deleted: boolean
 }
 
@@ -64,6 +65,20 @@ type Status = {
   source_session_available: boolean
   client_session_exists: boolean
   last_error?: string | null
+}
+
+type ChatAction = {
+  chat_id: number
+  user_id?: number | null
+  user_name?: string | null
+  action: 'typing' | 'uploading' | 'recording' | 'cancel'
+  active: boolean
+  expires_at?: number
+}
+
+type ReadReceipt = {
+  chat_id: number
+  max_id: number
 }
 
 type AuthResponse = {
@@ -156,6 +171,16 @@ function dialogTypeLabel(value: string) {
   return labels[value] || value
 }
 
+function chatActionLabel(value: ChatAction['action']) {
+  const labels: Record<ChatAction['action'], string> = {
+    typing: 'در حال نوشتن…',
+    uploading: 'در حال ارسال فایل…',
+    recording: 'در حال ضبط…',
+    cancel: ''
+  }
+  return labels[value]
+}
+
 function presenceLabel(value: string | null | undefined) {
   const labels: Record<string, string> = {
     online: 'آنلاین',
@@ -223,6 +248,9 @@ function App() {
   const [messageActionBusy, setMessageActionBusy] = useState<string | null>(null)
   const [reactionPickerFor, setReactionPickerFor] = useState<number | null>(null)
   const [reactionBusy, setReactionBusy] = useState<string | null>(null)
+  const [selectedChatAction, setSelectedChatAction] = useState<ChatAction | null>(null)
+  const typingTimerRef = useRef<number | null>(null)
+  const typingSentRef = useRef<{ chatId: number; active: boolean; at: number } | null>(null)
   const [messageSearchOpen, setMessageSearchOpen] = useState(false)
   const [messageQuery, setMessageQuery] = useState('')
   const [searchResults, setSearchResults] = useState<Message[]>([])
@@ -264,7 +292,10 @@ function App() {
 
     const socket = new WebSocket(socketBase + '/ws/telegram')
     socket.onmessage = event => {
-      const packet = JSON.parse(event.data) as { type: string; data: Status | Message }
+      const packet = JSON.parse(event.data) as {
+        type: string
+        data: Status | Message | ChatAction | ReadReceipt
+      }
       if (packet.type === 'READY') setStatus(packet.data as Status)
       if (packet.type === 'MESSAGE_NEW' || packet.type === 'MESSAGE_EDITED') {
         const message = packet.data as Message
@@ -273,6 +304,32 @@ function App() {
             const without = current.filter(item => item.message_id !== message.message_id)
             return [...without, message].sort((a, b) => a.message_id - b.message_id)
           })
+        }
+      }
+      if (packet.type === 'CHAT_ACTION') {
+        const action = packet.data as ChatAction
+        if (selected?.chat_id === action.chat_id) {
+          if (!action.active || action.action === 'cancel') {
+            setSelectedChatAction(null)
+          } else {
+            const expiresAt = Date.now() + 6000
+            setSelectedChatAction({ ...action, expires_at: expiresAt })
+            window.setTimeout(() => {
+              setSelectedChatAction(current => (
+                current && current.expires_at === expiresAt ? null : current
+              ))
+            }, 6100)
+          }
+        }
+      }
+      if (packet.type === 'MESSAGES_READ') {
+        const receipt = packet.data as ReadReceipt
+        if (selected?.chat_id === receipt.chat_id) {
+          setMessages(current => current.map(item => (
+            item.outgoing && item.message_id <= receipt.max_id
+              ? { ...item, read: true }
+              : item
+          )))
         }
       }
       if (packet.type === 'MESSAGE_DELETED') {
@@ -300,6 +357,7 @@ function App() {
       setForwarding(null)
       setForwardQuery('')
       setReactionPickerFor(null)
+      setSelectedChatAction(null)
       return
     }
     setMessages([])
@@ -315,6 +373,7 @@ function App() {
     setForwarding(null)
     setForwardQuery('')
     setReactionPickerFor(null)
+    setSelectedChatAction(null)
     api<ChatInfo>('/api/telegram/chats/' + selected.chat_id)
       .then(setChatInfo)
       .catch(() => setChatInfo(null))
@@ -333,6 +392,62 @@ function App() {
       })
       .catch(() => undefined)
   }, [selected?.chat_id])
+
+  useEffect(() => {
+    if (typingTimerRef.current !== null) {
+      window.clearTimeout(typingTimerRef.current)
+      typingTimerRef.current = null
+    }
+
+    const chatId = selected?.chat_id
+    const previous = typingSentRef.current
+    const canType = Boolean(chatId && !editing && !uploadBusy)
+    const hasText = canType && Boolean(draft.trim())
+
+    if (previous?.active && (!hasText || previous.chatId !== chatId)) {
+      void sendTypingStatus(previous.chatId, false)
+      typingSentRef.current = null
+    }
+
+    if (!chatId || !hasText) return
+
+    const now = Date.now()
+    const current = typingSentRef.current
+    if (!current || current.chatId !== chatId || now - current.at >= 3000) {
+      void sendTypingStatus(chatId, true)
+      typingSentRef.current = { chatId, active: true, at: now }
+    }
+
+    typingTimerRef.current = window.setTimeout(() => {
+      const latest = typingSentRef.current
+      if (latest?.active && latest.chatId === chatId) {
+        void sendTypingStatus(chatId, false)
+        typingSentRef.current = null
+      }
+      typingTimerRef.current = null
+    }, 1800)
+
+    return () => {
+      if (typingTimerRef.current !== null) {
+        window.clearTimeout(typingTimerRef.current)
+        typingTimerRef.current = null
+      }
+    }
+  }, [draft, selected?.chat_id, editing, uploadBusy])
+
+  async function sendTypingStatus(chatId: number, active: boolean) {
+    try {
+      await api<{ chat_id: number; typing: boolean }>(
+        '/api/telegram/chats/' + chatId + '/typing',
+        {
+          method: 'POST',
+          body: JSON.stringify({ active })
+        }
+      )
+    } catch {
+      // Typing is an ephemeral hint and must never block composing or sending.
+    }
+  }
 
   async function refreshDialogs() {
     try {
@@ -946,7 +1061,16 @@ function App() {
               <ChatAvatar chatId={selected.chat_id} title={selected.title} className="large" />
               <div>
                 <strong>{selected.title}</strong>
-                <small>{presenceLabel(chatInfo?.status) || dialogTypeLabel(chatInfo?.dialog_type || selected.dialog_type)}</small>
+                {selectedChatAction ? (
+                  <small className="chat-action-live">
+                    {selected.dialog_type !== 'user' && selectedChatAction.user_name
+                      ? selectedChatAction.user_name + ' · '
+                      : ''}
+                    {chatActionLabel(selectedChatAction.action)}
+                  </small>
+                ) : (
+                  <small>{presenceLabel(chatInfo?.status) || dialogTypeLabel(chatInfo?.dialog_type || selected.dialog_type)}</small>
+                )}
               </div>
               <div className="header-actions">
                 <button className={'icon-button ' + (messageSearchOpen ? 'active' : '')} aria-label="جست‌وجوی پیام" onClick={toggleMessageSearch}>⌕</button>
@@ -1058,7 +1182,18 @@ function App() {
                       })}
                     </div>
                   )}
-                  <small>{formatTime(message.date)}{message.edited ? ' · ویرایش‌شده' : ''}</small>
+                  <small className="message-meta">
+                    <span>{formatTime(message.date)}{message.edited ? ' · ویرایش‌شده' : ''}</span>
+                    {message.outgoing && (
+                      <span
+                        className={'read-receipt ' + (message.read ? 'read' : 'sent')}
+                        aria-label={message.read ? 'خوانده شده' : 'ارسال شده'}
+                        title={message.read ? 'خوانده شده' : 'ارسال شده'}
+                      >
+                        {message.read ? '✓✓' : '✓'}
+                      </span>
+                    )}
+                  </small>
                 </article>
               ))}
             </div>

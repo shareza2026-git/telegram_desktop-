@@ -58,6 +58,7 @@ button { border: 0; cursor: pointer; }
 .chat-panel { display: flex; flex-direction: column; background: #0e1a25; }
 .chat-header { border-left: 1px solid #243544; }
 .chat-header > div:nth-child(2) { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.chat-action-live { color: #55c7f3 !important; }
 .header-actions { display: flex; gap: 2px; }
 .message-search-panel { max-height: 250px; padding: 9px 12px; overflow: auto; background: #172532; border-bottom: 1px solid #263846; }
 .message-search-form { display: flex; gap: 6px; }
@@ -82,6 +83,10 @@ button { border: 0; cursor: pointer; }
 .message.deleted { opacity: .6; font-style: italic; }
 .message.message-focus { outline: 2px solid #2aabee; box-shadow: 0 0 0 5px #2aabee22; }
 .message small { align-self: flex-end; color: #8ea4b6; font-size: 10px; }
+.message-meta { display: inline-flex; align-items: center; gap: 5px; direction: rtl; }
+.read-receipt { direction: ltr; letter-spacing: -3px; font-size: 12px; }
+.read-receipt.sent { color: #91a6b7; }
+.read-receipt.read { color: #63cdf7; }
 .sender-name { color: #6fc7f4; font-size: 12px; }
 .reply-reference { width: 100%; padding: 5px 8px; display: flex; flex-direction: column; gap: 1px; color: #bfeaff; background: #2aabee18; border-right: 3px solid #2aabee; border-radius: 6px; text-align: right; }
 .reply-reference:disabled { cursor: default; opacity: .7; }
