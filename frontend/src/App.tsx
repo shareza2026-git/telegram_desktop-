@@ -33,6 +33,12 @@ type MediaInfo = {
   downloadable: boolean
 }
 
+type ReactionSummary = {
+  emoji: string
+  count: number
+  chosen: boolean
+}
+
 type Message = {
   chat_id: number
   message_id: number
@@ -44,6 +50,7 @@ type Message = {
   edited: boolean
   reply_to_message_id?: number | null
   media?: MediaInfo | null
+  reactions: ReactionSummary[]
   deleted: boolean
 }
 
@@ -70,6 +77,7 @@ type FolderKey = 'all' | 'private' | 'groups' | 'channels' | 'archived'
 type MediaState = 'loading' | 'ready' | 'downloading' | 'done' | 'error'
 
 const HISTORY_PAGE_SIZE = 80
+const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🔥']
 const backendBase = (import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8110').replace(/\/$/, '')
 const socketBase = backendBase.replace(/^http/, 'ws')
 const mediaLabels: Record<MediaInfo['kind'], string> = {
@@ -213,6 +221,8 @@ function App() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const selectedChatIdRef = useRef<number | null>(null)
   const [messageActionBusy, setMessageActionBusy] = useState<string | null>(null)
+  const [reactionPickerFor, setReactionPickerFor] = useState<number | null>(null)
+  const [reactionBusy, setReactionBusy] = useState<string | null>(null)
   const [messageSearchOpen, setMessageSearchOpen] = useState(false)
   const [messageQuery, setMessageQuery] = useState('')
   const [searchResults, setSearchResults] = useState<Message[]>([])
@@ -289,6 +299,7 @@ function App() {
       setSearchPerformed(false)
       setForwarding(null)
       setForwardQuery('')
+      setReactionPickerFor(null)
       return
     }
     setMessages([])
@@ -303,6 +314,7 @@ function App() {
     setSearchPerformed(false)
     setForwarding(null)
     setForwardQuery('')
+    setReactionPickerFor(null)
     api<ChatInfo>('/api/telegram/chats/' + selected.chat_id)
       .then(setChatInfo)
       .catch(() => setChatInfo(null))
@@ -685,6 +697,28 @@ function App() {
     )
   }
 
+  async function setReaction(message: Message, emoji: string | null) {
+    if (message.deleted || reactionBusy !== null) return
+    const actionKey = mediaKey(message) + ':' + (emoji || 'remove')
+    setReactionBusy(actionKey)
+    setError('')
+    try {
+      const updated = await api<Message>(
+        '/api/telegram/chats/' + message.chat_id + '/messages/' + message.message_id + '/reaction',
+        {
+          method: 'POST',
+          body: JSON.stringify({ emoji })
+        }
+      )
+      setMessages(current => current.map(item => item.message_id === updated.message_id ? updated : item))
+      setReactionPickerFor(null)
+    } catch (caught) {
+      setError(errorMessage(caught, 'ثبت واکنش انجام نشد.'))
+    } finally {
+      setReactionBusy(null)
+    }
+  }
+
   async function deleteMessage(message: Message) {
     if (!selected || !message.outgoing || message.deleted) return
     if (!window.confirm('این پیام برای همه حذف شود؟')) return
@@ -966,9 +1000,31 @@ function App() {
                   {renderReplyReference(message)}
                   {message.media && renderMedia(message)}
                   {message.deleted ? <span>پیام حذف شده است</span> : message.text && <span>{message.text}</span>}
+                  {!message.deleted && Boolean(message.reactions?.length) && (
+                    <div className="message-reactions">
+                      {message.reactions.map(reaction => (
+                        <button
+                          type="button"
+                          className={reaction.chosen ? 'chosen' : ''}
+                          key={reaction.emoji}
+                          onClick={() => setReaction(message, reaction.chosen ? null : reaction.emoji)}
+                          disabled={reactionBusy !== null}
+                        >
+                          <span>{reaction.emoji}</span>
+                          <small>{new Intl.NumberFormat('fa-IR').format(reaction.count)}</small>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   {!message.deleted && (
                     <div className="message-actions">
                       <button type="button" onClick={() => beginReply(message)}>↩ پاسخ</button>
+                      <button
+                        type="button"
+                        onClick={() => setReactionPickerFor(current => current === message.message_id ? null : message.message_id)}
+                      >
+                        ☺ واکنش
+                      </button>
                       <button type="button" onClick={() => beginForward(message)}>↗ فوروارد</button>
                       {message.outgoing && message.text && <button type="button" onClick={() => beginEdit(message)}>✎ ویرایش</button>}
                       {message.outgoing && (
@@ -981,6 +1037,25 @@ function App() {
                           حذف
                         </button>
                       )}
+                    </div>
+                  )}
+                  {reactionPickerFor === message.message_id && !message.deleted && (
+                    <div className="reaction-picker" role="group" aria-label="انتخاب واکنش">
+                      {QUICK_REACTIONS.map(emoji => {
+                        const chosen = message.reactions?.some(item => item.emoji === emoji && item.chosen) || false
+                        const key = mediaKey(message) + ':' + (chosen ? 'remove' : emoji)
+                        return (
+                          <button
+                            type="button"
+                            className={chosen ? 'chosen' : ''}
+                            key={emoji}
+                            onClick={() => setReaction(message, chosen ? null : emoji)}
+                            disabled={reactionBusy !== null}
+                          >
+                            {reactionBusy === key ? '…' : emoji}
+                          </button>
+                        )
+                      })}
                     </div>
                   )}
                   <small>{formatTime(message.date)}{message.edited ? ' · ویرایش‌شده' : ''}</small>

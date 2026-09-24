@@ -25,6 +25,7 @@ The trading terminal remains a separate repository and its running session file 
 8. Server-side chat search and explicit-destination forwarding.
 9. Real chat/entity information and cached profile photos.
 10. Safe photo/document sending with caption and reply support.
+11. Standard Telegram message reactions with live synchronization.
 
 ## Phase 2: controlled session bootstrap
 
@@ -115,6 +116,20 @@ The attachment button now supports:
 7. Publishing the returned Telegram message through the existing store and WebSocket path.
 
 Audio and video files can be sent and downloaded, but playback remains disabled.
+
+## Phase 10: message reactions
+
+The message view now supports:
+
+1. Reading standard emoji reaction counts from Telegram history and live messages.
+2. Showing the current account's selected reaction distinctly.
+3. Adding a reaction from a compact Telegram-style picker.
+4. Removing the current account's reaction by selecting it again.
+5. Refreshing the full message after a reaction change and publishing it through the existing WebSocket path.
+6. Listening for Telegram reaction updates and synchronizing them into the independent local store.
+7. Migrating existing local databases in place with a nullable reactions column.
+
+Custom emoji and paid reactions are displayed only when Telegram exposes a standard emoji representation. Audio and video playback remains disabled.
 
 ## Local configuration
 

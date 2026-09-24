@@ -87,6 +87,14 @@ button { border: 0; cursor: pointer; }
 .reply-reference:disabled { cursor: default; opacity: .7; }
 .reply-reference strong { font-size: 11px; }
 .reply-reference span { max-width: 100%; overflow: hidden; color: #a9bbc9; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.message-reactions { align-self: flex-start; display: flex; flex-wrap: wrap; gap: 4px; direction: ltr; }
+.message-reactions button { min-height: 25px; padding: 2px 7px; display: inline-flex; align-items: center; gap: 4px; color: #c1d3df; background: #ffffff10; border: 1px solid #ffffff16; border-radius: 13px; }
+.message-reactions button.chosen { color: #dff6ff; background: #2aabee38; border-color: #5ec8f5; }
+.message-reactions small { align-self: center; color: inherit; font-size: 9px; }
+.reaction-picker { align-self: flex-end; padding: 5px; display: flex; gap: 3px; direction: ltr; background: #12212d; border: 1px solid #304758; border-radius: 18px; box-shadow: 0 5px 16px #0005; }
+.reaction-picker button { width: 30px; height: 30px; display: grid; place-items: center; background: transparent; border-radius: 50%; font-size: 17px; }
+.reaction-picker button:hover, .reaction-picker button.chosen { background: #2aabee44; }
+.reaction-picker button:disabled, .message-reactions button:disabled { cursor: wait; opacity: .55; }
 .message-actions { align-self: flex-end; display: flex; gap: 3px; }
 .message-actions button { padding: 2px 5px; color: #91b6cd; background: transparent; border-radius: 5px; font-size: 9px; }
 .message-actions button:hover { color: white; background: #ffffff12; }
