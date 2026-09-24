@@ -239,7 +239,7 @@ The release path now includes:
 6. A Windows GitHub Actions workflow that runs all tests, builds and smoke-tests the packaged sidecar, creates an unsigned current-user NSIS installer and uploads it as a workflow artifact.
 7. A tag-driven release job that publishes the installer as a permanent GitHub Release asset for every `v*` tag.
 
-The installer workflow is `.github/workflows/windows-installer.yml`. It runs on every push to `feature/telegram-desktop-foundation`, on version tags matching `v*`, and can also be started manually. Branch builds create the `telegram-desktop-windows-installer` workflow artifact. Version tags additionally create a permanent GitHub Release containing the installer executable.
+The installer workflow is `.github/workflows/windows-installer.yml`. It runs on every push to `feature/telegram-desktop-foundation`, release branches matching `release/v*`, version tags matching `v*`, and can also be started manually. Feature-branch builds create the `telegram-desktop-windows-installer` workflow artifact. A version tag or release branch additionally creates the matching tag and a permanent GitHub Release containing the installer executable.
 
 The packaged backend reads optional secrets from `settings.env` inside Tauri's private per-user application data directory. The file is never bundled or committed. It may contain the same `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_SOURCE_SESSION_PATH` and `TELEGRAM_PROXY_CONFIG` values already used locally; source-session and proxy catalog paths remain read-only.
 

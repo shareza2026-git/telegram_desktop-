@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - feature/telegram-desktop-foundation
+      - "release/v*"
     tags:
       - "v*"
 
@@ -96,7 +97,7 @@ jobs:
           retention-days: 30
 
   publish-release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/heads/release/v')
     needs: build-windows-installer
     runs-on: ubuntu-latest
     permissions:
@@ -110,9 +111,14 @@ jobs:
       - name: Publish permanent GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "$GITHUB_REF_NAME" release/*.exe
-          --repo "$GITHUB_REPOSITORY"
-          --title "Telegram Desktop $GITHUB_REF_NAME"
-          --generate-notes
-          --verify-tag
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            release_tag="$GITHUB_REF_NAME"
+          else
+            release_tag="${GITHUB_REF_NAME#release/}"
+          fi
+          gh release create "$release_tag" release/*.exe \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Telegram Desktop $release_tag" \
+            --generate-notes
