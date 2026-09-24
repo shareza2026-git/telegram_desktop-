@@ -74,7 +74,21 @@ button { border: 0; cursor: pointer; }
 .message-search-results span { color: #b4c5d2; font-size: 11px; }
 .message-search-results small { color: #7f96a7; font-size: 9px; }
 .search-empty { padding: 14px; color: #8298aa; font-size: 11px; text-align: center; }
-.message-list { flex: 1; overflow: auto; padding: 24px 6%; display: flex; flex-direction: column; gap: 8px; background: radial-gradient(circle at center, #13283a, #0e1a25 70%); }
+.pinned-banner { min-height: 48px; padding: 7px 18px; display: flex; align-items: center; gap: 10px; color: #dce8f2; background: #172c3b; border-bottom: 1px solid #284153; text-align: right; }
+.pinned-banner:hover { background: #1c3445; }
+.pinned-banner > span:last-child { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pinned-banner strong { color: #72cef5; font-size: 11px; }
+.pinned-banner small { max-width: min(620px, 70vw); overflow: hidden; color: #a7bac8; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.pinned-mark { width: 28px; height: 28px; display: grid; place-items: center; flex: 0 0 28px; color: white; background: #2aabee; border-radius: 50%; }
+.message-list { position: relative; flex: 1; overflow: auto; padding: 24px 6%; display: flex; flex-direction: column; gap: 8px; background: radial-gradient(circle at center, #13283a, #0e1a25 70%); }
+.date-separator, .unread-divider { align-self: stretch; display: flex; align-items: center; gap: 10px; color: #9fb1bf; font-size: 10px; }
+.date-separator::before, .date-separator::after, .unread-divider::before, .unread-divider::after { height: 1px; flex: 1; content: ''; background: #ffffff14; }
+.date-separator span { padding: 4px 10px; background: #101f2bdd; border-radius: 12px; }
+.unread-divider { color: #6fd1f8; }
+.unread-divider::before, .unread-divider::after { background: #2aabee55; }
+.jump-bottom { position: sticky; z-index: 4; right: 50%; bottom: 8px; width: 42px; height: 42px; margin: -50px auto 0; display: grid; place-items: center; color: #dff6ff; background: #203746; border: 1px solid #3d5a6e; border-radius: 50%; box-shadow: 0 5px 16px #0007; font-size: 20px; }
+.jump-bottom:hover { background: #29485d; }
+.jump-bottom strong { position: absolute; top: -6px; right: -7px; min-width: 20px; height: 20px; padding: 0 5px; display: grid; place-items: center; color: white; background: #2aabee; border-radius: 10px; font-size: 9px; }
 .older-button { align-self: center; padding: 8px 14px; color: #cbeeff; background: #2aabee33; border-radius: 16px; font-size: 12px; }
 .older-button:hover { background: #2aabee55; }
 .older-button:disabled { cursor: wait; opacity: .65; }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 
 type Dialog = {
   chat_id: number
@@ -125,6 +125,19 @@ function formatTime(value: string) {
   return new Intl.DateTimeFormat('fa-IR', { hour: '2-digit', minute: '2-digit' }).format(new Date(value))
 }
 
+function messageDayKey(value: string) {
+  const date = new Date(value)
+  return [date.getFullYear(), date.getMonth(), date.getDate()].join('-')
+}
+
+function formatMessageDate(value: string) {
+  return new Intl.DateTimeFormat('fa-IR', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  }).format(new Date(value))
+}
+
 function formatBytes(value: number | null | undefined) {
   if (value == null || value < 0) return 'اندازه نامشخص'
   if (value < 1024) return value + ' B'
@@ -224,6 +237,10 @@ function App() {
   const [selected, setSelected] = useState<Dialog | null>(null)
   const [chatInfo, setChatInfo] = useState<ChatInfo | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
+  const [pinnedMessage, setPinnedMessage] = useState<Message | null>(null)
+  const [unreadBoundaryId, setUnreadBoundaryId] = useState<number | null>(null)
+  const [showJumpToBottom, setShowJumpToBottom] = useState(false)
+  const [newBelowCount, setNewBelowCount] = useState(0)
   const [query, setQuery] = useState('')
   const [draft, setDraft] = useState('')
   const [error, setError] = useState('')
@@ -244,6 +261,8 @@ function App() {
   const [uploadBusy, setUploadBusy] = useState(false)
   const [uploadName, setUploadName] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const messageListRef = useRef<HTMLDivElement>(null)
+  const stickToBottomRef = useRef(true)
   const selectedChatIdRef = useRef<number | null>(null)
   const [messageActionBusy, setMessageActionBusy] = useState<string | null>(null)
   const [reactionPickerFor, setReactionPickerFor] = useState<number | null>(null)
@@ -300,10 +319,18 @@ function App() {
       if (packet.type === 'MESSAGE_NEW' || packet.type === 'MESSAGE_EDITED') {
         const message = packet.data as Message
         if (selected?.chat_id === message.chat_id) {
+          const shouldFollow = message.outgoing || isNearBottom()
           setMessages(current => {
+            const exists = current.some(item => item.message_id === message.message_id)
+            if (packet.type === 'MESSAGE_NEW' && !message.outgoing && !shouldFollow && !exists) {
+              setNewBelowCount(count => count + 1)
+            }
             const without = current.filter(item => item.message_id !== message.message_id)
             return [...without, message].sort((a, b) => a.message_id - b.message_id)
           })
+          if (shouldFollow) {
+            window.requestAnimationFrame(() => scrollToBottom(message.outgoing ? 'smooth' : 'auto'))
+          }
         }
       }
       if (packet.type === 'CHAT_ACTION') {
@@ -347,6 +374,11 @@ function App() {
       setMessages([])
       setHasOlder(false)
       setChatInfo(null)
+      setPinnedMessage(null)
+      setUnreadBoundaryId(null)
+      setShowJumpToBottom(false)
+      setNewBelowCount(0)
+      stickToBottomRef.current = true
       setReplyingTo(null)
       setEditing(null)
       setDraft('')
@@ -360,9 +392,15 @@ function App() {
       setSelectedChatAction(null)
       return
     }
+    const unreadCount = selected.unread_count
     setMessages([])
     setHasOlder(false)
     setChatInfo(null)
+    setPinnedMessage(null)
+    setUnreadBoundaryId(null)
+    setShowJumpToBottom(false)
+    setNewBelowCount(0)
+    stickToBottomRef.current = true
     setReplyingTo(null)
     setEditing(null)
     setDraft('')
@@ -378,10 +416,18 @@ function App() {
       .then(setChatInfo)
       .catch(() => setChatInfo(null))
 
+    api<Message | null>('/api/telegram/chats/' + selected.chat_id + '/pinned')
+      .then(setPinnedMessage)
+      .catch(() => setPinnedMessage(null))
+
     api<Message[]>('/api/telegram/chats/' + selected.chat_id + '/messages?limit=' + HISTORY_PAGE_SIZE)
       .then(items => {
         setMessages(items)
         setHasOlder(items.length === HISTORY_PAGE_SIZE)
+        const incoming = items.filter(item => !item.outgoing && !item.deleted)
+        const unreadIndex = Math.max(0, incoming.length - unreadCount)
+        setUnreadBoundaryId(unreadCount > 0 && incoming.length > 0 ? incoming[unreadIndex].message_id : null)
+        window.requestAnimationFrame(() => scrollToBottom('auto'))
       })
       .catch(error => setError(errorMessage(error, 'تاریخچه این گفتگو دریافت نشد.')))
 
@@ -392,6 +438,13 @@ function App() {
       })
       .catch(() => undefined)
   }, [selected?.chat_id])
+
+  const newestMessageId = messages.length ? messages[messages.length - 1].message_id : null
+
+  useEffect(() => {
+    if (newestMessageId === null || !stickToBottomRef.current) return
+    window.requestAnimationFrame(() => scrollToBottom('smooth'))
+  }, [newestMessageId])
 
   useEffect(() => {
     if (typingTimerRef.current !== null) {
@@ -449,6 +502,28 @@ function App() {
     }
   }
 
+  function isNearBottom() {
+    const viewport = messageListRef.current
+    if (!viewport) return true
+    return viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 140
+  }
+
+  function scrollToBottom(behavior: ScrollBehavior = 'smooth') {
+    const viewport = messageListRef.current
+    if (!viewport) return
+    viewport.scrollTo({ top: viewport.scrollHeight, behavior })
+    stickToBottomRef.current = true
+    setShowJumpToBottom(false)
+    setNewBelowCount(0)
+  }
+
+  function handleMessageScroll() {
+    const nearBottom = isNearBottom()
+    stickToBottomRef.current = nearBottom
+    setShowJumpToBottom(!nearBottom)
+    if (nearBottom) setNewBelowCount(0)
+  }
+
   async function refreshDialogs() {
     try {
       setDialogs(await api<Dialog[]>('/api/telegram/dialogs'))
@@ -459,6 +534,9 @@ function App() {
 
   async function loadOlder() {
     if (!selected || loadingOlder || !hasOlder || !messages.length) return
+    const viewport = messageListRef.current
+    const previousHeight = viewport?.scrollHeight || 0
+    const previousTop = viewport?.scrollTop || 0
     setLoadingOlder(true)
     const oldestId = messages[0].message_id
     try {
@@ -470,6 +548,10 @@ function App() {
         return [...older.filter(item => !known.has(item.message_id)), ...current]
       })
       setHasOlder(older.length === HISTORY_PAGE_SIZE)
+      window.requestAnimationFrame(() => {
+        if (!viewport) return
+        viewport.scrollTop = previousTop + viewport.scrollHeight - previousHeight
+      })
     } catch (caught) {
       setError(errorMessage(caught, 'پیام‌های قدیمی‌تر دریافت نشد.'))
     } finally {
@@ -795,6 +877,16 @@ function App() {
     window.setTimeout(() => element.classList.remove('message-focus'), 1400)
   }
 
+  function openPinnedMessage() {
+    if (!pinnedMessage) return
+    setMessages(current => (
+      current.some(item => item.message_id === pinnedMessage.message_id)
+        ? current
+        : [...current, pinnedMessage].sort((a, b) => a.message_id - b.message_id)
+    ))
+    window.requestAnimationFrame(() => jumpToMessage(pinnedMessage.message_id))
+  }
+
   function renderReplyReference(message: Message) {
     if (!message.reply_to_message_id) return null
     const source = messages.find(item => item.message_id === message.reply_to_message_id) || null
@@ -1108,17 +1200,32 @@ function App() {
                 )}
               </section>
             )}
-            <div className="message-list">
+            {pinnedMessage && (
+              <button className="pinned-banner" type="button" onClick={openPinnedMessage}>
+                <span className="pinned-mark">⌖</span>
+                <span>
+                  <strong>پیام سنجاق‌شده</strong>
+                  <small>{messageSnippet(pinnedMessage)}</small>
+                </span>
+              </button>
+            )}
+            <div className="message-list" ref={messageListRef} onScroll={handleMessageScroll}>
               {hasOlder && (
                 <button className="older-button" onClick={loadOlder} disabled={loadingOlder}>
                   {loadingOlder ? 'در حال دریافت…' : 'پیام‌های قدیمی‌تر'}
                 </button>
               )}
-              {messages.map(message => (
+              {messages.map((message, index) => (
+                <Fragment key={message.message_id}>
+                  {index === 0 || messageDayKey(messages[index - 1].date) !== messageDayKey(message.date) ? (
+                    <div className="date-separator"><span>{formatMessageDate(message.date)}</span></div>
+                  ) : null}
+                  {unreadBoundaryId === message.message_id && (
+                    <div className="unread-divider"><span>پیام‌های خوانده‌نشده</span></div>
+                  )}
                 <article
                   id={'message-' + message.chat_id + '-' + message.message_id}
                   className={'message ' + (message.outgoing ? 'outgoing' : '') + (message.deleted ? ' deleted' : '')}
-                  key={message.message_id}
                 >
                   {!message.outgoing && message.sender_name && <strong className="sender-name">{message.sender_name}</strong>}
                   {renderReplyReference(message)}
@@ -1195,7 +1302,14 @@ function App() {
                     )}
                   </small>
                 </article>
+                </Fragment>
               ))}
+              {showJumpToBottom && (
+                <button className="jump-bottom" type="button" onClick={() => scrollToBottom('smooth')} aria-label="رفتن به آخر گفتگو">
+                  <span>↓</span>
+                  {newBelowCount > 0 && <strong>{new Intl.NumberFormat('fa-IR').format(newBelowCount)}</strong>}
+                </button>
+              )}
             </div>
             <div className="composer-shell">
               <input

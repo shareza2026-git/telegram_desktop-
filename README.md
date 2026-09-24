@@ -27,6 +27,7 @@ The trading terminal remains a separate repository and its running session file 
 10. Safe photo/document sending with caption and reply support.
 11. Standard Telegram message reactions with live synchronization.
 12. Live typing presence and outgoing read receipts.
+13. Telegram-style history navigation, unread boundary and pinned messages.
 
 ## Phase 2: controlled session bootstrap
 
@@ -145,6 +146,20 @@ The live conversation view now supports:
 7. Persisting outgoing read state in the independent SQLite store with an in-place schema migration.
 
 Typing presence is ephemeral and is not stored. Audio and video playback remains disabled.
+
+## Phase 12: history navigation and pinned messages
+
+The conversation view now supports:
+
+1. Date separators between message days using the local display calendar.
+2. A visible boundary at the first unread incoming message captured when a chat opens.
+3. Automatic bottom-following only while the user is already near the latest messages.
+4. A jump-to-bottom button with a counter for new incoming messages received below the viewport.
+5. Loading older history without moving the user's current reading position.
+6. Reading the chat's pinned message through Telegram and opening it from a compact header banner.
+7. Caching the pinned message only in the independent local message store.
+
+Pinned retrieval does not expose source-session data, API credentials or transport secrets. Audio and video playback remains disabled.
 
 ## Local configuration
 
