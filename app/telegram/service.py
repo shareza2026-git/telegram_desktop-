@@ -599,6 +599,19 @@ class TelegramDesktopService:
             ),
         )
 
+    async def pinned_message(self, chat_id: int) -> Message | None:
+        client = self._require_authorized()
+        values = await client.get_messages(
+            chat_id,
+            limit=1,
+            filter=types.InputMessagesFilterPinned(),
+        )
+        if not values:
+            return None
+        message = self._message_model(values[0], chat_id)
+        await self.store.upsert_message(message)
+        return message
+
     async def history(self, chat_id: int, limit: int = 50, offset_id: int = 0) -> list[Message]:
         if limit < 1 or limit > 200:
             raise ValueError("limit must be between 1 and 200")

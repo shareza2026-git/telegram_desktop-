@@ -38,8 +38,18 @@ class FakeClient:
         self.files: list[tuple[int, str, str | None, int | None]] = []
         self.reaction_requests = []
         self.typing_requests = []
+        self.pinned_requests = []
 
-    async def get_messages(self, chat_id: int, ids: int):
+    async def get_messages(
+        self,
+        chat_id: int,
+        ids: int | None = None,
+        limit: int | None = None,
+        filter=None,
+    ):
+        if filter is not None:
+            self.pinned_requests.append((chat_id, limit, type(filter).__name__))
+            return [self.existing] if self.existing is not None else []
         return self.existing
 
     async def get_input_entity(self, chat_id: int):
@@ -140,6 +150,30 @@ def build_service(client: FakeClient) -> TelegramDesktopService:
     service.events = FakeEvents()
     service._outbox_read_max = {}
     return service
+
+
+@pytest.mark.asyncio
+async def test_pinned_message_uses_telegram_filter_and_persists():
+    client = FakeClient(FakeMessage(15, "pinned", outgoing=False))
+    service = build_service(client)
+
+    result = await service.pinned_message(7)
+
+    assert client.pinned_requests == [(7, 1, "InputMessagesFilterPinned")]
+    assert result is not None
+    assert result.message_id == 15
+    assert service.store.messages[-1].message_id == 15
+
+
+@pytest.mark.asyncio
+async def test_pinned_message_returns_none_when_chat_has_no_pin():
+    client = FakeClient()
+    service = build_service(client)
+
+    result = await service.pinned_message(7)
+
+    assert result is None
+    assert service.store.messages == []
 
 
 @pytest.mark.asyncio

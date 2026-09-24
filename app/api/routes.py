@@ -77,6 +77,14 @@ async def chat_photo(chat_id: int, request: Request):
     )
 
 
+@router.get("/api/telegram/chats/{chat_id}/pinned")
+async def pinned_message(chat_id: int, request: Request):
+    try:
+        return await service(request).pinned_message(chat_id)
+    except DesktopError as exc:
+        raise error_response(exc) from None
+
+
 @router.get("/api/telegram/chats/{chat_id}/messages")
 async def messages(
     chat_id: int,
