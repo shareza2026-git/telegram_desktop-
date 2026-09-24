@@ -471,6 +471,7 @@ function App() {
       setSearchPerformed(false)
       setForwarding(null)
       setForwardQuery('')
+      setBulkBusy(null)
       setReactionPickerFor(null)
       setMessageContextMenu(null)
       setSelectedMessageIds(new Set())
@@ -495,6 +496,7 @@ function App() {
     setSearchPerformed(false)
     setForwarding(null)
     setForwardQuery('')
+    setBulkBusy(null)
     setReactionPickerFor(null)
     setMessageContextMenu(null)
     setSelectedMessageIds(new Set())
@@ -563,7 +565,7 @@ function App() {
       if (messageContextMenu) {
         setMessageContextMenu(null)
       } else if (forwarding) {
-        setForwarding(null)
+        closeForwarding()
       } else if (chatMenuOpen) {
         setChatMenuOpen(false)
       } else if (reactionPickerFor !== null) {
@@ -813,6 +815,11 @@ function App() {
     } catch {
       setError('کپی‌کردن متن پیام انجام نشد.')
     }
+  }
+
+  function closeForwarding() {
+    setForwarding(null)
+    setBulkBusy(null)
   }
 
   function beginForwardSelected() {
@@ -1156,6 +1163,7 @@ function App() {
   function beginForward(message: Message) {
     setMessageContextMenu(null)
     setForwardQuery('')
+    setBulkBusy(null)
     setForwarding([message])
   }
 
@@ -1190,6 +1198,7 @@ function App() {
       setError(errorMessage(caught, 'فوروارد پیام انجام نشد.'))
     } finally {
       setForwardTargetBusy(null)
+      setBulkBusy(null)
     }
   }
 
@@ -1456,7 +1465,7 @@ function App() {
   }
 
   return (
-    <main className="telegram-shell">
+    <main className="telegram-shell" onMouseDown={() => setMessageContextMenu(null)}>
       <aside className="chat-sidebar">
         <header className="sidebar-header">
           <div className="brand-title">
@@ -1857,7 +1866,7 @@ function App() {
       )}
 
       {forwarding && (
-        <div className="forward-backdrop" onMouseDown={() => setForwarding(null)}>
+        <div className="forward-backdrop" onMouseDown={closeForwarding}>
           <section className="forward-modal" role="dialog" aria-modal="true" aria-label="انتخاب مقصد فوروارد" onMouseDown={event => event.stopPropagation()}>
             <header>
               <div>
@@ -1868,10 +1877,7 @@ function App() {
                 </strong>
                 <small>{messageSnippet(forwarding[0])}</small>
               </div>
-              <button className="icon-button" type="button" aria-label="بستن" onClick={() => {
-                setForwarding(null)
-                setBulkBusy(null)
-              }}>×</button>
+              <button className="icon-button" type="button" aria-label="بستن" onClick={closeForwarding}>×</button>
             </header>
             <input
               className="forward-search"
