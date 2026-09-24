@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse
 
 from app.models import (
     DesktopError,
+    DialogStateRequest,
     EditMessageRequest,
     ForwardMessageRequest,
     LoginCodeRequest,
@@ -52,6 +53,30 @@ async def import_session(request: Request):
 async def dialogs(request: Request, search: str | None = None):
     try:
         return await service(request).list_dialogs(search)
+    except DesktopError as exc:
+        raise error_response(exc) from None
+
+
+@router.post("/api/telegram/chats/{chat_id}/pin")
+async def set_dialog_pinned(chat_id: int, values: DialogStateRequest, request: Request):
+    try:
+        return await service(request).set_dialog_pinned(chat_id, values.enabled)
+    except DesktopError as exc:
+        raise error_response(exc) from None
+
+
+@router.post("/api/telegram/chats/{chat_id}/archive")
+async def set_dialog_archived(chat_id: int, values: DialogStateRequest, request: Request):
+    try:
+        return await service(request).set_dialog_archived(chat_id, values.enabled)
+    except DesktopError as exc:
+        raise error_response(exc) from None
+
+
+@router.post("/api/telegram/chats/{chat_id}/mute")
+async def set_dialog_muted(chat_id: int, values: DialogStateRequest, request: Request):
+    try:
+        return await service(request).set_dialog_muted(chat_id, values.enabled)
     except DesktopError as exc:
         raise error_response(exc) from None
 

@@ -36,6 +36,7 @@ class ChatStore:
                     unread_count INTEGER NOT NULL DEFAULT 0,
                     pinned INTEGER NOT NULL DEFAULT 0,
                     archived INTEGER NOT NULL DEFAULT 0,
+                    muted INTEGER NOT NULL DEFAULT 0,
                     last_message_id INTEGER,
                     last_message_at TEXT
                 );
@@ -61,6 +62,7 @@ class ChatStore:
                 ON messages(chat_id, message_id DESC);
                 """
             )
+            self._ensure_column(connection, "dialogs", "muted", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(connection, "messages", "reactions_json", "TEXT")
             self._ensure_column(connection, "messages", "read", "INTEGER NOT NULL DEFAULT 0")
 
@@ -90,8 +92,8 @@ class ChatStore:
                 """
                 INSERT INTO dialogs (
                     chat_id, title, dialog_type, username, unread_count,
-                    pinned, archived, last_message_id, last_message_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    pinned, archived, muted, last_message_id, last_message_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(chat_id) DO UPDATE SET
                     title=excluded.title,
                     dialog_type=excluded.dialog_type,
@@ -99,6 +101,7 @@ class ChatStore:
                     unread_count=excluded.unread_count,
                     pinned=excluded.pinned,
                     archived=excluded.archived,
+                    muted=excluded.muted,
                     last_message_id=excluded.last_message_id,
                     last_message_at=excluded.last_message_at
                 """,
@@ -110,6 +113,7 @@ class ChatStore:
                     dialog.unread_count,
                     int(dialog.pinned),
                     int(dialog.archived),
+                    int(dialog.muted),
                     dialog.last_message_id,
                     dialog.last_message_at.isoformat() if dialog.last_message_at else None,
                 ),
@@ -271,6 +275,7 @@ class ChatStore:
             unread_count=row["unread_count"],
             pinned=bool(row["pinned"]),
             archived=bool(row["archived"]),
+            muted=bool(row["muted"]) if "muted" in row.keys() else False,
             last_message_id=row["last_message_id"],
             last_message_at=(
                 datetime.fromisoformat(row["last_message_at"])

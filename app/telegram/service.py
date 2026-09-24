@@ -371,6 +371,20 @@ class TelegramDesktopService:
         return labels.get(type(status).__name__)
 
     @staticmethod
+    def _dialog_muted(dialog: Any) -> bool:
+        raw_dialog = getattr(dialog, "dialog", None)
+        settings = getattr(raw_dialog, "notify_settings", None)
+        mute_until = getattr(settings, "mute_until", None)
+        if mute_until is None:
+            return False
+        if isinstance(mute_until, datetime):
+            return TelegramDesktopService._as_utc(mute_until) > datetime.now(timezone.utc)
+        try:
+            return int(mute_until) > int(datetime.now(timezone.utc).timestamp())
+        except (TypeError, ValueError):
+            return False
+
+    @staticmethod
     def _dialog_model(dialog: Any) -> Dialog:
         entity = dialog.entity
         if dialog.is_user:
@@ -389,6 +403,7 @@ class TelegramDesktopService:
             unread_count=int(getattr(dialog, "unread_count", 0) or 0),
             pinned=bool(getattr(dialog, "pinned", False)),
             archived=bool(getattr(dialog, "folder_id", None) == 1),
+            muted=TelegramDesktopService._dialog_muted(dialog),
             last_message_id=getattr(getattr(dialog, "message", None), "id", None),
             last_message_at=getattr(getattr(dialog, "message", None), "date", None),
         )
@@ -598,6 +613,55 @@ class TelegramDesktopService:
                 -(value.last_message_at.timestamp() if value.last_message_at else 0),
             ),
         )
+
+    async def _publish_dialog_update(self, chat_id: int, **changes: bool) -> dict:
+        value = {"chat_id": chat_id, **changes}
+        await self.events.publish({"type": "DIALOG_UPDATED", "data": value})
+        return value
+
+    async def set_dialog_pinned(self, chat_id: int, pinned: bool) -> dict:
+        client = self._require_authorized()
+        try:
+            peer = await client.get_input_entity(chat_id)
+            await client(
+                functions.messages.ToggleDialogPinRequest(
+                    pinned=pinned,
+                    peer=types.InputDialogPeer(peer=peer),
+                )
+            )
+        except Exception as error:
+            logger.warning("Telegram dialog pin operation failed: %s", type(error).__name__)
+            raise DesktopError("Telegram dialog pin could not be updated") from None
+        return await self._publish_dialog_update(chat_id, pinned=pinned)
+
+    async def set_dialog_archived(self, chat_id: int, archived: bool) -> dict:
+        client = self._require_authorized()
+        try:
+            await client.edit_folder(chat_id, 1 if archived else 0)
+        except Exception as error:
+            logger.warning("Telegram dialog archive operation failed: %s", type(error).__name__)
+            raise DesktopError("Telegram dialog archive could not be updated") from None
+        return await self._publish_dialog_update(chat_id, archived=archived)
+
+    async def set_dialog_muted(self, chat_id: int, muted: bool) -> dict:
+        client = self._require_authorized()
+        try:
+            peer = await client.get_input_entity(chat_id)
+            mute_until = (
+                datetime(2038, 1, 18, tzinfo=timezone.utc)
+                if muted
+                else datetime.now(timezone.utc)
+            )
+            await client(
+                functions.account.UpdateNotifySettingsRequest(
+                    peer=types.InputNotifyPeer(peer=peer),
+                    settings=types.InputPeerNotifySettings(mute_until=mute_until),
+                )
+            )
+        except Exception as error:
+            logger.warning("Telegram dialog mute operation failed: %s", type(error).__name__)
+            raise DesktopError("Telegram dialog mute could not be updated") from None
+        return await self._publish_dialog_update(chat_id, muted=muted)
 
     async def pinned_message(self, chat_id: int) -> Message | None:
         client = self._require_authorized()

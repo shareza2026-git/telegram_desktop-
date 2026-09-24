@@ -27,6 +27,7 @@ class Dialog(BaseModel):
     unread_count: int = 0
     pinned: bool = False
     archived: bool = False
+    muted: bool = False
     last_message_id: int | None = None
     last_message_at: datetime | None = None
 
@@ -101,6 +102,10 @@ class SetReactionRequest(BaseModel):
 
 class TypingRequest(BaseModel):
     active: bool = True
+
+
+class DialogStateRequest(BaseModel):
+    enabled: bool
 
 
 class LoginPhoneRequest(BaseModel):
