@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent as ReactMouseEvent } from 'react'
 
 import { DRAFT_STORAGE_KEY, parseDraftMap, updateDraftMap } from './drafts'
 
@@ -18,6 +18,12 @@ type DialogPatch = {
   pinned?: boolean
   archived?: boolean
   muted?: boolean
+}
+
+type MessageContextMenu = {
+  message: Message
+  x: number
+  y: number
 }
 
 type ChatInfo = {
@@ -286,7 +292,7 @@ function App() {
   const [searchResults, setSearchResults] = useState<Message[]>([])
   const [searchBusy, setSearchBusy] = useState(false)
   const [searchPerformed, setSearchPerformed] = useState(false)
-  const [forwarding, setForwarding] = useState<Message | null>(null)
+  const [forwarding, setForwarding] = useState<Message[] | null>(null)
   const [forwardQuery, setForwardQuery] = useState('')
   const [forwardTargetBusy, setForwardTargetBusy] = useState<number | null>(null)
   const [notificationsEnabled, setNotificationsEnabled] = useState(() => (
@@ -296,6 +302,9 @@ function App() {
   ))
   const [chatMenuOpen, setChatMenuOpen] = useState(false)
   const [dialogActionBusy, setDialogActionBusy] = useState<string | null>(null)
+  const [messageContextMenu, setMessageContextMenu] = useState<MessageContextMenu | null>(null)
+  const [selectedMessageIds, setSelectedMessageIds] = useState<Set<number>>(() => new Set())
+  const [bulkBusy, setBulkBusy] = useState<'delete' | 'forward' | null>(null)
   const dialogsRef = useRef<Dialog[]>([])
   const notificationsEnabledRef = useRef(notificationsEnabled)
   const draftsRef = useRef(parseDraftMap(window.localStorage.getItem(DRAFT_STORAGE_KEY)))
@@ -318,6 +327,11 @@ function App() {
   const totalUnread = useMemo(
     () => dialogs.reduce((total, dialog) => total + dialog.unread_count, 0),
     [dialogs]
+  )
+
+  const selectedMessages = useMemo(
+    () => messages.filter(message => selectedMessageIds.has(message.message_id)),
+    [messages, selectedMessageIds]
   )
 
   useEffect(() => {
@@ -458,6 +472,8 @@ function App() {
       setForwarding(null)
       setForwardQuery('')
       setReactionPickerFor(null)
+      setMessageContextMenu(null)
+      setSelectedMessageIds(new Set())
       setSelectedChatAction(null)
       return
     }
@@ -480,6 +496,8 @@ function App() {
     setForwarding(null)
     setForwardQuery('')
     setReactionPickerFor(null)
+    setMessageContextMenu(null)
+    setSelectedMessageIds(new Set())
     setSelectedChatAction(null)
     api<ChatInfo>('/api/telegram/chats/' + selected.chat_id)
       .then(setChatInfo)
@@ -517,6 +535,63 @@ function App() {
     draftsRef.current = updateDraftMap(draftsRef.current, selected.chat_id, draft)
     window.localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draftsRef.current))
   }, [draft, selected?.chat_id, editing])
+
+  useEffect(() => {
+    function handleKeyboard(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null
+      const isTyping = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA'
+
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f' && selected) {
+        event.preventDefault()
+        setMessageSearchOpen(true)
+        return
+      }
+
+      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && selected) {
+        event.preventDefault()
+        composerFormRef.current?.requestSubmit()
+        return
+      }
+
+      if (event.key === 'Delete' && selectedMessageIds.size > 0 && !isTyping) {
+        event.preventDefault()
+        void deleteSelectedMessages()
+        return
+      }
+
+      if (event.key !== 'Escape') return
+      if (messageContextMenu) {
+        setMessageContextMenu(null)
+      } else if (forwarding) {
+        setForwarding(null)
+      } else if (chatMenuOpen) {
+        setChatMenuOpen(false)
+      } else if (reactionPickerFor !== null) {
+        setReactionPickerFor(null)
+      } else if (selectedMessageIds.size > 0) {
+        setSelectedMessageIds(new Set())
+      } else if (messageSearchOpen) {
+        setMessageSearchOpen(false)
+      } else if (replyingTo || editing) {
+        cancelComposerContext()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyboard)
+    return () => window.removeEventListener('keydown', handleKeyboard)
+  }, [
+    selected?.chat_id,
+    selectedMessageIds,
+    messageContextMenu,
+    forwarding,
+    chatMenuOpen,
+    reactionPickerFor,
+    messageSearchOpen,
+    replyingTo,
+    editing,
+    draft,
+    bulkBusy
+  ])
 
   const newestMessageId = messages.length ? messages[messages.length - 1].message_id : null
 
@@ -597,6 +672,7 @@ function App() {
   }
 
   function handleMessageScroll() {
+    setMessageContextMenu(null)
     const nearBottom = isNearBottom()
     stickToBottomRef.current = nearBottom
     setShowJumpToBottom(!nearBottom)
@@ -699,6 +775,81 @@ function App() {
     }
     draftSwitchRef.current = dialog.chat_id
     setSelected(dialog)
+  }
+
+  function openMessageContextMenu(event: ReactMouseEvent, message: Message) {
+    event.preventDefault()
+    const menuWidth = 220
+    const menuHeight = message.outgoing ? 300 : 245
+    setMessageContextMenu({
+      message,
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8))
+    })
+  }
+
+  function toggleMessageSelection(messageId: number) {
+    setMessageContextMenu(null)
+    setSelectedMessageIds(current => {
+      const next = new Set(current)
+      if (next.has(messageId)) next.delete(messageId)
+      else next.add(messageId)
+      return next
+    })
+  }
+
+  async function copyMessages(values: Message[]) {
+    const text = values
+      .filter(message => !message.deleted && message.text.trim())
+      .map(message => message.text.trim())
+      .join('\n\n')
+    if (!text) {
+      setError('متنی برای کپی‌کردن وجود ندارد.')
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(text)
+      setMessageContextMenu(null)
+    } catch {
+      setError('کپی‌کردن متن پیام انجام نشد.')
+    }
+  }
+
+  function beginForwardSelected() {
+    if (!selectedMessages.length) return
+    setForwardQuery('')
+    setForwarding([...selectedMessages].sort((a, b) => a.message_id - b.message_id))
+    setBulkBusy('forward')
+  }
+
+  async function deleteSelectedMessages() {
+    if (!selected || !selectedMessages.length || bulkBusy !== null) return
+    if (selectedMessages.some(message => !message.outgoing || message.deleted)) {
+      setError('فقط پیام‌های ارسال‌شده توسط خودتان قابل حذف گروهی هستند.')
+      return
+    }
+    if (!window.confirm(new Intl.NumberFormat('fa-IR').format(selectedMessages.length) + ' پیام برای همه حذف شود؟')) return
+
+    setBulkBusy('delete')
+    try {
+      for (const message of selectedMessages) {
+        await api<{ chat_id: number; message_id: number; deleted: boolean }>(
+          '/api/telegram/chats/' + message.chat_id + '/messages/' + message.message_id + '/delete',
+          { method: 'POST' }
+        )
+      }
+      const deletedIds = new Set(selectedMessages.map(message => message.message_id))
+      setMessages(current => current.map(message => (
+        deletedIds.has(message.message_id)
+          ? { ...message, deleted: true, text: '' }
+          : message
+      )))
+      setSelectedMessageIds(new Set())
+    } catch (caught) {
+      setError(errorMessage(caught, 'حذف گروهی پیام‌ها کامل نشد.'))
+    } finally {
+      setBulkBusy(null)
+    }
   }
 
   async function refreshDialogs() {
@@ -997,34 +1148,44 @@ function App() {
   }
 
   function beginReply(message: Message) {
+    setMessageContextMenu(null)
     setEditing(null)
     setReplyingTo(message)
   }
 
   function beginForward(message: Message) {
+    setMessageContextMenu(null)
     setForwardQuery('')
-    setForwarding(message)
+    setForwarding([message])
   }
 
   async function forwardMessageTo(dialog: Dialog) {
-    if (!forwarding || forwardTargetBusy !== null) return
+    if (!forwarding?.length || forwardTargetBusy !== null) return
     setForwardTargetBusy(dialog.chat_id)
     try {
-      const message = await api<Message>(
-        '/api/telegram/chats/' + forwarding.chat_id + '/messages/' + forwarding.message_id + '/forward',
-        {
-          method: 'POST',
-          body: JSON.stringify({ target_chat_id: dialog.chat_id })
-        }
-      )
+      const forwarded: Message[] = []
+      for (const source of forwarding) {
+        forwarded.push(await api<Message>(
+          '/api/telegram/chats/' + source.chat_id + '/messages/' + source.message_id + '/forward',
+          {
+            method: 'POST',
+            body: JSON.stringify({ target_chat_id: dialog.chat_id })
+          }
+        ))
+      }
       if (selected?.chat_id === dialog.chat_id) {
-        setMessages(current => [
-          ...current.filter(item => item.message_id !== message.message_id),
-          message
-        ].sort((a, b) => a.message_id - b.message_id))
+        setMessages(current => {
+          const forwardedIds = new Set(forwarded.map(message => message.message_id))
+          return [
+            ...current.filter(message => !forwardedIds.has(message.message_id)),
+            ...forwarded
+          ].sort((a, b) => a.message_id - b.message_id)
+        })
       }
       setForwarding(null)
       setForwardQuery('')
+      setSelectedMessageIds(new Set())
+      setBulkBusy(null)
     } catch (caught) {
       setError(errorMessage(caught, 'فوروارد پیام انجام نشد.'))
     } finally {
@@ -1401,6 +1562,23 @@ function App() {
                 )}
               </div>
             </header>
+            {selectedMessageIds.size > 0 && (
+              <div className="selection-toolbar">
+                <strong>{new Intl.NumberFormat('fa-IR').format(selectedMessageIds.size)} پیام انتخاب شده</strong>
+                <button type="button" onClick={() => copyMessages(selectedMessages)}>▣ کپی</button>
+                <button type="button" onClick={beginForwardSelected} disabled={bulkBusy !== null}>↗ فوروارد</button>
+                <button
+                  type="button"
+                  className="danger"
+                  onClick={() => deleteSelectedMessages()}
+                  disabled={bulkBusy !== null || selectedMessages.some(message => !message.outgoing || message.deleted)}
+                  title={selectedMessages.some(message => !message.outgoing || message.deleted) ? 'حذف گروهی فقط برای پیام‌های خودتان است' : ''}
+                >
+                  حذف
+                </button>
+                <button className="selection-close" type="button" aria-label="لغو انتخاب" onClick={() => setSelectedMessageIds(new Set())}>×</button>
+              </div>
+            )}
             {messageSearchOpen && (
               <section className="message-search-panel">
                 <form className="message-search-form" onSubmit={searchMessages}>
@@ -1457,8 +1635,25 @@ function App() {
                   )}
                 <article
                   id={'message-' + message.chat_id + '-' + message.message_id}
-                  className={'message ' + (message.outgoing ? 'outgoing' : '') + (message.deleted ? ' deleted' : '')}
+                  className={
+                    'message '
+                    + (message.outgoing ? 'outgoing' : '')
+                    + (message.deleted ? ' deleted' : '')
+                    + (selectedMessageIds.has(message.message_id) ? ' selected-message' : '')
+                  }
+                  onContextMenu={event => openMessageContextMenu(event, message)}
+                  onClick={event => {
+                    if (
+                      selectedMessageIds.size > 0
+                      && !(event.target as HTMLElement).closest('button')
+                    ) toggleMessageSelection(message.message_id)
+                  }}
                 >
+                  {selectedMessageIds.size > 0 && (
+                    <span className="message-selector" aria-hidden="true">
+                      {selectedMessageIds.has(message.message_id) ? '✓' : ''}
+                    </span>
+                  )}
                   {!message.outgoing && message.sender_name && <strong className="sender-name">{message.sender_name}</strong>}
                   {renderReplyReference(message)}
                   {message.media && renderMedia(message)}
@@ -1479,7 +1674,7 @@ function App() {
                       ))}
                     </div>
                   )}
-                  {!message.deleted && (
+                  {!message.deleted && selectedMessageIds.size === 0 && (
                     <div className="message-actions">
                       <button type="button" onClick={() => beginReply(message)}>↩ پاسخ</button>
                       <button
@@ -1502,7 +1697,7 @@ function App() {
                       )}
                     </div>
                   )}
-                  {reactionPickerFor === message.message_id && !message.deleted && (
+                  {reactionPickerFor === message.message_id && !message.deleted && selectedMessageIds.size === 0 && (
                     <div className="reaction-picker" role="group" aria-label="انتخاب واکنش">
                       {QUICK_REACTIONS.map(emoji => {
                         const chosen = message.reactions?.some(item => item.emoji === emoji && item.chosen) || false
@@ -1624,15 +1819,59 @@ function App() {
         ) : <div className="muted">اطلاعات گفتگو</div>}
       </aside>
 
+      {messageContextMenu && (
+        <div
+          className="message-context-menu"
+          style={{ left: messageContextMenu.x, top: messageContextMenu.y }}
+          role="menu"
+          onMouseDown={event => event.stopPropagation()}
+        >
+          <button type="button" role="menuitem" onClick={() => beginReply(messageContextMenu.message)}>↩ پاسخ</button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setReactionPickerFor(messageContextMenu.message.message_id)
+              setMessageContextMenu(null)
+            }}
+          >
+            ☺ واکنش
+          </button>
+          <button type="button" role="menuitem" onClick={() => beginForward(messageContextMenu.message)}>↗ فوروارد</button>
+          <button type="button" role="menuitem" onClick={() => copyMessages([messageContextMenu.message])}>▣ کپی متن</button>
+          <button type="button" role="menuitem" onClick={() => toggleMessageSelection(messageContextMenu.message.message_id)}>☑ انتخاب</button>
+          {messageContextMenu.message.outgoing && messageContextMenu.message.text && !messageContextMenu.message.deleted && (
+            <button type="button" role="menuitem" onClick={() => {
+              beginEdit(messageContextMenu.message)
+              setMessageContextMenu(null)
+            }}>✎ ویرایش</button>
+          )}
+          {messageContextMenu.message.outgoing && !messageContextMenu.message.deleted && (
+            <button type="button" role="menuitem" className="danger" onClick={() => {
+              const message = messageContextMenu.message
+              setMessageContextMenu(null)
+              void deleteMessage(message)
+            }}>حذف</button>
+          )}
+        </div>
+      )}
+
       {forwarding && (
         <div className="forward-backdrop" onMouseDown={() => setForwarding(null)}>
           <section className="forward-modal" role="dialog" aria-modal="true" aria-label="انتخاب مقصد فوروارد" onMouseDown={event => event.stopPropagation()}>
             <header>
               <div>
-                <strong>فوروارد پیام</strong>
-                <small>{messageSnippet(forwarding)}</small>
+                <strong>
+                  {forwarding.length === 1
+                    ? 'فوروارد پیام'
+                    : 'فوروارد ' + new Intl.NumberFormat('fa-IR').format(forwarding.length) + ' پیام'}
+                </strong>
+                <small>{messageSnippet(forwarding[0])}</small>
               </div>
-              <button className="icon-button" type="button" aria-label="بستن" onClick={() => setForwarding(null)}>×</button>
+              <button className="icon-button" type="button" aria-label="بستن" onClick={() => {
+                setForwarding(null)
+                setBulkBusy(null)
+              }}>×</button>
             </header>
             <input
               className="forward-search"

@@ -29,6 +29,7 @@ The trading terminal remains a separate repository and its running session file 
 12. Live typing presence and outgoing read receipts.
 13. Telegram-style history navigation, unread boundary and pinned messages.
 14. Desktop notifications, unread app badge and Telegram dialog controls.
+15. Per-chat drafts, message context menus, multi-selection and keyboard shortcuts.
 
 ## Phase 2: controlled session bootstrap
 
@@ -177,6 +178,22 @@ The desktop shell now supports:
 9. An in-place nullable-safe local database migration for the muted state.
 
 Notification permission is requested only after the user presses the notification control. Dashboard configuration, source sessions and proxy secrets remain read-only and are never returned to the frontend. Audio and video playback remains disabled.
+
+## Phase 14: drafts and message workspace
+
+The conversation workspace now supports:
+
+1. Keeping a separate local draft for every Telegram conversation.
+2. Restoring the original draft after editing or cancelling an existing message.
+3. Opening a Telegram-style action menu by right-clicking a message.
+4. Replying, reacting, forwarding, copying, selecting, editing or deleting from the context menu when allowed.
+5. Selecting multiple messages and showing a dedicated selection toolbar.
+6. Copying or forwarding multiple selected messages in chronological order.
+7. Deleting multiple messages only when every selected message belongs to the current account.
+8. Keyboard shortcuts: Ctrl/Cmd+F for chat search, Ctrl/Cmd+Enter to send, Delete for eligible selected messages and Escape to close the active layer.
+9. Pure unit coverage for malformed, updated and removed local drafts.
+
+Drafts are stored only in this client's local WebView storage and are never written to the dashboard. Multi-message actions reuse the existing guarded Telegram APIs. Audio and video playback remains disabled.
 
 ## Local configuration
 
