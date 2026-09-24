@@ -24,6 +24,7 @@ class FakeMessage:
         self.out = outgoing
         self.reply_to_msg_id = reply_to_message_id
         self.media = None
+        self.reactions = None
 
 
 class FakeClient:
@@ -35,9 +36,29 @@ class FakeClient:
         self.searched: list[tuple[int, str, int]] = []
         self.forwarded: list[tuple[int, int]] = []
         self.files: list[tuple[int, str, str | None, int | None]] = []
+        self.reaction_requests = []
 
     async def get_messages(self, chat_id: int, ids: int):
         return self.existing
+
+    async def get_input_entity(self, chat_id: int):
+        return chat_id
+
+    async def __call__(self, request):
+        self.reaction_requests.append(request)
+        emoji = request.reaction[0].emoticon if request.reaction else None
+        if self.existing is not None:
+            if emoji:
+                reaction = type("Reaction", (), {"emoticon": emoji})()
+                result = type(
+                    "ReactionCount",
+                    (),
+                    {"reaction": reaction, "count": 1, "chosen_order": 0},
+                )()
+                self.existing.reactions = type("Reactions", (), {"results": [result]})()
+            else:
+                self.existing.reactions = type("Reactions", (), {"results": []})()
+        return object()
 
     async def iter_messages(self, chat_id: int, search: str, limit: int):
         self.searched.append((chat_id, search, limit))
@@ -217,3 +238,24 @@ async def test_send_file_keeps_caption_reply_and_live_event(tmp_path):
     assert result.media is not None
     assert service.store.messages[-1].message_id == 40
     assert service.events.packets[-1]["type"] == "MESSAGE_NEW"
+
+
+
+@pytest.mark.asyncio
+async def test_set_and_remove_reaction_updates_store_and_live_event():
+    client = FakeClient(FakeMessage(11, "react", outgoing=False))
+    service = build_service(client)
+
+    reacted = await service.set_reaction(7, 11, "👍")
+
+    assert client.reaction_requests[-1].msg_id == 11
+    assert client.reaction_requests[-1].reaction[0].emoticon == "👍"
+    assert reacted.reactions[0].emoji == "👍"
+    assert reacted.reactions[0].chosen is True
+    assert service.events.packets[-1]["type"] == "MESSAGE_EDITED"
+
+    cleared = await service.set_reaction(7, 11, None)
+
+    assert client.reaction_requests[-1].reaction is None
+    assert cleared.reactions == []
+    assert service.store.messages[-1].message_id == 11

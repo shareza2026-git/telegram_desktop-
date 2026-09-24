@@ -11,6 +11,7 @@ from app.models import (
     LoginPasswordRequest,
     LoginPhoneRequest,
     SendMessageRequest,
+    SetReactionRequest,
 )
 from app.telegram.uploads import cleanup_staged_upload, stage_upload
 
@@ -186,6 +187,19 @@ async def edit_message(
     try:
         return await service(request).edit_text(chat_id, message_id, values.text)
     except DesktopError as exc:
+        raise error_response(exc) from None
+
+
+@router.post("/api/telegram/chats/{chat_id}/messages/{message_id}/reaction")
+async def set_reaction(
+    chat_id: int,
+    message_id: int,
+    values: SetReactionRequest,
+    request: Request,
+):
+    try:
+        return await service(request).set_reaction(chat_id, message_id, values.emoji)
+    except (DesktopError, ValueError) as exc:
         raise error_response(exc) from None
 
 

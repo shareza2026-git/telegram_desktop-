@@ -13,6 +13,12 @@ class MediaInfo(BaseModel):
     downloadable: bool = True
 
 
+class ReactionSummary(BaseModel):
+    emoji: str
+    count: int = Field(ge=1)
+    chosen: bool = False
+
+
 class Dialog(BaseModel):
     chat_id: int
     title: str
@@ -50,6 +56,7 @@ class Message(BaseModel):
     edited: bool = False
     reply_to_message_id: int | None = None
     media: MediaInfo | None = None
+    reactions: list[ReactionSummary] = Field(default_factory=list)
     deleted: bool = False
 
 
@@ -85,6 +92,10 @@ class EditMessageRequest(BaseModel):
 
 class ForwardMessageRequest(BaseModel):
     target_chat_id: int
+
+
+class SetReactionRequest(BaseModel):
+    emoji: str | None = Field(default=None, max_length=16)
 
 
 class LoginPhoneRequest(BaseModel):

@@ -4,7 +4,7 @@ import mimetypes
 from datetime import datetime, timezone
 from typing import Any
 
-from telethon import TelegramClient, events
+from telethon import TelegramClient, events, functions, types, utils
 from telethon.errors import (
     FloodWaitError,
     PasswordHashInvalidError,
@@ -22,6 +22,7 @@ from app.models import (
     Dialog,
     MediaInfo,
     Message,
+    ReactionSummary,
 )
 from app.storage import ChatStore
 from app.telegram.client import build_client
@@ -233,6 +234,7 @@ class TelegramDesktopService:
             (self._on_new, events.NewMessage()),
             (self._on_edit, events.MessageEdited()),
             (self._on_delete, events.MessageDeleted()),
+            (self._on_reaction, events.Raw(types=types.UpdateMessageReactions)),
         ]
         for callback, builder in definitions:
             self.client.add_event_handler(callback, builder)
@@ -283,6 +285,27 @@ class TelegramDesktopService:
             downloadable=True,
         )
 
+    @staticmethod
+    def _reactions(message: Any) -> list[ReactionSummary]:
+        summary = getattr(message, "reactions", None)
+        values = []
+        for item in getattr(summary, "results", None) or []:
+            reaction = getattr(item, "reaction", None)
+            emoji = getattr(reaction, "emoticon", None)
+            if not emoji:
+                continue
+            count = int(getattr(item, "count", 0) or 0)
+            if count < 1:
+                continue
+            values.append(
+                ReactionSummary(
+                    emoji=str(emoji),
+                    count=count,
+                    chosen=getattr(item, "chosen_order", None) is not None,
+                )
+            )
+        return values
+
     @classmethod
     def _message_model(cls, message: Any, chat_id: int, edited: bool = False) -> Message:
         return Message(
@@ -296,6 +319,7 @@ class TelegramDesktopService:
             edited=edited,
             reply_to_message_id=getattr(message, "reply_to_msg_id", None),
             media=cls._media(message),
+            reactions=cls._reactions(message),
         )
 
     @staticmethod
@@ -388,6 +412,25 @@ class TelegramDesktopService:
                     "type": "MESSAGE_DELETED",
                     "data": {"chat_id": chat_id, "message_id": int(message_id)},
                 }
+            )
+
+    async def _on_reaction(self, update: Any) -> None:
+        if self.client is None:
+            return
+        try:
+            chat_id = int(utils.get_peer_id(update.peer))
+            value = await self.client.get_messages(chat_id, ids=int(update.msg_id))
+            if value is None:
+                return
+            message = self._message_model(value, chat_id)
+            await self.store.upsert_message(message)
+            await self.events.publish(
+                {"type": "MESSAGE_EDITED", "data": message.model_dump(mode="json")}
+            )
+        except Exception as error:
+            logger.warning(
+                "Telegram reaction update could not be synchronized: %s",
+                type(error).__name__,
             )
 
     def _require_authorized(self) -> TelegramClient:
@@ -570,6 +613,45 @@ class TelegramDesktopService:
         message = self._message_model(value, chat_id, edited=True)
         await self.store.upsert_message(message)
         await self.events.publish({"type": "MESSAGE_EDITED", "data": message.model_dump(mode="json")})
+        return message
+
+    async def set_reaction(
+        self,
+        chat_id: int,
+        message_id: int,
+        emoji: str | None,
+    ) -> Message:
+        client = self._require_authorized()
+        normalized = (emoji or "").strip()
+        if len(normalized) > 16:
+            raise ValueError("reaction emoji is too long")
+
+        existing = await client.get_messages(chat_id, ids=message_id)
+        if existing is None:
+            raise DesktopError("Message was not found")
+
+        try:
+            peer = await client.get_input_entity(chat_id)
+            reaction = [types.ReactionEmoji(emoticon=normalized)] if normalized else None
+            await client(
+                functions.messages.SendReactionRequest(
+                    peer=peer,
+                    msg_id=message_id,
+                    reaction=reaction,
+                )
+            )
+        except Exception as error:
+            logger.warning("Telegram reaction operation failed: %s", type(error).__name__)
+            raise DesktopError("Telegram rejected this reaction for the selected message") from None
+
+        value = await client.get_messages(chat_id, ids=message_id)
+        if value is None:
+            raise DesktopError("Message was not found after updating its reaction")
+        message = self._message_model(value, chat_id)
+        await self.store.upsert_message(message)
+        await self.events.publish(
+            {"type": "MESSAGE_EDITED", "data": message.model_dump(mode="json")}
+        )
         return message
 
     async def delete_message(self, chat_id: int, message_id: int) -> dict:

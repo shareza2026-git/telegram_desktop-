@@ -4,7 +4,7 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
-from app.models import Dialog, MediaInfo, Message
+from app.models import Dialog, MediaInfo, Message, ReactionSummary
 
 
 class ChatStore:
@@ -51,6 +51,7 @@ class ChatStore:
                     edited INTEGER NOT NULL DEFAULT 0,
                     reply_to_message_id INTEGER,
                     media_json TEXT,
+                    reactions_json TEXT,
                     deleted INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (chat_id, message_id)
                 );
@@ -58,6 +59,23 @@ class ChatStore:
                 CREATE INDEX IF NOT EXISTS ix_messages_chat_date
                 ON messages(chat_id, message_id DESC);
                 """
+            )
+            self._ensure_column(connection, "messages", "reactions_json", "TEXT")
+
+    @staticmethod
+    def _ensure_column(
+        connection: sqlite3.Connection,
+        table: str,
+        column: str,
+        declaration: str,
+    ) -> None:
+        columns = {
+            str(row["name"])
+            for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in columns:
+            connection.execute(
+                f"ALTER TABLE {table} ADD COLUMN {column} {declaration}"
             )
 
     async def upsert_dialog(self, dialog: Dialog) -> None:
@@ -115,13 +133,18 @@ class ChatStore:
             message.media.model_dump(mode="json") if message.media else None,
             ensure_ascii=False,
         )
+        reactions_json = json.dumps(
+            [item.model_dump(mode="json") for item in message.reactions],
+            ensure_ascii=False,
+        )
         with self._connect() as connection:
             connection.execute(
                 """
                 INSERT INTO messages (
                     chat_id, message_id, text, date, sender_id, sender_name,
-                    outgoing, edited, reply_to_message_id, media_json, deleted
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    outgoing, edited, reply_to_message_id, media_json,
+                    reactions_json, deleted
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(chat_id, message_id) DO UPDATE SET
                     text=excluded.text,
                     date=excluded.date,
@@ -131,6 +154,7 @@ class ChatStore:
                     edited=excluded.edited,
                     reply_to_message_id=excluded.reply_to_message_id,
                     media_json=excluded.media_json,
+                    reactions_json=excluded.reactions_json,
                     deleted=excluded.deleted
                 """,
                 (
@@ -144,6 +168,7 @@ class ChatStore:
                     int(message.edited),
                     message.reply_to_message_id,
                     media_json,
+                    reactions_json,
                     int(message.deleted),
                 ),
             )
@@ -161,6 +186,7 @@ class ChatStore:
                 ON CONFLICT(chat_id, message_id) DO UPDATE SET
                     text='',
                     media_json=NULL,
+                    reactions_json=NULL,
                     deleted=1
                 """,
                 (chat_id, message_id, datetime.now().astimezone().isoformat()),
@@ -236,6 +262,8 @@ class ChatStore:
     @staticmethod
     def _message_from_row(row: sqlite3.Row) -> Message:
         media_value = json.loads(row["media_json"]) if row["media_json"] else None
+        reactions_raw = row["reactions_json"] if "reactions_json" in row.keys() else None
+        reactions_value = json.loads(reactions_raw) if reactions_raw else []
         return Message(
             chat_id=row["chat_id"],
             message_id=row["message_id"],
@@ -247,6 +275,10 @@ class ChatStore:
             edited=bool(row["edited"]),
             reply_to_message_id=row["reply_to_message_id"],
             media=MediaInfo.model_validate(media_value) if media_value else None,
+            reactions=[
+                ReactionSummary.model_validate(item)
+                for item in reactions_value
+            ],
             deleted=bool(row["deleted"]),
         )
 
