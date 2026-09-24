@@ -42,7 +42,7 @@ fn main() {
                 if let Some(child) = slot.take() {
                     let _ = child.kill();
                 }
-            }
+            };
         }
     });
 }
