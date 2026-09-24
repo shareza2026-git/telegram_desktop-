@@ -589,7 +589,7 @@ function App() {
   function applyDialogPatch(patch: DialogPatch) {
     setDialogs(current => current.map(dialog => (
       dialog.chat_id === patch.chat_id ? { ...dialog, ...patch } : dialog
-    )))
+    )).sort((left, right) => Number(right.pinned) - Number(left.pinned)))
     setSelected(current => (
       current?.chat_id === patch.chat_id ? { ...current, ...patch } : current
     ))
