@@ -4,7 +4,6 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - feature/telegram-desktop-foundation
       - "release/v*"
     tags:
       - "v*"

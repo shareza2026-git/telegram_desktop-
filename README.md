@@ -239,7 +239,7 @@ The release path now includes:
 6. A Windows GitHub Actions workflow that runs all tests, builds and smoke-tests the packaged sidecar, creates an unsigned current-user NSIS installer and uploads it as a workflow artifact.
 7. A tag-driven release job that publishes the installer as a permanent GitHub Release asset for every `v*` tag.
 
-The installer workflow is `.github/workflows/windows-installer.yml`. It runs on every push to `feature/telegram-desktop-foundation`, release branches matching `release/v*`, version tags matching `v*`, and can also be started manually. Feature-branch builds create the `telegram-desktop-windows-installer` workflow artifact. A version tag or release branch additionally creates the matching tag and a permanent GitHub Release containing the installer executable.
+The installer workflow is `.github/workflows/windows-installer.yml`. During active development it runs only for release branches matching `release/v*`, version tags matching `v*`, or a deliberate manual run. A version tag or release branch creates the matching tag and a permanent GitHub Release containing the installer executable. Normal pushes to `feature/telegram-desktop-foundation` run only the backend/frontend checks in `.github/workflows/development-ci.yml`; they do not build another installer.
 
 The packaged backend reads optional secrets from `settings.env` inside Tauri's private per-user application data directory. The file is never bundled or committed. It may contain the same `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_SOURCE_SESSION_PATH` and `TELEGRAM_PROXY_CONFIG` values already used locally; source-session and proxy catalog paths remain read-only.
 
@@ -261,3 +261,20 @@ Copy .env.example to .env locally and fill in values without committing the file
 - TELEGRAM_ALLOW_DIRECT: remains false unless direct fallback is deliberately enabled.
 
 The frontend never receives api_hash, session keys, proxy passwords or V2Ray links.
+
+## Windows development with PowerShell
+
+Keep development on `feature/telegram-desktop-foundation`; installer releases can wait until the application is feature-complete.
+
+From the repository root in PowerShell:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\setup-dev.ps1
+notepad .env
+.\scripts\run-dev.ps1
+```
+
+`setup-dev.ps1` requires Python 3.12, Node.js 22, Rust/Cargo and the normal Windows Tauri prerequisites. It creates an isolated `.venv`, installs the locked frontend dependencies, creates the ignored local `.env` file and runs the test/build checks. `run-dev.ps1` starts the FastAPI backend, waits for `/health`, opens the Tauri development window and stops the backend when the window exits.
+
+The `.env` file must keep `TELEGRAM_SESSION_PATH` and `TELEGRAM_DATABASE_PATH` under this client's `data/telegram_desktop` directory. Dashboard session, proxy and V2Ray paths are read-only inputs and must never be copied into Git.
