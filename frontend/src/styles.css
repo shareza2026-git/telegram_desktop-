@@ -56,7 +56,10 @@ button { border: 0; cursor: pointer; }
 .dialog-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dialog-copy small, .chat-header small { color: #93a9bb; font-size: 11px; }
 .unread { min-width: 22px; padding: 3px 6px; color: white; background: #2aabee; border-radius: 11px; font-size: 11px; text-align: center; }
-.chat-panel { display: flex; flex-direction: column; background: #0e1a25; }
+.chat-panel { position: relative; display: flex; flex-direction: column; background: #0e1a25; }
+.drop-overlay { position: absolute; z-index: 25; inset: 76px 24px 86px; display: grid; place-content: center; gap: 7px; color: #e6f7ff; background: #102839e8; border: 2px dashed #5dc9f5; border-radius: 18px; box-shadow: 0 14px 50px #0008; text-align: center; pointer-events: none; }
+.drop-overlay strong { font-size: 18px; }
+.drop-overlay small { color: #94cde6; font-size: 11px; }
 .chat-header { border-left: 1px solid #243544; }
 .chat-header > div:nth-child(2) { flex: 1; display: flex; flex-direction: column; gap: 4px; }
 .chat-action-live { color: #55c7f3 !important; }
@@ -161,11 +164,37 @@ button { border: 0; cursor: pointer; }
 .upload-status small { overflow: hidden; color: #9db0c0; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .upload-spinner { width: 28px; height: 28px; display: grid; place-items: center; color: white; background: #2aabee; border-radius: 50%; animation: upload-pulse 1s ease-in-out infinite; }
 @keyframes upload-pulse { 50% { opacity: .45; transform: translateY(-2px); } }
+.attachment-tray { padding: 9px 14px 4px; border-bottom: 1px solid #ffffff0b; }
+.attachment-tray-header { margin-bottom: 7px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.attachment-tray-header strong { color: #7dd3f6; font-size: 11px; }
+.attachment-tray-header button { padding: 3px 6px; color: #e99ca5; background: transparent; font-size: 10px; }
+.attachment-items { display: flex; gap: 7px; overflow-x: auto; direction: rtl; padding-bottom: 5px; }
+.attachment-item { position: relative; width: 88px; flex: 0 0 88px; display: flex; flex-direction: column; gap: 3px; color: #dbe8f1; background: #152531; border: 1px solid #31495b; border-radius: 9px; overflow: hidden; text-align: right; }
+.attachment-item img, .attachment-file-icon { width: 100%; height: 62px; object-fit: cover; display: grid; place-items: center; color: #8dd9f7; background: #203849; font-size: 25px; }
+.attachment-item > span:not(.attachment-file-icon), .attachment-item small { padding: 0 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-item > span:not(.attachment-file-icon) { font-size: 9px; }
+.attachment-item small { padding-bottom: 5px; color: #8199aa; font-size: 8px; }
+.attachment-item > button { position: absolute; top: 4px; left: 4px; width: 21px; height: 21px; color: white; background: #0b1721cc; border-radius: 50%; font-size: 15px; }
 .composer-context { min-height: 48px; padding: 7px 16px 0; display: flex; align-items: center; gap: 9px; }
 .composer-context-bar { width: 3px; align-self: stretch; background: #2aabee; border-radius: 2px; }
 .composer-context-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; text-align: right; }
 .composer-context-copy strong { color: #72cef5; font-size: 11px; }
 .composer-context-copy small { overflow: hidden; color: #9db0c0; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.composer-media-panel { max-height: 235px; padding: 8px 12px 10px; overflow: hidden; background: #172632; border-top: 1px solid #2c4354; }
+.composer-media-panel nav { margin-bottom: 7px; display: flex; align-items: center; gap: 4px; }
+.composer-media-panel nav button { padding: 6px 10px; color: #8fa8b9; background: transparent; border-radius: 7px; font-size: 11px; }
+.composer-media-panel nav button.active, .composer-media-panel nav button:hover { color: #e7f6fd; background: #2aabee32; }
+.composer-media-panel nav .panel-close { margin-right: auto; padding: 3px 9px; font-size: 18px; }
+.emoji-grid, .recent-media-grid { max-height: 176px; overflow: auto; display: grid; grid-template-columns: repeat(10, minmax(34px, 1fr)); gap: 4px; direction: ltr; }
+.emoji-grid button { height: 36px; display: grid; place-items: center; background: transparent; border-radius: 8px; font-size: 21px; }
+.emoji-grid button:hover { background: #2aabee2c; }
+.recent-media-grid { grid-template-columns: repeat(6, minmax(64px, 1fr)); direction: rtl; }
+.recent-media-grid > button { min-height: 68px; padding: 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: #dcebf3; background: #10212d; border: 1px solid #2b4353; border-radius: 9px; }
+.recent-media-grid > button:hover { background: #1e3849; border-color: #4b819d; }
+.recent-media-grid > button:disabled { cursor: wait; opacity: .55; }
+.recent-media-grid strong { max-width: 100%; overflow: hidden; font-size: 22px; text-overflow: ellipsis; white-space: nowrap; }
+.recent-media-grid small { width: 100%; overflow: hidden; color: #8299aa; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.media-panel-empty { grid-column: 1 / -1; padding: 34px 10px; color: #839aaa; font-size: 11px; text-align: center; }
 .composer { min-height: 64px; padding: 10px 16px 12px; display: flex; align-items: center; gap: 8px; background: transparent; }
 .composer input { flex: 1; height: 40px; padding: 0 14px; outline: 0; border: 1px solid #334a5b; color: #eaf1f8; background: #162531; border-radius: 20px; }
 .send-button { width: 42px; height: 42px; color: white; background: #2aabee; border-radius: 50%; font-size: 20px; }

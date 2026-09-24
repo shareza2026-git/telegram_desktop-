@@ -23,6 +23,7 @@ from app.models import (
     MediaInfo,
     Message,
     ReactionSummary,
+    RecentMediaItem,
 )
 from app.storage import ChatStore
 from app.telegram.client import build_client
@@ -78,6 +79,7 @@ class TelegramDesktopService:
         self.login_code_hash: str | None = None
         self._lifecycle_lock = asyncio.Lock()
         self._outbox_read_max: dict[int, int] = {}
+        self._recent_media: dict[tuple[str, str], Any] = {}
         info = self.sessions.info()
         self.status = ClientStatus(
             configured=settings.telegram_configured,
@@ -764,21 +766,118 @@ class TelegramDesktopService:
         caption: str = "",
         reply_to_message_id: int | None = None,
     ) -> Message:
+        messages = await self.send_files(
+            chat_id,
+            [path],
+            caption=caption,
+            reply_to_message_id=reply_to_message_id,
+        )
+        return messages[0]
+
+    async def send_files(
+        self,
+        chat_id: int,
+        paths: list[str],
+        caption: str = "",
+        reply_to_message_id: int | None = None,
+    ) -> list[Message]:
+        if not 1 <= len(paths) <= 10:
+            raise ValueError("Telegram albums require between 1 and 10 files")
         client = self._require_authorized()
         value = await client.send_file(
             chat_id,
-            file=path,
+            file=paths[0] if len(paths) == 1 else paths,
+            caption=caption or None,
+            reply_to=reply_to_message_id,
+        )
+        values = value if isinstance(value, list) else [value]
+        if not values:
+            raise DesktopError("Telegram did not return the uploaded message")
+
+        messages = [self._message_model(item, chat_id) for item in values]
+        for message in messages:
+            await self.store.upsert_message(message)
+            await self.events.publish(
+                {"type": "MESSAGE_NEW", "data": message.model_dump(mode="json")}
+            )
+        return messages
+
+    @staticmethod
+    def _recent_media_label(document: Any, fallback: str) -> str:
+        for attribute in getattr(document, "attributes", None) or []:
+            alt = getattr(attribute, "alt", None)
+            if alt:
+                return str(alt)
+            file_name = getattr(attribute, "file_name", None)
+            if file_name:
+                return str(file_name)
+        return fallback
+
+    async def recent_media(self) -> dict[str, list[RecentMediaItem]]:
+        client = self._require_authorized()
+        try:
+            stickers_result, gifs_result = await asyncio.gather(
+                client(functions.messages.GetRecentStickersRequest(attached=False, hash=0)),
+                client(functions.messages.GetSavedGifsRequest(hash=0)),
+            )
+        except Exception:
+            logger.warning("Telegram recent media query failed", exc_info=True)
+            raise DesktopError("Recent stickers and GIFs could not be loaded") from None
+
+        result: dict[str, list[RecentMediaItem]] = {"stickers": [], "gifs": []}
+        self._recent_media.clear()
+        for kind, values, target, fallback in (
+            ("sticker", getattr(stickers_result, "stickers", None) or [], "stickers", "استیکر"),
+            ("gif", getattr(gifs_result, "gifs", None) or [], "gifs", "GIF"),
+        ):
+            for document in values[:40]:
+                media_id = str(getattr(document, "id", ""))
+                if not media_id:
+                    continue
+                self._recent_media[(kind, media_id)] = document
+                result[target].append(
+                    RecentMediaItem(
+                        media_id=media_id,
+                        kind=kind,
+                        label=self._recent_media_label(document, fallback),
+                        mime_type=getattr(document, "mime_type", None),
+                    )
+                )
+        return result
+
+    async def send_recent_media(
+        self,
+        chat_id: int,
+        kind: str,
+        media_id: str,
+        caption: str = "",
+        reply_to_message_id: int | None = None,
+    ) -> Message:
+        if kind not in {"sticker", "gif"}:
+            raise ValueError("Unsupported recent media kind")
+        document = self._recent_media.get((kind, media_id))
+        if document is None:
+            await self.recent_media()
+            document = self._recent_media.get((kind, media_id))
+        if document is None:
+            raise DesktopError("The selected recent media is no longer available")
+
+        client = self._require_authorized()
+        value = await client.send_file(
+            chat_id,
+            file=document,
             caption=caption or None,
             reply_to=reply_to_message_id,
         )
         if isinstance(value, list):
             if not value:
-                raise DesktopError("Telegram did not return the uploaded message")
+                raise DesktopError("Telegram did not return the sent media")
             value = value[0]
-
         message = self._message_model(value, chat_id)
         await self.store.upsert_message(message)
-        await self.events.publish({"type": "MESSAGE_NEW", "data": message.model_dump(mode="json")})
+        await self.events.publish(
+            {"type": "MESSAGE_NEW", "data": message.model_dump(mode="json")}
+        )
         return message
 
     async def edit_text(self, chat_id: int, message_id: int, text: str) -> Message:

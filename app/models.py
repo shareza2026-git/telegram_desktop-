@@ -13,6 +13,13 @@ class MediaInfo(BaseModel):
     downloadable: bool = True
 
 
+class RecentMediaItem(BaseModel):
+    media_id: str
+    kind: Literal["sticker", "gif"]
+    label: str
+    mime_type: str | None = None
+
+
 class ReactionSummary(BaseModel):
     emoji: str
     count: int = Field(ge=1)
@@ -85,6 +92,11 @@ class ClientStatus(BaseModel):
 
 class SendMessageRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4096)
+    reply_to_message_id: int | None = Field(default=None, ge=1)
+
+
+class SendRecentMediaRequest(BaseModel):
+    caption: str = Field(default="", max_length=1024)
     reply_to_message_id: int | None = Field(default=None, ge=1)
 
 

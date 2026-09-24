@@ -2,7 +2,7 @@ from io import BytesIO
 
 import pytest
 
-from app.telegram.uploads import cleanup_staged_upload, stage_upload
+from app.telegram.uploads import cleanup_staged_upload, stage_upload, validate_album_size
 
 
 def test_stage_upload_sanitizes_name_and_keeps_content(tmp_path):
@@ -35,3 +35,11 @@ def test_stage_upload_removes_partial_file_when_limit_is_exceeded(tmp_path):
         stage_upload(BytesIO(b"12345"), tmp_path, "large.bin", max_bytes=4)
 
     assert list(tmp_path.iterdir()) == []
+
+
+def test_album_size_accepts_telegram_limit_and_rejects_overflow():
+    validate_album_size(1)
+    validate_album_size(10)
+
+    with pytest.raises(ValueError, match="at most 10"):
+        validate_album_size(11)

@@ -30,6 +30,7 @@ The trading terminal remains a separate repository and its running session file 
 13. Telegram-style history navigation, unread boundary and pinned messages.
 14. Desktop notifications, unread app badge and Telegram dialog controls.
 15. Per-chat drafts, message context menus, multi-selection and keyboard shortcuts.
+16. Multi-file albums, drag-and-drop/paste attachments and recent emoji/sticker/GIF tools.
 
 ## Phase 2: controlled session bootstrap
 
@@ -194,6 +195,22 @@ The conversation workspace now supports:
 9. Pure unit coverage for malformed, updated and removed local drafts.
 
 Drafts are stored only in this client's local WebView storage and are never written to the dashboard. Multi-message actions reuse the existing guarded Telegram APIs. Audio and video playback remains disabled.
+
+## Phase 15: attachments and expressive media
+
+The composer now supports:
+
+1. Queuing up to 10 local files and sending them through Telegram's album-capable upload flow.
+2. Previewing image and GIF attachments, removing individual items or clearing the queue before upload.
+3. Dragging files anywhere over the active conversation and dropping them into the composer queue.
+4. Pasting images or GIFs directly from the clipboard into the composer.
+5. Using an inline emoji picker that inserts at the current text cursor position.
+6. Loading the account's recent Telegram stickers and saved GIFs without exposing document access hashes to the frontend.
+7. Sending a recent sticker or GIF by an opaque local catalog identifier, including the active reply target.
+8. Staging every upload only under `data/telegram_desktop/uploads`, enforcing Telegram's 10-item and 2 GB-per-file limits, and cleaning temporary files after success or failure.
+9. Persisting and publishing every returned album message through the existing independent store and WebSocket flow.
+
+The recent-media catalog lives only in backend memory and is rebuilt from the independently authorized Telegram client. Dashboard data remains read-only. Video and audio playback remains disabled; GIFs are treated as sendable media only.
 
 ## Local configuration
 

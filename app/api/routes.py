@@ -12,10 +12,11 @@ from app.models import (
     LoginPasswordRequest,
     LoginPhoneRequest,
     SendMessageRequest,
+    SendRecentMediaRequest,
     SetReactionRequest,
     TypingRequest,
 )
-from app.telegram.uploads import cleanup_staged_upload, stage_upload
+from app.telegram.uploads import cleanup_staged_upload, stage_upload, validate_album_size
 
 router = APIRouter()
 
@@ -217,6 +218,74 @@ async def send_file(
         await file.close()
         if staged is not None:
             await asyncio.to_thread(cleanup_staged_upload, staged.path)
+
+
+@router.post("/api/telegram/chats/{chat_id}/files/album")
+async def send_files(
+    chat_id: int,
+    request: Request,
+    files: list[UploadFile] = File(...),
+    caption: str = Form(""),
+    reply_to_message_id: int | None = Form(None),
+):
+    desktop = service(request)
+    if not desktop.status.connected or not desktop.status.authorized:
+        raise error_response(DesktopError("Telegram is not connected and authorized"))
+
+    staged = []
+    try:
+        validate_album_size(len(files))
+        root = desktop.settings.project_root / "data" / "telegram_desktop" / "uploads"
+        for item in files:
+            staged.append(
+                await asyncio.to_thread(
+                    stage_upload,
+                    item.file,
+                    root,
+                    item.filename,
+                )
+            )
+        return await desktop.send_files(
+            chat_id,
+            [str(item.path) for item in staged],
+            caption.strip(),
+            reply_to_message_id,
+        )
+    except (DesktopError, ValueError) as exc:
+        raise error_response(exc) from None
+    finally:
+        for item in files:
+            await item.close()
+        for item in staged:
+            await asyncio.to_thread(cleanup_staged_upload, item.path)
+
+
+@router.get("/api/telegram/media/recent")
+async def recent_media(request: Request):
+    try:
+        return await service(request).recent_media()
+    except DesktopError as exc:
+        raise error_response(exc) from None
+
+
+@router.post("/api/telegram/chats/{chat_id}/media/recent/{kind}/{media_id}")
+async def send_recent_media(
+    chat_id: int,
+    kind: str,
+    media_id: str,
+    values: SendRecentMediaRequest,
+    request: Request,
+):
+    try:
+        return await service(request).send_recent_media(
+            chat_id,
+            kind,
+            media_id,
+            values.caption.strip(),
+            values.reply_to_message_id,
+        )
+    except (DesktopError, ValueError) as exc:
+        raise error_response(exc) from None
 
 
 @router.post("/api/telegram/chats/{chat_id}/messages/{message_id}/edit")

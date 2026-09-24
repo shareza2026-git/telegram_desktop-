@@ -35,7 +35,7 @@ class FakeClient:
         self.deleted: list[tuple[int, list[int], bool]] = []
         self.searched: list[tuple[int, str, int]] = []
         self.forwarded: list[tuple[int, int]] = []
-        self.files: list[tuple[int, str, str | None, int | None]] = []
+        self.files = []
         self.reaction_requests = []
         self.typing_requests = []
         self.pinned_requests = []
@@ -90,20 +90,26 @@ class FakeClient:
     async def send_file(
         self,
         chat_id: int,
-        file: str,
+        file,
         caption: str | None,
         reply_to: int | None,
     ):
         self.files.append((chat_id, file, caption, reply_to))
-        message = FakeMessage(40, caption or "", reply_to_message_id=reply_to)
-        message.media = object()
-        message.document = object()
-        message.file = type("File", (), {
-            "name": "report.pdf",
-            "size": 4,
-            "mime_type": "application/pdf",
-        })()
-        return message
+
+        def sent_message(message_id: int, name: str):
+            message = FakeMessage(message_id, caption or "", reply_to_message_id=reply_to)
+            message.media = object()
+            message.document = object()
+            message.file = type("File", (), {
+                "name": name,
+                "size": 4,
+                "mime_type": "application/pdf",
+            })()
+            return message
+
+        if isinstance(file, list):
+            return [sent_message(40 + index, str(path).split("/")[-1]) for index, path in enumerate(file)]
+        return sent_message(40, str(file).split("/")[-1])
 
     async def edit_message(self, chat_id: int, message_id: int, text: str):
         self.edited.append((chat_id, message_id, text))
@@ -149,6 +155,7 @@ def build_service(client: FakeClient) -> TelegramDesktopService:
     service.store = FakeStore()
     service.events = FakeEvents()
     service._outbox_read_max = {}
+    service._recent_media = {}
     return service
 
 
@@ -281,6 +288,20 @@ async def test_send_file_keeps_caption_reply_and_live_event(tmp_path):
     assert result.media is not None
     assert service.store.messages[-1].message_id == 40
     assert service.events.packets[-1]["type"] == "MESSAGE_NEW"
+
+
+@pytest.mark.asyncio
+async def test_send_files_persists_and_publishes_every_album_item(tmp_path):
+    client = FakeClient()
+    service = build_service(client)
+    paths = [str(tmp_path / "one.pdf"), str(tmp_path / "two.pdf")]
+
+    results = await service.send_files(7, paths, "album", reply_to_message_id=3)
+
+    assert client.files == [(7, paths, "album", 3)]
+    assert [message.message_id for message in results] == [40, 41]
+    assert [message.message_id for message in service.store.messages] == [40, 41]
+    assert [packet["type"] for packet in service.events.packets] == ["MESSAGE_NEW", "MESSAGE_NEW"]
 
 
 

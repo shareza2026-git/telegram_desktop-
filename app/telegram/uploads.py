@@ -8,6 +8,7 @@ from app.telegram.media import safe_media_name
 
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024
 UPLOAD_CHUNK_BYTES = 1024 * 1024
+MAX_ALBUM_ITEMS = 10
 
 
 @dataclass(frozen=True)
@@ -52,3 +53,10 @@ def stage_upload(
 
 def cleanup_staged_upload(path: Path) -> None:
     path.unlink(missing_ok=True)
+
+
+def validate_album_size(item_count: int) -> None:
+    if item_count < 1:
+        raise ValueError("At least one file is required")
+    if item_count > MAX_ALBUM_ITEMS:
+        raise ValueError("Telegram albums support at most 10 files")

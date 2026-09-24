@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent as ReactMouseEvent } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type FormEvent, type MouseEvent as ReactMouseEvent } from 'react'
 
 import { DRAFT_STORAGE_KEY, parseDraftMap, updateDraftMap } from './drafts'
 
@@ -97,6 +97,24 @@ type ReadReceipt = {
   max_id: number
 }
 
+type PendingAttachment = {
+  id: string
+  file: File
+  previewUrl: string | null
+}
+
+type RecentMediaItem = {
+  media_id: string
+  kind: 'sticker' | 'gif'
+  label: string
+  mime_type?: string | null
+}
+
+type RecentMediaCatalog = {
+  stickers: RecentMediaItem[]
+  gifs: RecentMediaItem[]
+}
+
 type AuthResponse = {
   code_sent: boolean
   requires_2fa: boolean
@@ -109,6 +127,12 @@ type MediaState = 'loading' | 'ready' | 'downloading' | 'done' | 'error'
 
 const HISTORY_PAGE_SIZE = 80
 const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🔥']
+const COMPOSER_EMOJIS = [
+  '😀', '😃', '😄', '😁', '😆', '😅', '😂', '🙂', '🙃', '😉',
+  '😊', '😍', '🥰', '😘', '😎', '🤔', '😮', '😢', '😭', '😡',
+  '👍', '👎', '👏', '🙏', '🤝', '💪', '❤️', '💔', '🔥', '✨',
+  '🎉', '✅', '❌', '⚡', '💯', '👀', '📌', '📎', '🚀', '🌹'
+]
 const backendBase = (import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8110').replace(/\/$/, '')
 const socketBase = backendBase.replace(/^http/, 'ws')
 const mediaLabels: Record<MediaInfo['kind'], string> = {
@@ -276,7 +300,14 @@ function App() {
   const [composerBusy, setComposerBusy] = useState(false)
   const [uploadBusy, setUploadBusy] = useState(false)
   const [uploadName, setUploadName] = useState('')
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([])
+  const [dragActive, setDragActive] = useState(false)
+  const [mediaPanel, setMediaPanel] = useState<'emoji' | 'sticker' | 'gif' | null>(null)
+  const [recentMedia, setRecentMedia] = useState<RecentMediaCatalog | null>(null)
+  const [recentMediaBusy, setRecentMediaBusy] = useState(false)
+  const [recentMediaSending, setRecentMediaSending] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const composerInputRef = useRef<HTMLInputElement>(null)
   const composerFormRef = useRef<HTMLFormElement>(null)
   const messageListRef = useRef<HTMLDivElement>(null)
   const stickToBottomRef = useRef(true)
@@ -310,6 +341,7 @@ function App() {
   const draftsRef = useRef(parseDraftMap(window.localStorage.getItem(DRAFT_STORAGE_KEY)))
   const draftSwitchRef = useRef<number | null>(null)
   const draftBeforeEditRef = useRef('')
+  const pendingAttachmentsRef = useRef<PendingAttachment[]>([])
 
   const visibleDialogs = useMemo(() => {
     let values = dialogs
@@ -346,6 +378,16 @@ function App() {
   useEffect(() => {
     notificationsEnabledRef.current = notificationsEnabled
   }, [notificationsEnabled])
+
+  useEffect(() => {
+    pendingAttachmentsRef.current = pendingAttachments
+  }, [pendingAttachments])
+
+  useEffect(() => () => {
+    for (const item of pendingAttachmentsRef.current) {
+      if (item.previewUrl) URL.revokeObjectURL(item.previewUrl)
+    }
+  }, [])
 
   useEffect(() => {
     document.title = totalUnread > 0
@@ -472,6 +514,9 @@ function App() {
       setForwarding(null)
       setForwardQuery('')
       setBulkBusy(null)
+      clearPendingAttachments()
+      setMediaPanel(null)
+      setDragActive(false)
       setReactionPickerFor(null)
       setMessageContextMenu(null)
       setSelectedMessageIds(new Set())
@@ -497,6 +542,9 @@ function App() {
     setForwarding(null)
     setForwardQuery('')
     setBulkBusy(null)
+    clearPendingAttachments()
+    setMediaPanel(null)
+    setDragActive(false)
     setReactionPickerFor(null)
     setMessageContextMenu(null)
     setSelectedMessageIds(new Set())
@@ -566,6 +614,8 @@ function App() {
         setMessageContextMenu(null)
       } else if (forwarding) {
         closeForwarding()
+      } else if (mediaPanel) {
+        setMediaPanel(null)
       } else if (chatMenuOpen) {
         setChatMenuOpen(false)
       } else if (reactionPickerFor !== null) {
@@ -586,6 +636,7 @@ function App() {
     selectedMessageIds,
     messageContextMenu,
     forwarding,
+    mediaPanel,
     chatMenuOpen,
     reactionPickerFor,
     messageSearchOpen,
@@ -1204,6 +1255,8 @@ function App() {
 
   function beginEdit(message: Message) {
     draftBeforeEditRef.current = draft
+    clearPendingAttachments()
+    setMediaPanel(null)
     setReplyingTo(null)
     setEditing(message)
     setDraft(message.text)
@@ -1297,34 +1350,97 @@ function App() {
     }
   }
 
-  async function uploadFile(file: File) {
-    if (!selected || uploadBusy || editing) return
-    if (file.size > 2 * 1024 * 1024 * 1024) {
-      setError('حجم فایل نمی‌تواند بیشتر از ۲ گیگابایت باشد.')
-      return
-    }
-    if (file.size === 0) {
-      setError('فایل خالی قابل ارسال نیست.')
+  function clearPendingAttachments() {
+    setPendingAttachments(current => {
+      for (const item of current) {
+        if (item.previewUrl) URL.revokeObjectURL(item.previewUrl)
+      }
+      return []
+    })
+  }
+
+  function removePendingAttachment(id: string) {
+    setPendingAttachments(current => {
+      const removed = current.find(item => item.id === id)
+      if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl)
+      return current.filter(item => item.id !== id)
+    })
+  }
+
+  function queueFiles(values: File[] | FileList) {
+    if (uploadBusy || editing) return
+    const incoming = Array.from(values)
+    if (!incoming.length) return
+    const invalid = incoming.find(file => file.size === 0 || file.size > 2 * 1024 * 1024 * 1024)
+    if (invalid) {
+      setError(invalid.size === 0
+        ? 'فایل خالی قابل ارسال نیست.'
+        : 'حجم هر فایل نمی‌تواند بیشتر از ۲ گیگابایت باشد.')
       return
     }
 
+    setPendingAttachments(current => {
+      const available = 10 - current.length
+      if (incoming.length > available) {
+        setError('در هر آلبوم حداکثر ۱۰ فایل قابل ارسال است.')
+      }
+      return [
+        ...current,
+        ...incoming.slice(0, Math.max(available, 0)).map(file => ({
+          id: crypto.randomUUID(),
+          file,
+          previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : null
+        }))
+      ]
+    })
+    setMediaPanel(null)
+    setDragActive(false)
+  }
+
+  function handleComposerPaste(event: ClipboardEvent<HTMLInputElement>) {
+    const files = event.clipboardData.files
+    if (!files.length) return
+    event.preventDefault()
+    queueFiles(files)
+  }
+
+  function handleChatDrag(event: DragEvent<HTMLElement>) {
+    if (!selected || editing || uploadBusy || !event.dataTransfer.types.includes('Files')) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+    setDragActive(true)
+  }
+
+  function handleChatDrop(event: DragEvent<HTMLElement>) {
+    event.preventDefault()
+    setDragActive(false)
+    if (!event.dataTransfer.files.length) return
+    queueFiles(event.dataTransfer.files)
+  }
+
+  async function uploadPendingFiles() {
+    if (!selected || !pendingAttachments.length || uploadBusy || editing) return false
     const chatId = selected.chat_id
     const form = new FormData()
-    form.append('file', file, file.name)
+    for (const item of pendingAttachments) form.append('files', item.file, item.file.name)
     if (draft.trim()) form.append('caption', draft.trim())
     if (replyingTo) form.append('reply_to_message_id', String(replyingTo.message_id))
 
     setUploadBusy(true)
-    setUploadName(file.name)
+    setUploadName(
+      pendingAttachments.length === 1
+        ? pendingAttachments[0].file.name
+        : new Intl.NumberFormat('fa-IR').format(pendingAttachments.length) + ' فایل'
+    )
     setError('')
     try {
-      const response = await fetch(backendBase + '/api/telegram/chats/' + chatId + '/files', {
+      const response = await fetch(backendBase + '/api/telegram/chats/' + chatId + '/files/album', {
         method: 'POST',
         body: form
       })
       if (!response.ok) {
         const body = await response.text()
-        let detail = body || 'ارسال فایل انجام نشد.'
+        let detail = body || 'ارسال فایل‌ها انجام نشد.'
         try {
           const parsed = JSON.parse(body) as { detail?: string }
           if (parsed.detail) detail = parsed.detail
@@ -1334,17 +1450,23 @@ function App() {
         throw new Error(detail)
       }
 
-      const message = await response.json() as Message
+      const sent = await response.json() as Message[]
       if (selectedChatIdRef.current === chatId) {
-        setMessages(current => [
-          ...current.filter(item => item.message_id !== message.message_id),
-          message
-        ].sort((a, b) => a.message_id - b.message_id))
+        setMessages(current => {
+          const sentIds = new Set(sent.map(message => message.message_id))
+          return [
+            ...current.filter(message => !sentIds.has(message.message_id)),
+            ...sent
+          ].sort((left, right) => left.message_id - right.message_id)
+        })
+        clearPendingAttachments()
         setDraft('')
         setReplyingTo(null)
       }
+      return true
     } catch (caught) {
-      setError(errorMessage(caught, 'ارسال فایل انجام نشد.'))
+      setError(errorMessage(caught, 'ارسال فایل‌ها انجام نشد.'))
+      return false
     } finally {
       setUploadBusy(false)
       setUploadName('')
@@ -1352,10 +1474,73 @@ function App() {
     }
   }
 
+  function insertEmoji(emoji: string) {
+    const input = composerInputRef.current
+    const start = input?.selectionStart ?? draft.length
+    const end = input?.selectionEnd ?? start
+    const next = draft.slice(0, start) + emoji + draft.slice(end)
+    setDraft(next)
+    window.requestAnimationFrame(() => {
+      input?.focus()
+      input?.setSelectionRange(start + emoji.length, start + emoji.length)
+    })
+  }
+
+  async function openMediaPanel(kind: 'emoji' | 'sticker' | 'gif') {
+    setMediaPanel(current => current === kind ? null : kind)
+    if (kind === 'emoji' || recentMedia || recentMediaBusy) return
+    setRecentMediaBusy(true)
+    try {
+      setRecentMedia(await api<RecentMediaCatalog>('/api/telegram/media/recent'))
+    } catch (caught) {
+      setError(errorMessage(caught, 'استیکرها و GIFهای اخیر دریافت نشدند.'))
+    } finally {
+      setRecentMediaBusy(false)
+    }
+  }
+
+  async function sendRecentMedia(item: RecentMediaItem) {
+    if (!selected || recentMediaSending !== null || editing) return
+    const chatId = selected.chat_id
+    const key = item.kind + ':' + item.media_id
+    setRecentMediaSending(key)
+    setError('')
+    try {
+      const message = await api<Message>(
+        '/api/telegram/chats/' + chatId + '/media/recent/' + item.kind + '/' + encodeURIComponent(item.media_id),
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            caption: item.kind === 'gif' ? draft.trim() : '',
+            reply_to_message_id: replyingTo?.message_id || null
+          })
+        }
+      )
+      if (selectedChatIdRef.current === chatId) {
+        setMessages(current => [
+          ...current.filter(value => value.message_id !== message.message_id),
+          message
+        ].sort((left, right) => left.message_id - right.message_id))
+        if (item.kind === 'gif') setDraft('')
+        setReplyingTo(null)
+        setMediaPanel(null)
+      }
+    } catch (caught) {
+      setError(errorMessage(caught, 'ارسال رسانه اخیر انجام نشد.'))
+    } finally {
+      setRecentMediaSending(null)
+    }
+  }
+
   async function sendMessage(event: FormEvent) {
     event.preventDefault()
     const text = draft.trim()
-    if (!selected || !text || composerBusy) return
+    if (!selected || (!text && !pendingAttachments.length) || composerBusy) return
+
+    if (!editing && pendingAttachments.length) {
+      await uploadPendingFiles()
+      return
+    }
 
     setComposerBusy(true)
     try {
@@ -1514,7 +1699,21 @@ function App() {
         </div>
       </aside>
 
-      <section className="chat-panel">
+      <section
+        className={'chat-panel' + (dragActive ? ' drag-active' : '')}
+        onDragEnter={handleChatDrag}
+        onDragOver={handleChatDrag}
+        onDragLeave={event => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragActive(false)
+        }}
+        onDrop={handleChatDrop}
+      >
+        {dragActive && selected && (
+          <div className="drop-overlay" aria-hidden="true">
+            <strong>فایل‌ها را اینجا رها کنید</strong>
+            <small>حداکثر ۱۰ فایل در یک آلبوم</small>
+          </div>
+        )}
         {selected ? (
           <>
             <header className="chat-header">
@@ -1752,9 +1951,10 @@ function App() {
                 ref={fileInputRef}
                 className="hidden-file-input"
                 type="file"
+                multiple
                 onChange={event => {
-                  const file = event.target.files?.[0]
-                  if (file) void uploadFile(file)
+                  if (event.target.files) queueFiles(event.target.files)
+                  event.target.value = ''
                 }}
               />
               {uploadBusy && (
@@ -1763,6 +1963,26 @@ function App() {
                   <div>
                     <strong>در حال ارسال فایل</strong>
                     <small>{uploadName}</small>
+                  </div>
+                </div>
+              )}
+              {pendingAttachments.length > 0 && !uploadBusy && (
+                <div className="attachment-tray">
+                  <div className="attachment-tray-header">
+                    <strong>{new Intl.NumberFormat('fa-IR').format(pendingAttachments.length)} پیوست آماده ارسال</strong>
+                    <button type="button" onClick={clearPendingAttachments}>حذف همه</button>
+                  </div>
+                  <div className="attachment-items">
+                    {pendingAttachments.map(item => (
+                      <div className="attachment-item" key={item.id} title={item.file.name}>
+                        {item.previewUrl
+                          ? <img src={item.previewUrl} alt="" />
+                          : <span className="attachment-file-icon">▤</span>}
+                        <span>{item.file.name}</span>
+                        <small>{formatBytes(item.file.size)}</small>
+                        <button type="button" aria-label={'حذف ' + item.file.name} onClick={() => removePendingAttachment(item.id)}>×</button>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
@@ -1776,6 +1996,38 @@ function App() {
                   <button className="icon-button" type="button" aria-label="بستن" onClick={cancelComposerContext}>×</button>
                 </div>
               )}
+              {mediaPanel && (
+                <section className="composer-media-panel">
+                  <nav>
+                    <button type="button" className={mediaPanel === 'emoji' ? 'active' : ''} onClick={() => openMediaPanel('emoji')}>ایموجی</button>
+                    <button type="button" className={mediaPanel === 'sticker' ? 'active' : ''} onClick={() => openMediaPanel('sticker')}>استیکر</button>
+                    <button type="button" className={mediaPanel === 'gif' ? 'active' : ''} onClick={() => openMediaPanel('gif')}>GIF</button>
+                    <button type="button" className="panel-close" aria-label="بستن پنل رسانه" onClick={() => setMediaPanel(null)}>×</button>
+                  </nav>
+                  {mediaPanel === 'emoji' ? (
+                    <div className="emoji-grid">
+                      {COMPOSER_EMOJIS.map(emoji => <button type="button" key={emoji} onClick={() => insertEmoji(emoji)}>{emoji}</button>)}
+                    </div>
+                  ) : recentMediaBusy ? (
+                    <div className="media-panel-empty">در حال دریافت…</div>
+                  ) : (
+                    <div className="recent-media-grid">
+                      {(mediaPanel === 'sticker' ? recentMedia?.stickers : recentMedia?.gifs)?.map(item => {
+                        const key = item.kind + ':' + item.media_id
+                        return (
+                          <button type="button" key={key} onClick={() => sendRecentMedia(item)} disabled={recentMediaSending !== null} title={item.label}>
+                            <strong>{recentMediaSending === key ? '…' : item.kind === 'sticker' ? item.label : 'GIF'}</strong>
+                            <small>{item.label}</small>
+                          </button>
+                        )
+                      })}
+                      {!recentMediaBusy && !(mediaPanel === 'sticker' ? recentMedia?.stickers.length : recentMedia?.gifs.length) && (
+                        <div className="media-panel-empty">مورد اخیری در تلگرام پیدا نشد.</div>
+                      )}
+                    </div>
+                  )}
+                </section>
+              )}
               <form className="composer" ref={composerFormRef} onSubmit={sendMessage}>
                 <button
                   type="button"
@@ -1786,13 +2038,24 @@ function App() {
                 >
                   ＋
                 </button>
+                <button
+                  type="button"
+                  className={'icon-button' + (mediaPanel ? ' active' : '')}
+                  aria-label="ایموجی، استیکر و GIF"
+                  onClick={() => openMediaPanel(mediaPanel || 'emoji')}
+                  disabled={uploadBusy || editing !== null}
+                >
+                  ☺
+                </button>
                 <input
+                  ref={composerInputRef}
                   value={draft}
                   onChange={event => setDraft(event.target.value)}
+                  onPaste={handleComposerPaste}
                   placeholder={editing ? 'ویرایش پیام...' : replyingTo ? 'کپشن یا پاسخ...' : 'پیام یا کپشن فایل...'}
                   disabled={uploadBusy}
                 />
-                <button className="send-button" type="submit" disabled={composerBusy || uploadBusy || !draft.trim()}>
+                <button className="send-button" type="submit" disabled={composerBusy || uploadBusy || (!draft.trim() && !pendingAttachments.length)}>
                   {editing ? '✓' : '➤'}
                 </button>
               </form>
