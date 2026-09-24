@@ -70,3 +70,29 @@ async def test_reactions_survive_storage_roundtrip(tmp_path):
         ("👍", 3, True),
         ("🔥", 1, False),
     ]
+
+
+
+@pytest.mark.asyncio
+async def test_outgoing_read_receipts_are_persisted_by_max_id(tmp_path):
+    store = ChatStore(tmp_path / "client.db")
+    await store.initialize()
+    for message_id, outgoing in ((10, True), (11, True), (12, False)):
+        await store.upsert_message(
+            Message(
+                chat_id=7,
+                message_id=message_id,
+                text="status",
+                date=datetime(2026, 1, 10, tzinfo=timezone.utc),
+                outgoing=outgoing,
+            )
+        )
+
+    await store.mark_outgoing_read(7, 10)
+    values = await store.history(7, limit=10)
+
+    assert [(item.message_id, item.read) for item in values] == [
+        (10, True),
+        (11, False),
+        (12, False),
+    ]

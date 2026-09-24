@@ -12,6 +12,7 @@ from app.models import (
     LoginPhoneRequest,
     SendMessageRequest,
     SetReactionRequest,
+    TypingRequest,
 )
 from app.telegram.uploads import cleanup_staged_upload, stage_upload
 
@@ -128,6 +129,14 @@ async def media(
         media_type=item.mime_type or "application/octet-stream",
         headers={"Content-Disposition": f'{disposition}; filename="{item.filename}"'},
     )
+
+
+@router.post("/api/telegram/chats/{chat_id}/typing")
+async def send_typing(chat_id: int, values: TypingRequest, request: Request):
+    try:
+        return await service(request).send_typing(chat_id, values.active)
+    except DesktopError as exc:
+        raise error_response(exc) from None
 
 
 @router.post("/api/telegram/chats/{chat_id}/messages")

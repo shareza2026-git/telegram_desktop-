@@ -52,6 +52,7 @@ class ChatStore:
                     reply_to_message_id INTEGER,
                     media_json TEXT,
                     reactions_json TEXT,
+                    read INTEGER NOT NULL DEFAULT 0,
                     deleted INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (chat_id, message_id)
                 );
@@ -61,6 +62,7 @@ class ChatStore:
                 """
             )
             self._ensure_column(connection, "messages", "reactions_json", "TEXT")
+            self._ensure_column(connection, "messages", "read", "INTEGER NOT NULL DEFAULT 0")
 
     @staticmethod
     def _ensure_column(
@@ -143,8 +145,8 @@ class ChatStore:
                 INSERT INTO messages (
                     chat_id, message_id, text, date, sender_id, sender_name,
                     outgoing, edited, reply_to_message_id, media_json,
-                    reactions_json, deleted
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    reactions_json, read, deleted
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(chat_id, message_id) DO UPDATE SET
                     text=excluded.text,
                     date=excluded.date,
@@ -155,6 +157,7 @@ class ChatStore:
                     reply_to_message_id=excluded.reply_to_message_id,
                     media_json=excluded.media_json,
                     reactions_json=excluded.reactions_json,
+                    read=MAX(messages.read, excluded.read),
                     deleted=excluded.deleted
                 """,
                 (
@@ -169,8 +172,24 @@ class ChatStore:
                     message.reply_to_message_id,
                     media_json,
                     reactions_json,
+                    int(message.read),
                     int(message.deleted),
                 ),
+            )
+
+    async def mark_outgoing_read(self, chat_id: int, max_id: int) -> None:
+        async with self._lock:
+            await asyncio.to_thread(self._mark_outgoing_read_sync, chat_id, max_id)
+
+    def _mark_outgoing_read_sync(self, chat_id: int, max_id: int) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE messages
+                SET read=1
+                WHERE chat_id=? AND outgoing=1 AND message_id <= ?
+                """,
+                (chat_id, max_id),
             )
 
     async def mark_deleted(self, chat_id: int, message_id: int) -> None:
@@ -279,6 +298,7 @@ class ChatStore:
                 ReactionSummary.model_validate(item)
                 for item in reactions_value
             ],
+            read=bool(row["read"]) if "read" in row.keys() else False,
             deleted=bool(row["deleted"]),
         )
 

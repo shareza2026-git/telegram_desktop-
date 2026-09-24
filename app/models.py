@@ -57,6 +57,7 @@ class Message(BaseModel):
     reply_to_message_id: int | None = None
     media: MediaInfo | None = None
     reactions: list[ReactionSummary] = Field(default_factory=list)
+    read: bool = False
     deleted: bool = False
 
 
@@ -96,6 +97,10 @@ class ForwardMessageRequest(BaseModel):
 
 class SetReactionRequest(BaseModel):
     emoji: str | None = Field(default=None, max_length=16)
+
+
+class TypingRequest(BaseModel):
+    active: bool = True
 
 
 class LoginPhoneRequest(BaseModel):

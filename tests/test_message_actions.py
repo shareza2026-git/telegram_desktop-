@@ -37,6 +37,7 @@ class FakeClient:
         self.forwarded: list[tuple[int, int]] = []
         self.files: list[tuple[int, str, str | None, int | None]] = []
         self.reaction_requests = []
+        self.typing_requests = []
 
     async def get_messages(self, chat_id: int, ids: int):
         return self.existing
@@ -45,19 +46,22 @@ class FakeClient:
         return chat_id
 
     async def __call__(self, request):
-        self.reaction_requests.append(request)
-        emoji = request.reaction[0].emoticon if request.reaction else None
-        if self.existing is not None:
-            if emoji:
-                reaction = type("Reaction", (), {"emoticon": emoji})()
-                result = type(
-                    "ReactionCount",
-                    (),
-                    {"reaction": reaction, "count": 1, "chosen_order": 0},
-                )()
-                self.existing.reactions = type("Reactions", (), {"results": [result]})()
-            else:
-                self.existing.reactions = type("Reactions", (), {"results": []})()
+        if hasattr(request, "reaction"):
+            self.reaction_requests.append(request)
+            emoji = request.reaction[0].emoticon if request.reaction else None
+            if self.existing is not None:
+                if emoji:
+                    reaction = type("Reaction", (), {"emoticon": emoji})()
+                    result = type(
+                        "ReactionCount",
+                        (),
+                        {"reaction": reaction, "count": 1, "chosen_order": 0},
+                    )()
+                    self.existing.reactions = type("Reactions", (), {"results": [result]})()
+                else:
+                    self.existing.reactions = type("Reactions", (), {"results": []})()
+        if hasattr(request, "action"):
+            self.typing_requests.append(request)
         return object()
 
     async def iter_messages(self, chat_id: int, search: str, limit: int):
@@ -103,9 +107,13 @@ class FakeStore:
     def __init__(self) -> None:
         self.messages = []
         self.deleted = []
+        self.read_ranges = []
 
     async def upsert_message(self, message) -> None:
         self.messages.append(message)
+
+    async def mark_outgoing_read(self, chat_id: int, max_id: int) -> None:
+        self.read_ranges.append((chat_id, max_id))
 
     async def mark_deleted(self, chat_id: int, message_id: int) -> None:
         self.deleted.append((chat_id, message_id))
@@ -130,6 +138,7 @@ def build_service(client: FakeClient) -> TelegramDesktopService:
     )
     service.store = FakeStore()
     service.events = FakeEvents()
+    service._outbox_read_max = {}
     return service
 
 
@@ -259,3 +268,38 @@ async def test_set_and_remove_reaction_updates_store_and_live_event():
     assert client.reaction_requests[-1].reaction is None
     assert cleared.reactions == []
     assert service.store.messages[-1].message_id == 11
+
+
+
+@pytest.mark.asyncio
+async def test_send_typing_and_cancel_use_telegram_actions():
+    client = FakeClient()
+    service = build_service(client)
+
+    active = await service.send_typing(7, True)
+    cancelled = await service.send_typing(7, False)
+
+    assert type(client.typing_requests[0].action).__name__ == "SendMessageTypingAction"
+    assert type(client.typing_requests[1].action).__name__ == "SendMessageCancelAction"
+    assert active == {"chat_id": 7, "typing": True}
+    assert cancelled == {"chat_id": 7, "typing": False}
+
+
+@pytest.mark.asyncio
+async def test_outbox_read_event_marks_store_and_publishes():
+    client = FakeClient()
+    service = build_service(client)
+    event = type(
+        "ReadEvent",
+        (),
+        {"chat_id": 7, "outbox": True, "max_id": 25},
+    )()
+
+    await service._on_read(event)
+
+    assert service._outbox_read_max[7] == 25
+    assert service.store.read_ranges == [(7, 25)]
+    assert service.events.packets[-1] == {
+        "type": "MESSAGES_READ",
+        "data": {"chat_id": 7, "max_id": 25},
+    }

@@ -77,6 +77,7 @@ class TelegramDesktopService:
         self.login_phone: str | None = None
         self.login_code_hash: str | None = None
         self._lifecycle_lock = asyncio.Lock()
+        self._outbox_read_max: dict[int, int] = {}
         info = self.sessions.info()
         self.status = ClientStatus(
             configured=settings.telegram_configured,
@@ -235,6 +236,8 @@ class TelegramDesktopService:
             (self._on_edit, events.MessageEdited()),
             (self._on_delete, events.MessageDeleted()),
             (self._on_reaction, events.Raw(types=types.UpdateMessageReactions)),
+            (self._on_user_update, events.UserUpdate()),
+            (self._on_read, events.MessageRead()),
         ]
         for callback, builder in definitions:
             self.client.add_event_handler(callback, builder)
@@ -306,20 +309,23 @@ class TelegramDesktopService:
             )
         return values
 
-    @classmethod
-    def _message_model(cls, message: Any, chat_id: int, edited: bool = False) -> Message:
+    def _message_model(self, message: Any, chat_id: int, edited: bool = False) -> Message:
+        message_id = int(message.id)
+        outgoing = bool(getattr(message, "out", False))
+        read_max = getattr(self, "_outbox_read_max", {}).get(chat_id, 0)
         return Message(
             chat_id=chat_id,
-            message_id=int(message.id),
+            message_id=message_id,
             text=str(getattr(message, "raw_text", None) or ""),
-            date=cls._as_utc(getattr(message, "date", None)),
+            date=self._as_utc(getattr(message, "date", None)),
             sender_id=getattr(message, "sender_id", None),
-            sender_name=cls._sender_name(message),
-            outgoing=bool(getattr(message, "out", False)),
+            sender_name=self._sender_name(message),
+            outgoing=outgoing,
             edited=edited,
             reply_to_message_id=getattr(message, "reply_to_msg_id", None),
-            media=cls._media(message),
-            reactions=cls._reactions(message),
+            media=self._media(message),
+            reactions=self._reactions(message),
+            read=outgoing and message_id <= read_max,
         )
 
     @staticmethod
@@ -400,6 +406,67 @@ class TelegramDesktopService:
         message = self._message_model(event.message, int(event.chat_id), edited=True)
         await self.store.upsert_message(message)
         await self.events.publish({"type": "MESSAGE_EDITED", "data": message.model_dump(mode="json")})
+
+    async def _on_user_update(self, event: Any) -> None:
+        if event.chat_id is None or event.action is None:
+            return
+        if event.user_id == self.status.user_id:
+            return
+
+        if event.cancel:
+            action = "cancel"
+            active = False
+        elif event.typing:
+            action = "typing"
+            active = True
+        elif event.uploading:
+            action = "uploading"
+            active = True
+        elif event.recording:
+            action = "recording"
+            active = True
+        else:
+            return
+
+        user_name = None
+        try:
+            user = await event.get_user()
+            if user is not None:
+                user_name = self._entity_title(user, int(event.user_id or 0))
+        except Exception:
+            pass
+
+        await self.events.publish(
+            {
+                "type": "CHAT_ACTION",
+                "data": {
+                    "chat_id": int(event.chat_id),
+                    "user_id": event.user_id,
+                    "user_name": user_name,
+                    "action": action,
+                    "active": active,
+                },
+            }
+        )
+
+    async def _on_read(self, event: Any) -> None:
+        if event.chat_id is None or not event.outbox:
+            return
+        max_id = int(event.max_id or 0)
+        if max_id < 1:
+            return
+        chat_id = int(event.chat_id)
+        current = getattr(self, "_outbox_read_max", {}).get(chat_id, 0)
+        if max_id <= current:
+            return
+        self._outbox_read_max[chat_id] = max_id
+        await self.store.mark_outgoing_read(chat_id, max_id)
+        await self.events.publish(
+            {
+                "type": "MESSAGES_READ",
+                "data": {"chat_id": chat_id, "max_id": max_id},
+            }
+        )
 
     async def _on_delete(self, event: Any) -> None:
         if event.chat_id is None:
@@ -508,6 +575,16 @@ class TelegramDesktopService:
         dialogs = []
         async for item in client.iter_dialogs():
             value = self._dialog_model(item)
+            raw_dialog = getattr(item, "dialog", None)
+            read_max = int(
+                getattr(raw_dialog, "read_outbox_max_id", 0)
+                or getattr(item, "read_outbox_max_id", 0)
+                or 0
+            )
+            self._outbox_read_max[value.chat_id] = max(
+                self._outbox_read_max.get(value.chat_id, 0),
+                read_max,
+            )
             if search and search.casefold() not in value.title.casefold() and not (
                 value.username and search.casefold() in value.username.casefold()
             ):
@@ -565,6 +642,26 @@ class TelegramDesktopService:
             messages.append(message)
             await self.store.upsert_message(message)
         return messages
+
+    async def send_typing(self, chat_id: int, active: bool = True) -> dict:
+        client = self._require_authorized()
+        try:
+            peer = await client.get_input_entity(chat_id)
+            action = (
+                types.SendMessageTypingAction()
+                if active
+                else types.SendMessageCancelAction()
+            )
+            await client(
+                functions.messages.SetTypingRequest(
+                    peer=peer,
+                    action=action,
+                )
+            )
+        except Exception as error:
+            logger.warning("Telegram typing operation failed: %s", type(error).__name__)
+            raise DesktopError("Telegram typing status could not be updated") from None
+        return {"chat_id": chat_id, "typing": active}
 
     async def send_text(
         self,
