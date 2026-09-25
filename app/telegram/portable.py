@@ -44,6 +44,24 @@ def find_portable_config(settings: Settings) -> Path | None:
     return None
 
 
+def _mirror_path() -> Path | None:
+    raw = str(os.environ.get("TELEGRAM_PORTABLE_MIRROR_CONFIG") or "").strip()
+    return Path(raw).expanduser().resolve() if raw else None
+
+
+def _write_payload(path: Path, payload: dict[str, Any]) -> None:
+    serialized = json.dumps(payload, ensure_ascii=False, indent=2)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(serialized, encoding="utf-8")
+    mirror = _mirror_path()
+    if mirror is not None and mirror != path:
+        try:
+            mirror.parent.mkdir(parents=True, exist_ok=True)
+            mirror.write_text(serialized, encoding="utf-8")
+        except OSError:
+            pass
+
+
 def _load_payload(path: Path) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -180,7 +198,7 @@ def sync_account_to_portable(
     payload.pop("session", None)
     payload.pop("display_name", None)
     payload.pop("phone", None)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_payload(path, payload)
     return path
 
 
@@ -201,7 +219,7 @@ def remove_account_from_portable(settings: Settings, user_id: int | None) -> Pat
     payload.pop("session", None)
     payload.pop("display_name", None)
     payload.pop("phone", None)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_payload(path, payload)
     return path
 
 
