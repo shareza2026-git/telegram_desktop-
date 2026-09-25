@@ -1,4 +1,10 @@
 !macro NSIS_HOOK_PREINSTALL
+  ; Stop an older installed copy before NSIS replaces the sidecar/executable.
+  ; Ignore taskkill errors when the processes are not running.
+  nsExec::ExecToLog 'taskkill /F /IM telegram-desktop-backend.exe'
+  nsExec::ExecToLog 'taskkill /F /IM telegram-desktop.exe'
+  Sleep 700
+
   ; Seed the real Telethon session before any possible first application launch.
   IfFileExists "$EXEDIR\telegram-session.session" 0 seed_done
 
