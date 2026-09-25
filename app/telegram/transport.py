@@ -237,6 +237,24 @@ class TransportCatalog:
             raise ConnectionError("Proxy route is unavailable") from None
         return round((asyncio.get_running_loop().time() - started) * 1000, 2)
 
+    def export_records(self) -> list[dict]:
+        records: list[dict] = []
+        for route in self.load():
+            item = {
+                "type": route.type,
+                "host": route.host.get_secret_value(),
+                "port": route.port,
+                "secret": route.secret.get_secret_value() if route.secret else None,
+                "username": route.username.get_secret_value() if route.username else None,
+                "password": route.password.get_secret_value() if route.password else None,
+                "managed_v2ray": route.managed_v2ray,
+                "v2ray_name": route.v2ray_name,
+                "route_id": route.route_id,
+                "vless_uri": route.vless_uri.get_secret_value() if route.vless_uri else None,
+            }
+            records.append({key: value for key, value in item.items() if value is not None})
+        return records
+
     def snapshot(self) -> list[dict]:
         result = []
         for index, route in enumerate(self.load(), 1):
