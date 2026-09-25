@@ -90,14 +90,64 @@ if ($Xray) {
     Copy-Item $Xray (Join-Path $ReleaseRoot "xray.exe") -Force
 }
 
+$InstallHelper = @'
+$ErrorActionPreference = "Stop"
+$Here = Split-Path -Parent $MyInvocation.MyCommand.Path
+$Setup = Get-ChildItem $Here -Filter "Telegram-Desktop-Setup-*.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if (-not $Setup) { throw "Telegram Desktop setup was not found." }
+
+Start-Process -FilePath $Setup.FullName -Wait
+
+$candidates = @(
+    (Join-Path $env:LOCALAPPDATA "Telegram Desktop\Telegram Desktop.exe"),
+    (Join-Path $env:LOCALAPPDATA "Programs\Telegram Desktop\Telegram Desktop.exe")
+)
+$InstalledExe = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+if (-not $InstalledExe) {
+    $InstalledExe = Get-ChildItem $env:LOCALAPPDATA -Filter "Telegram Desktop.exe" -File -Recurse -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1 -ExpandProperty FullName
+}
+if (-not $InstalledExe) {
+    throw "Telegram Desktop was installed but its executable could not be located."
+}
+
+$InstallDir = Split-Path -Parent $InstalledExe
+Copy-Item (Join-Path $Here "telegram-portable.json") (Join-Path $InstallDir "telegram-portable.json") -Force
+
+$Xray = Join-Path $Here "xray.exe"
+if (Test-Path $Xray) {
+    Copy-Item $Xray (Join-Path $InstallDir "xray.exe") -Force
+}
+
+Write-Host "Telegram Desktop is ready." -ForegroundColor Green
+Write-Host "Installed at: $InstallDir"
+Write-Host "Portable account configuration copied successfully."
+'@
+Set-Content -Path (Join-Path $ReleaseRoot "Install-Telegram-Desktop.ps1") -Value $InstallHelper -Encoding UTF8
+
+$InstallCmd = '@echo off
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Install-Telegram-Desktop.ps1"
+pause
+'
+Set-Content -Path (Join-Path $ReleaseRoot "INSTALL.cmd") -Value $InstallCmd -Encoding ASCII
+
 $Readme = @"
 Telegram Desktop release package
 
-1. Run: Telegram-Desktop-Setup-$Version.exe
-2. Keep telegram-portable.json private.
-3. After install, copy telegram-portable.json next to the installed Telegram Desktop executable if it is not already present there.
-4. If xray.exe is included, keep it next to the executable as well.
-5. Updating by installing a newer setup over the old installation preserves AppData sessions/database/account state.
+Recommended:
+1. Double-click INSTALL.cmd.
+2. The installer runs normally.
+3. telegram-portable.json is copied beside the installed Telegram Desktop executable automatically.
+4. xray.exe is also copied automatically when present in this package.
+5. Keep telegram-portable.json private; it contains Telegram authorization credentials.
+
+Updates:
+- Build a newer release package and run INSTALL.cmd again.
+- The new application replaces the old application files.
+- Existing AppData session/database/account state is preserved.
+- The portable account file remains synchronized by the application.
 "@
 Set-Content -Path (Join-Path $ReleaseRoot "README.txt") -Value $Readme -Encoding UTF8
 
