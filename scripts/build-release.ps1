@@ -131,16 +131,43 @@ if (-not $InstalledExe) {
 }
 
 $InstallDir = Split-Path -Parent $InstalledExe
-Copy-Item (Join-Path $Here "telegram-portable.json") (Join-Path $InstallDir "telegram-portable.json") -Force
+$PortableSource = Join-Path $Here "telegram-portable.json"
+
+# The NSIS installer may launch the app immediately. Stop that first launch so
+# the next startup sees the portable account bundle from the very beginning.
+Get-Process -ErrorAction SilentlyContinue | Where-Object {
+    try { $_.Path -and ([System.IO.Path]::GetFullPath($_.Path) -eq [System.IO.Path]::GetFullPath($InstalledExe)) }
+    catch { $false }
+} | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 500
+
+# Keep a copy beside the installed executable (portable bootstrap/mirror).
+Copy-Item $PortableSource (Join-Path $InstallDir "telegram-portable.json") -Force
+
+# Also seed the persistent Tauri data location before relaunch. Tauri uses the
+# stable identifier local.telegram.desktop, so future upgrades reuse this copy.
+$PersistentRoots = @(
+    (Join-Path $env:APPDATA "local.telegram.desktop"),
+    (Join-Path $env:LOCALAPPDATA "local.telegram.desktop")
+)
+foreach ($Root in $PersistentRoots) {
+    if (-not $Root) { continue }
+    $PortableDir = Join-Path $Root "portable"
+    New-Item -ItemType Directory -Force $PortableDir | Out-Null
+    Copy-Item $PortableSource (Join-Path $PortableDir "telegram-portable.json") -Force
+}
 
 $Xray = Join-Path $Here "xray.exe"
 if (Test-Path $Xray) {
     Copy-Item $Xray (Join-Path $InstallDir "xray.exe") -Force
 }
 
+# Relaunch only after credentials/configuration are in place.
+Start-Process -FilePath $InstalledExe
+
 Write-Host "Telegram Desktop is ready." -ForegroundColor Green
 Write-Host "Installed at: $InstallDir"
-Write-Host "Portable account configuration copied successfully."
+Write-Host "Portable account configuration seeded before first launch."
 '@
 Set-Content -Path (Join-Path $ReleaseRoot "Install-Telegram-Desktop.ps1") -Value $InstallHelper -Encoding UTF8
 
