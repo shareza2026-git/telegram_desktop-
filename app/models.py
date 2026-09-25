@@ -134,6 +134,14 @@ class SetReactionRequest(BaseModel):
     emoji: str | None = Field(default=None, max_length=16)
 
 
+class ProxyLinkRequest(BaseModel):
+    link: str
+
+
+class ProxySelectRequest(BaseModel):
+    index: int | None = None
+
+
 class TypingRequest(BaseModel):
     active: bool = True
 
