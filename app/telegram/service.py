@@ -164,9 +164,15 @@ class TelegramDesktopService:
 
     async def _connect(self) -> None:
         routes = self.transport.load()
-        candidates: list[ProxyRoute | None] = list(routes)
-        if self.settings.telegram_allow_direct:
-            candidates.append(None)
+        selected = self.transport.selected_index()
+        if selected == 0:
+            candidates: list[ProxyRoute | None] = [None]
+        elif selected is not None and 1 <= selected <= len(routes):
+            candidates = [routes[selected - 1]]
+        else:
+            candidates = list(routes)
+            if self.settings.telegram_allow_direct:
+                candidates.append(None)
         if not candidates:
             self.status = self.status.model_copy(
                 update={"state": "PROXY_ERROR", "last_error": "No Telegram route is configured"}
@@ -610,6 +616,48 @@ class TelegramDesktopService:
         if self.client is None or not self.status.connected or not self.status.authorized:
             raise DesktopError("Telegram is not connected and authorized")
         return self.client
+
+    async def add_proxy_link(self, link: str) -> dict:
+        try:
+            return self.transport.add_proxy_link(link)
+        except ValueError:
+            raise
+
+    async def select_proxy(self, index: int | None) -> dict:
+        routes = self.transport.load()
+        if index is not None and index != 0 and not (1 <= index <= len(routes)):
+            raise ValueError("Proxy selection is invalid")
+        async with self._lifecycle_lock:
+            self.transport.set_selected_index(index)
+            client = self.client
+            self._unregister_handlers()
+            if client is not None:
+                with suppress(Exception):
+                    await client.disconnect()
+            self.client = None
+            if self.route is not None:
+                with suppress(Exception):
+                    await self.route.deactivate()
+            self.route = None
+            await self._connect()
+            await self.events.publish({"type": "READY", "data": self.status.model_dump(mode="json")})
+        return {
+            "selected_index": index,
+            "active_route": self.status.active_route,
+            "connected": self.status.connected,
+        }
+
+    async def probe_proxies(self) -> list[dict]:
+        routes = self.transport.load()
+
+        async def probe_one(index: int, route: ProxyRoute) -> dict:
+            try:
+                latency = await self.transport.probe(route, timeout=1.8)
+                return {"index": index, "available": True, "latency_ms": latency}
+            except Exception:
+                return {"index": index, "available": False, "latency_ms": None}
+
+        return await asyncio.gather(*(probe_one(index, route) for index, route in enumerate(routes, 1)))
 
     async def devices(self) -> list[DeviceSession]:
         client = self._require_authorized()
