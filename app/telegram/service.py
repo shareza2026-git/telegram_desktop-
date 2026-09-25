@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import SecretStr
 
 from telethon import TelegramClient, events, functions, types, utils
+from telethon.sessions import MemorySession
 from telethon.errors import (
     FloodWaitError,
     PasswordHashInvalidError,
@@ -730,13 +731,50 @@ class TelegramDesktopService:
         routes = self.transport.load()
 
         async def probe_one(index: int, route: ProxyRoute) -> dict:
+            started = asyncio.get_running_loop().time()
+            client: TelegramClient | None = None
             try:
-                latency = await self.transport.probe(route, timeout=1.8)
-                return {"index": index, "available": True, "latency_ms": latency}
-            except Exception:
-                return {"index": index, "available": False, "latency_ms": None}
+                options = await route.activate()
+                api_hash = (
+                    self.settings.telegram_api_hash.get_secret_value()
+                    if self.settings.telegram_api_hash
+                    else "probe-only-placeholder"
+                )
+                client = TelegramClient(
+                    MemorySession(),
+                    self.settings.telegram_api_id or 1,
+                    api_hash,
+                    connection_retries=1,
+                    request_retries=1,
+                    auto_reconnect=False,
+                    sequential_updates=True,
+                    **options,
+                )
+                await asyncio.wait_for(client.connect(), timeout=4.5)
+                latency = round((asyncio.get_running_loop().time() - started) * 1000, 2)
+                return {
+                    "index": index,
+                    "available": True,
+                    "latency_ms": latency,
+                    "detail": "Telegram MTProto handshake OK",
+                }
+            except Exception as error:
+                return {
+                    "index": index,
+                    "available": False,
+                    "latency_ms": None,
+                    "detail": f"Telegram handshake failed: {type(error).__name__}",
+                }
+            finally:
+                if client is not None:
+                    with suppress(Exception):
+                        await client.disconnect()
+                with suppress(Exception):
+                    await route.deactivate()
 
-        return await asyncio.gather(*(probe_one(index, route) for index, route in enumerate(routes, 1)))
+        return await asyncio.gather(
+            *(probe_one(index, route) for index, route in enumerate(routes, 1))
+        )
 
     async def devices(self) -> list[DeviceSession]:
         client = self._require_authorized()
