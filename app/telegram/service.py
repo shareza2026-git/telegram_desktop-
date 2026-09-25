@@ -758,6 +758,8 @@ class TelegramDesktopService:
         dialogs = []
         async for item in client.iter_dialogs():
             value = self._dialog_model(item)
+            if self.status.user_id is not None and value.chat_id == int(self.status.user_id):
+                value = value.model_copy(update={"title": "Saved Messages"})
             raw_dialog = getattr(item, "dialog", None)
             read_max = int(
                 getattr(raw_dialog, "read_outbox_max_id", 0)
