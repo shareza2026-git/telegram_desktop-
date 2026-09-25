@@ -83,6 +83,7 @@ class TelegramDesktopService:
         self._lifecycle_lock = asyncio.Lock()
         self._outbox_read_max: dict[int, int] = {}
         self._recent_media: dict[tuple[str, str], Any] = {}
+        self._priority_chat_ids: set[int] = set()
         self._connection_monitor: asyncio.Task | None = None
         info = self.sessions.info()
         self.status = ClientStatus(
@@ -473,19 +474,44 @@ class TelegramDesktopService:
             last_message_preview=str(getattr(latest, "raw_text", None) or "").strip()[:180] or None,
         )
 
+    def _is_priority_chat(self, chat_id: int) -> bool:
+        return chat_id in self._priority_chat_ids
+
     async def _on_new(self, event: Any) -> None:
         if event.chat_id is None:
             return
-        message = self._message_model(event.message, int(event.chat_id))
-        await self.events.publish({"type": "MESSAGE_NEW", "data": message.model_dump(mode="json")})
+        chat_id = int(event.chat_id)
+        message = self._message_model(event.message, chat_id)
+        packet = {
+            "type": "MESSAGE_NEW",
+            "data": message.model_dump(mode="json"),
+            "priority": self._is_priority_chat(chat_id),
+        }
+        if self._is_priority_chat(chat_id):
+            await self.events.publish(packet)
+            self._persist_message_background(message)
+            return
+
         self._persist_message_background(message)
+        await self.events.publish(packet)
 
     async def _on_edit(self, event: Any) -> None:
         if event.chat_id is None:
             return
-        message = self._message_model(event.message, int(event.chat_id), edited=True)
-        await self.events.publish({"type": "MESSAGE_EDITED", "data": message.model_dump(mode="json")})
+        chat_id = int(event.chat_id)
+        message = self._message_model(event.message, chat_id, edited=True)
+        packet = {
+            "type": "MESSAGE_EDITED",
+            "data": message.model_dump(mode="json"),
+            "priority": self._is_priority_chat(chat_id),
+        }
+        if self._is_priority_chat(chat_id):
+            await self.events.publish(packet)
+            self._persist_message_background(message)
+            return
+
         self._persist_message_background(message)
+        await self.events.publish(packet)
 
     async def _on_user_update(self, event: Any) -> None:
         if event.chat_id is None or event.action is None:
@@ -689,6 +715,10 @@ class TelegramDesktopService:
             ):
                 continue
             dialogs.append(value)
+            if "اتاق" in value.title:
+                self._priority_chat_ids.add(value.chat_id)
+            else:
+                self._priority_chat_ids.discard(value.chat_id)
             await self.store.upsert_dialog(value)
         return sorted(
             dialogs,
