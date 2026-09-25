@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Version = "0.1.10"
+    [string]$Version = "0.1.11"
 )
 
 $ErrorActionPreference = "Stop"
@@ -10,6 +10,7 @@ $FrontendRoot = Join-Path $RepoRoot "frontend"
 $TauriRoot = Join-Path $FrontendRoot "src-tauri"
 $Python = Join-Path $RepoRoot ".venv\Scripts\python.exe"
 $SessionSeed = Join-Path $RepoRoot "data\telegram_desktop\accounts\default\client.session"
+$ApiSeedSource = Join-Path $RepoRoot "data\telegram_desktop\settings.env"
 $LegacyPortableConfig = Join-Path $RepoRoot "telegram-portable.json"
 $ReleaseRoot = Join-Path $RepoRoot "release"
 $SidecarSource = Join-Path $RepoRoot "dist\telegram-desktop-backend.exe"
@@ -22,6 +23,9 @@ if (-not (Test-Path $Python)) {
 }
 if (-not (Test-Path $SessionSeed)) {
     throw "Authorized Telegram session is missing at data\telegram_desktop\accounts\default\client.session."
+}
+if (-not (Test-Path $ApiSeedSource)) {
+    throw "Telegram API settings are missing at data\telegram_desktop\settings.env."
 }
 if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
     throw "npm is not installed."
@@ -98,6 +102,7 @@ New-Item -ItemType Directory -Force $ReleaseRoot | Out-Null
 $FinalInstaller = Join-Path $ReleaseRoot "Telegram-Desktop-Setup-$Version.exe"
 Copy-Item $Installer.FullName $FinalInstaller -Force
 Copy-Item $SessionSeed (Join-Path $ReleaseRoot "telegram-session.session") -Force
+Copy-Item $ApiSeedSource (Join-Path $ReleaseRoot "telegram-api.env") -Force
 
 # Carry currently working proxy routes without committing them to Git.
 # If the old local portable bundle exists, extract only its proxy list for this release.
@@ -134,7 +139,7 @@ Telegram Desktop release package
 1. Keep telegram-session.session beside Telegram-Desktop-Setup-$Version.exe.
 2. Run Telegram-Desktop-Setup-$Version.exe directly.
 3. The installer seeds the existing Telegram session into AppData before first launch.
-4. On first launch enter API ID and API Hash in the application form.
+4. telegram-api.env seeds API ID and API Hash automatically before first launch.
 5. xray.exe is copied automatically when present beside the installer.
 
 Security:
