@@ -343,6 +343,8 @@ function App() {
   const [authNotice, setAuthNotice] = useState('')
   const [activeFolder, setActiveFolder] = useState<FolderKey>('all')
   const [telegramFolders, setTelegramFolders] = useState<DialogFolder[]>([])
+  const [sidebarWidth, setSidebarWidth] = useState(() => Number(window.localStorage.getItem('telegram-sidebar-width')) || 312)
+  const sidebarResizeRef = useRef<{ startX: number; startWidth: number } | null>(null)
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [hasOlder, setHasOlder] = useState(false)
   const [mediaStates, setMediaStates] = useState<Record<string, MediaState>>({})
@@ -865,6 +867,31 @@ function App() {
     } catch {
       // Typing is an ephemeral hint and must never block composing or sending.
     }
+  }
+
+  function beginSidebarResize(event: ReactMouseEvent<HTMLDivElement>) {
+    event.preventDefault()
+    sidebarResizeRef.current = { startX: event.clientX, startWidth: sidebarWidth }
+
+    const handleMove = (moveEvent: MouseEvent) => {
+      const resize = sidebarResizeRef.current
+      if (!resize) return
+      const maxWidth = Math.min(420, Math.max(250, window.innerWidth - 280))
+      const nextWidth = Math.max(250, Math.min(maxWidth, resize.startWidth + (moveEvent.clientX - resize.startX)))
+      setSidebarWidth(nextWidth)
+    }
+
+    const handleUp = () => {
+      sidebarResizeRef.current = null
+      window.localStorage.setItem('telegram-sidebar-width', String(sidebarWidth))
+      window.removeEventListener('mousemove', handleMove)
+      window.removeEventListener('mouseup', handleUp)
+      document.body.classList.remove('sidebar-resizing')
+    }
+
+    document.body.classList.add('sidebar-resizing')
+    window.addEventListener('mousemove', handleMove)
+    window.addEventListener('mouseup', handleUp)
   }
 
   function isNearBottom() {
@@ -1897,7 +1924,7 @@ function App() {
   }
 
   return (
-    <main className={'telegram-shell' + (preferences.compact ? ' compact-mode' : '')} onMouseDown={() => setMessageContextMenu(null)}>
+    <main className={'telegram-shell' + (preferences.compact ? ' compact-mode' : '')} style={{ '--sidebar-width': sidebarWidth + 'px' } as React.CSSProperties} onMouseDown={() => setMessageContextMenu(null)}>
       <header className="app-titlebar" data-tauri-drag-region>
         <div className="titlebar-brand" data-tauri-drag-region>
           <button className="titlebar-menu" aria-label="منوی اصلی" title="منوی اصلی" onClick={() => setMainMenuOpen(value => !value)}>☰</button>
@@ -1980,6 +2007,7 @@ function App() {
           {!visibleDialogs.length && <div className="empty-list">گفت‌وگویی پیدا نشد</div>}
         </div>
       </aside>
+      <div className="sidebar-resizer" onMouseDown={beginSidebarResize} aria-hidden="true" />
 
       <section
         className={'chat-panel' + (dragActive ? ' drag-active' : '')}
