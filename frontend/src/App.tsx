@@ -2017,7 +2017,7 @@ function App() {
           <button className="titlebar-menu" aria-label="منوی اصلی" title="منوی اصلی" onClick={() => setMainMenuOpen(value => !value)}>☰</button>
           <span className="account-stack" aria-hidden="true"><i /><i /></span>
           <span className="telegram-logo" aria-hidden="true">➤</span>
-          <strong className="app-title">Unigram</strong>
+          <strong className="app-title">Telegram</strong>
         </div>
         <div className="titlebar-drag-fill" data-tauri-drag-region aria-hidden="true" />
         <div className="window-controls">
@@ -2412,17 +2412,17 @@ function App() {
                 </section>
               )}
               <form className="composer" ref={composerFormRef} onSubmit={sendMessage}>
-                <button
-                  type="button"
-                  className="composer-attach"
-                  aria-label="ارسال عکس یا فایل"
-                  title="پیوست"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={uploadBusy || editing !== null}
-                >
-                  📎
-                </button>
                 <div className="composer-input-shell">
+                  <button
+                    type="button"
+                    className="composer-attach"
+                    aria-label="ارسال عکس یا فایل"
+                    title="پیوست"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploadBusy || editing !== null}
+                  >
+                    <span className="paperclip-icon" aria-hidden="true" />
+                  </button>
                   <input
                     ref={composerInputRef}
                     value={draft}
