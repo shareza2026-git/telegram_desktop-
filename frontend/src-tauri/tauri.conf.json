@@ -14,14 +14,15 @@
       {
         "label": "main",
         "title": "Telegram Desktop",
-        "width": 1200,
-        "height": 760,
-        "minWidth": 900,
-        "minHeight": 560,
+        "width": 1000,
+        "height": 650,
+        "minWidth": 760,
+        "minHeight": 500,
         "resizable": true,
         "decorations": false,
         "visible": true,
-        "theme": "Light"
+        "theme": "Light",
+        "center": true
       }
     ],
     "security": {
