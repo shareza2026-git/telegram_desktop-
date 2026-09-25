@@ -17,6 +17,13 @@ type Dialog = {
   last_message_preview?: string | null
 }
 
+type DialogFolder = {
+  id: number
+  title: string
+  chat_ids: number[]
+  unread_count: number
+}
+
 type DialogPatch = {
   chat_id: number
   pinned?: boolean
@@ -140,7 +147,7 @@ type AuthResponse = {
 }
 
 type AuthStep = 'phone' | 'code' | 'password'
-type FolderKey = 'all' | 'private' | 'unread' | 'groups' | 'channels' | 'archived'
+type FolderKey = 'all' | 'private' | 'unread' | 'groups' | 'channels' | 'archived' | `folder:${number}`
 type MediaState = 'loading' | 'ready' | 'downloading' | 'done' | 'error'
 
 const HISTORY_PAGE_SIZE = 80
@@ -341,6 +348,7 @@ function App() {
   const [authBusy, setAuthBusy] = useState(false)
   const [authNotice, setAuthNotice] = useState('')
   const [activeFolder, setActiveFolder] = useState<FolderKey>('all')
+  const [telegramFolders, setTelegramFolders] = useState<DialogFolder[]>([])
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [hasOlder, setHasOlder] = useState(false)
   const [mediaStates, setMediaStates] = useState<Record<string, MediaState>>({})
@@ -404,17 +412,24 @@ function App() {
 
   const visibleDialogs = useMemo(() => {
     let values = dialogs
-    if (activeFolder === 'private') values = values.filter(item => item.dialog_type === 'user' && !item.archived)
-    if (activeFolder === 'unread') values = values.filter(item => item.unread_count > 0 && !item.archived)
-    if (activeFolder === 'groups') values = values.filter(item => (item.dialog_type === 'group' || item.dialog_type === 'supergroup') && !item.archived)
-    if (activeFolder === 'channels') values = values.filter(item => item.dialog_type === 'channel' && !item.archived)
-    if (activeFolder === 'archived') values = values.filter(item => item.archived)
-    if (activeFolder === 'all') values = values.filter(item => !item.archived)
+    if (activeFolder.startsWith('folder:')) {
+      const folderId = Number(activeFolder.slice('folder:'.length))
+      const folder = telegramFolders.find(item => item.id === folderId)
+      const allowed = new Set(folder?.chat_ids || [])
+      values = values.filter(item => allowed.has(item.chat_id))
+    } else {
+      if (activeFolder === 'private') values = values.filter(item => item.dialog_type === 'user' && !item.archived)
+      if (activeFolder === 'unread') values = values.filter(item => item.unread_count > 0 && !item.archived)
+      if (activeFolder === 'groups') values = values.filter(item => (item.dialog_type === 'group' || item.dialog_type === 'supergroup') && !item.archived)
+      if (activeFolder === 'channels') values = values.filter(item => item.dialog_type === 'channel' && !item.archived)
+      if (activeFolder === 'archived') values = values.filter(item => item.archived)
+      if (activeFolder === 'all') values = values.filter(item => !item.archived)
+    }
 
     const value = query.trim().toLocaleLowerCase()
     if (!value) return values
     return values.filter(item => item.title.toLocaleLowerCase().includes(value))
-  }, [activeFolder, dialogs, query])
+  }, [activeFolder, dialogs, query, telegramFolders])
 
   const totalUnread = useMemo(
     () => dialogs.reduce((total, dialog) => total + dialog.unread_count, 0),
@@ -494,7 +509,14 @@ function App() {
         const nextStatus = await api<Status>('/api/telegram/status')
         if (disposed) return
         setStatus(nextStatus)
-        if (nextStatus.authorized) setDialogs(await api<Dialog[]>('/api/telegram/dialogs'))
+        if (nextStatus.authorized) {
+          const [nextDialogs, nextFolders] = await Promise.all([
+            api<Dialog[]>('/api/telegram/dialogs'),
+            api<DialogFolder[]>('/api/telegram/dialog-folders')
+          ])
+          setDialogs(nextDialogs)
+          setTelegramFolders(nextFolders)
+        }
       } catch {
         // The packaged backend can need a moment to start. WebSocket retry handles recovery.
       }
@@ -506,7 +528,7 @@ function App() {
       if (!chatId || disposed) return
       try {
         const current = await api<Message[]>('/api/telegram/chats/' + chatId + '/messages?limit=' + HISTORY_PAGE_SIZE)
-        if (!disposed && selectedChatIdRef.current === chatId) setMessages(current)
+        if (!disposed && selectedChatIdRef.current === chatId) setMessages(current.filter(item => !item.deleted))
       } catch {
         // A later reconnect or explicit refresh will retry the snapshot.
       }
@@ -592,7 +614,10 @@ function App() {
       if (packet.type === 'MESSAGE_DELETED') {
         const deleted = packet.data as { chat_id: number; message_id: number }
         if (selectedChatIdRef.current === deleted.chat_id) {
-          setMessages(current => current.map(item => item.message_id === deleted.message_id ? { ...item, deleted: true, text: '' } : item))
+          setMessages(current => current.filter(item => item.message_id !== deleted.message_id))
+          setPinnedMessage(current => current?.message_id === deleted.message_id ? null : current)
+          setReplyingTo(current => current?.message_id === deleted.message_id ? null : current)
+          setEditing(current => current?.message_id === deleted.message_id ? null : current)
         }
       }
       }
@@ -681,7 +706,8 @@ function App() {
 
     api<Message[]>('/api/telegram/chats/' + selected.chat_id + '/messages?limit=' + HISTORY_PAGE_SIZE)
       .then(items => {
-        setMessages(items)
+        const visibleItems = items.filter(item => !item.deleted)
+        setMessages(visibleItems)
         setHasOlder(items.length === HISTORY_PAGE_SIZE)
         const incoming = items.filter(item => !item.outgoing && !item.deleted)
         const unreadIndex = Math.max(0, incoming.length - unreadCount)
@@ -1019,11 +1045,7 @@ function App() {
         )
       }
       const deletedIds = new Set(selectedMessages.map(message => message.message_id))
-      setMessages(current => current.map(message => (
-        deletedIds.has(message.message_id)
-          ? { ...message, deleted: true, text: '' }
-          : message
-      )))
+      setMessages(current => current.filter(message => !deletedIds.has(message.message_id)))
       setSelectedMessageIds(new Set())
     } catch (caught) {
       setError(errorMessage(caught, 'حذف گروهی پیام‌ها کامل نشد.'))
@@ -1034,7 +1056,12 @@ function App() {
 
   async function refreshDialogs() {
     try {
-      setDialogs(await api<Dialog[]>('/api/telegram/dialogs'))
+      const [nextDialogs, nextFolders] = await Promise.all([
+        api<Dialog[]>('/api/telegram/dialogs'),
+        api<DialogFolder[]>('/api/telegram/dialog-folders')
+      ])
+      setDialogs(nextDialogs)
+      setTelegramFolders(nextFolders)
     } catch (caught) {
       setError(errorMessage(caught, 'به‌روزرسانی گفتگوها انجام نشد.'))
     }
@@ -1053,7 +1080,7 @@ function App() {
       )
       setMessages(current => {
         const known = new Set(current.map(item => item.message_id))
-        return [...older.filter(item => !known.has(item.message_id)), ...current]
+        return [...older.filter(item => !item.deleted && !known.has(item.message_id)), ...current]
       })
       setHasOlder(older.length === HISTORY_PAGE_SIZE)
       window.requestAnimationFrame(() => {
@@ -1070,7 +1097,14 @@ function App() {
   async function refreshAuthorizedState() {
     const nextStatus = await api<Status>('/api/telegram/status')
     setStatus(nextStatus)
-    if (nextStatus.authorized) setDialogs(await api<Dialog[]>('/api/telegram/dialogs'))
+    if (nextStatus.authorized) {
+      const [nextDialogs, nextFolders] = await Promise.all([
+        api<Dialog[]>('/api/telegram/dialogs'),
+        api<DialogFolder[]>('/api/telegram/dialog-folders')
+      ])
+      setDialogs(nextDialogs)
+      setTelegramFolders(nextFolders)
+    }
   }
 
   async function importSession() {
@@ -1079,7 +1113,14 @@ function App() {
     try {
       const nextStatus = await api<Status>('/api/telegram/session/import', { method: 'POST' })
       setStatus(nextStatus)
-      if (nextStatus.authorized) setDialogs(await api<Dialog[]>('/api/telegram/dialogs'))
+      if (nextStatus.authorized) {
+        const [nextDialogs, nextFolders] = await Promise.all([
+          api<Dialog[]>('/api/telegram/dialogs'),
+          api<DialogFolder[]>('/api/telegram/dialog-folders')
+        ])
+        setDialogs(nextDialogs)
+        setTelegramFolders(nextFolders)
+      }
     } catch (caught) {
       setError(errorMessage(caught, 'انتقال سشن انجام نشد؛ تنظیمات مسیر یا فایل منبع را بررسی کنید.'))
     } finally {
@@ -1901,9 +1942,15 @@ function App() {
           >◇</button>
         </div>
         <div className="folder-tabs">
-          <button className={activeFolder === 'all' ? 'active' : ''} onClick={() => setActiveFolder('all')}>All Chats <b>{dialogs.filter(item => !item.archived).length}</b></button>
-          <button className={activeFolder === 'private' ? 'active' : ''} onClick={() => setActiveFolder('private')}>Personal <b>{dialogs.filter(item => item.dialog_type === 'user' && !item.archived).length}</b></button>
-          <button className={activeFolder === 'unread' ? 'active' : ''} onClick={() => setActiveFolder('unread')}>Unread <b>{totalUnread}</b></button>
+          <button className={activeFolder === 'all' ? 'active' : ''} onClick={() => setActiveFolder('all')}>Chats</button>
+          {telegramFolders.map(folder => {
+            const key = ('folder:' + folder.id) as FolderKey
+            return (
+              <button key={folder.id} className={activeFolder === key ? 'active' : ''} onClick={() => setActiveFolder(key)}>
+                {folder.title}{folder.unread_count > 0 && <b>{folder.unread_count}</b>}
+              </button>
+            )
+          })}
         </div>
         <div className="dialog-list">
           {visibleDialogs.map(dialog => (
@@ -2058,9 +2105,9 @@ function App() {
                   {loadingOlder ? 'در حال دریافت…' : 'پیام‌های قدیمی‌تر'}
                 </button>
               )}
-              {messages.map((message, index) => (
+              {messages.filter(message => !message.deleted).map((message, index, visibleMessages) => (
                 <Fragment key={message.message_id}>
-                  {index === 0 || messageDayKey(messages[index - 1].date) !== messageDayKey(message.date) ? (
+                  {index === 0 || messageDayKey(visibleMessages[index - 1].date) !== messageDayKey(message.date) ? (
                     <div className="date-separator"><span>{formatMessageDate(message.date)}</span></div>
                   ) : null}
                   {unreadBoundaryId === message.message_id && (
