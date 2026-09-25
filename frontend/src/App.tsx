@@ -1905,6 +1905,7 @@ function App() {
           <span className="telegram-logo" aria-hidden="true">➤</span>
           <strong className="app-title">Unigram</strong>
         </div>
+        <div className="titlebar-drag-fill" data-tauri-drag-region aria-hidden="true" />
         <div className="window-controls">
           <button aria-label="کمینه" onClick={() => void appWindow.minimize()}>—</button>
           <button aria-label="بیشینه" onClick={() => void appWindow.toggleMaximize()}>□</button>
