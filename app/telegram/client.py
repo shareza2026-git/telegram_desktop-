@@ -15,7 +15,7 @@ def build_client(settings: Settings, options: dict | None = None) -> TelegramCli
         "device_model": socket.gethostname() or platform.node() or "Windows PC",
         "system_version": f"{platform.system()} {platform.release()}",
         "app_version": "1.45.0",
-        "sequential_updates": True,
+        "sequential_updates": False,
         "auto_reconnect": True,
         "connection_retries": 2,
         "request_retries": 2,
