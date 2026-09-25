@@ -11,6 +11,8 @@ from app.models import (
     LoginCodeRequest,
     LoginPasswordRequest,
     LoginPhoneRequest,
+    ProxyLinkRequest,
+    ProxySelectRequest,
     SendMessageRequest,
     SendRecentMediaRequest,
     SetReactionRequest,
@@ -40,6 +42,27 @@ async def transport(request: Request):
         "routes": service(request).transport.snapshot(),
         "allow_direct": service(request).settings.telegram_allow_direct,
     }
+
+
+@router.post("/api/telegram/transport/add-link")
+async def transport_add_link(values: ProxyLinkRequest, request: Request):
+    try:
+        return await service(request).add_proxy_link(values.link)
+    except (DesktopError, ValueError) as exc:
+        raise error_response(exc) from None
+
+
+@router.post("/api/telegram/transport/select")
+async def transport_select(values: ProxySelectRequest, request: Request):
+    try:
+        return await service(request).select_proxy(values.index)
+    except (DesktopError, ValueError) as exc:
+        raise error_response(exc) from None
+
+
+@router.get("/api/telegram/transport/probe")
+async def transport_probe(request: Request):
+    return await service(request).probe_proxies()
 
 
 @router.get("/api/telegram/devices")
