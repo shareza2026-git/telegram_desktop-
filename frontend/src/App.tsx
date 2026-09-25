@@ -1277,42 +1277,6 @@ function App() {
     }
   }
 
-  async function recoverProxyConnection(event: FormEvent) {
-    event.preventDefault()
-    const link = proxyLinkDraft.trim()
-    if (!link) {
-      setError('لینک پراکسی را وارد کنید.')
-      return
-    }
-
-    setProxyBusy(true)
-    setError('')
-    try {
-      const added = await api<{ index: number }>('/api/telegram/transport/add-link', {
-        method: 'POST',
-        body: JSON.stringify({ link })
-      })
-      await api('/api/telegram/transport/select', {
-        method: 'POST',
-        body: JSON.stringify({ index: added.index })
-      })
-      const nextStatus = await api<Status>('/api/telegram/status')
-      setStatus(nextStatus)
-      if (nextStatus.authorized) {
-        const [nextDialogs, nextFolders] = await Promise.all([
-          api<Dialog[]>('/api/telegram/dialogs'),
-          api<DialogFolder[]>('/api/telegram/dialog-folders')
-        ])
-        setDialogs(nextDialogs)
-        setTelegramFolders(nextFolders)
-      }
-    } catch (caught) {
-      setError(errorMessage(caught, 'پراکسی اضافه شد یا اتصال برقرار نشد.'))
-    } finally {
-      setProxyBusy(false)
-    }
-  }
-
   async function sendCode(event: FormEvent) {
     event.preventDefault()
     const value = phone.trim()
