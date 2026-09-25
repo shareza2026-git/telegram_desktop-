@@ -93,6 +93,10 @@ type Status = {
   active_route?: string | null
   source_session_available: boolean
   client_session_exists: boolean
+  session_dc_id?: number | null
+  session_auth_key_present?: boolean
+  session_auth_key_bytes?: number
+  runtime_session_cloned?: boolean
   last_error?: string | null
 }
 
@@ -2110,6 +2114,21 @@ function App() {
                   onClick={() => void refreshProxySettings()}
                   title="Refresh ping"
                 >↻</button>
+              </div>
+
+              <div className="session-health-card">
+                <span className={status.session_auth_key_present ? 'session-health-dot ok' : 'session-health-dot bad'} />
+                <div>
+                  <strong>Telegram Session</strong>
+                  <small>
+                    {status.session_auth_key_present
+                      ? 'Auth key loaded'
+                        + (status.session_dc_id ? ' · DC ' + status.session_dc_id : '')
+                        + (status.session_auth_key_bytes ? ' · ' + status.session_auth_key_bytes + ' bytes' : '')
+                        + (status.runtime_session_cloned ? ' · runtime clone ready' : '')
+                      : 'Auth key not found in client.session'}
+                  </small>
+                </div>
               </div>
 
               <div className="auth-proxy-list">
