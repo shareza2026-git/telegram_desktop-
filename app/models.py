@@ -96,6 +96,10 @@ class ClientStatus(BaseModel):
     active_route: str | None = None
     source_session_available: bool = False
     client_session_exists: bool = False
+    session_dc_id: int | None = None
+    session_auth_key_present: bool = False
+    session_auth_key_bytes: int = 0
+    runtime_session_cloned: bool = False
     last_error: str | None = None
 
 
