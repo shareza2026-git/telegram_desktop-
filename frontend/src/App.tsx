@@ -311,6 +311,65 @@ function avatarUrl(chatId: number) {
 }
 
 
+function BackendImage({
+  src,
+  className = '',
+  alt = '',
+  loading = 'lazy',
+  onLoad,
+  onError
+}: {
+  src: string
+  className?: string
+  alt?: string
+  loading?: 'lazy' | 'eager'
+  onLoad?: () => void
+  onError?: () => void
+}) {
+  const [objectUrl, setObjectUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    let disposed = false
+    let currentUrl: string | null = null
+
+    async function load() {
+      try {
+        const response = await fetch(src, { cache: 'no-store' })
+        if (!response.ok) throw new Error('HTTP ' + response.status)
+        const blob = await response.blob()
+        if (!blob.size) throw new Error('Empty image')
+        currentUrl = URL.createObjectURL(blob)
+        if (disposed) {
+          URL.revokeObjectURL(currentUrl)
+          return
+        }
+        setObjectUrl(currentUrl)
+      } catch {
+        if (!disposed) onError?.()
+      }
+    }
+
+    setObjectUrl(null)
+    void load()
+    return () => {
+      disposed = true
+      if (currentUrl) URL.revokeObjectURL(currentUrl)
+    }
+  }, [src])
+
+  if (!objectUrl) return null
+  return (
+    <img
+      className={className}
+      src={objectUrl}
+      alt={alt}
+      loading={loading}
+      onLoad={onLoad}
+      onError={onError}
+    />
+  )
+}
+
 function ChatAvatar({ chatId, title, className = '' }: { chatId: number; title: string; className?: string }) {
   const [failed, setFailed] = useState(false)
 
@@ -322,7 +381,7 @@ function ChatAvatar({ chatId, title, className = '' }: { chatId: number; title: 
     <span className={'avatar ' + className}>
       <span className="avatar-fallback">{title.slice(0, 1)}</span>
       {!failed && (
-        <img
+        <BackendImage
           src={avatarUrl(chatId)}
           alt=""
           loading="lazy"
@@ -1580,7 +1639,7 @@ function App() {
       }
       return (
         <div className="media-photo-card">
-          <img
+          <BackendImage
             className="message-photo"
             src={mediaUrl(message)}
             alt={message.media.name || 'تصویر پیام'}
