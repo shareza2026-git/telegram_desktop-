@@ -784,3 +784,30 @@ html, body, button, input, select, textarea {
   opacity: 1;
   background: #2a9fd6;
 }
+
+
+/* Smooth native titlebar dragging */
+.app-titlebar {
+  cursor: default;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.titlebar-brand {
+  flex: 0 0 auto;
+}
+.titlebar-drag-fill {
+  min-width: 24px;
+  height: 100%;
+  flex: 1 1 auto;
+}
+.account-stack,
+.account-stack i,
+.telegram-logo,
+.app-title {
+  pointer-events: none;
+}
+.titlebar-menu,
+.window-controls,
+.window-controls button {
+  pointer-events: auto;
+}
