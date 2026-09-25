@@ -227,14 +227,18 @@ class TelegramDesktopService:
 
         target = self.settings.data_root / "settings.env"
         target.parent.mkdir(parents=True, exist_ok=True)
+        direct_allowed = self.settings.telegram_allow_direct or not self.transport.load()
         target.write_text(
-            f"TELEGRAM_API_ID={values.api_id}\nTELEGRAM_API_HASH={key}\n",
+            f"TELEGRAM_API_ID={values.api_id}\n"
+            f"TELEGRAM_API_HASH={key}\n"
+            f"TELEGRAM_ALLOW_DIRECT={'true' if direct_allowed else 'false'}\n",
             encoding="utf-8",
         )
 
         async with self._lifecycle_lock:
             self.settings.telegram_api_id = values.api_id
             self.settings.telegram_api_hash = SecretStr(key)
+            self.settings.telegram_allow_direct = direct_allowed
             self._unregister_handlers()
             if self.client is not None:
                 with suppress(Exception):
