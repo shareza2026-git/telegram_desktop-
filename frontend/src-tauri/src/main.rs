@@ -29,11 +29,7 @@ async fn open_chat_window(
         return Ok(());
     }
 
-    let encoded_title = urlencoding::encode(&title);
-    let path = format!(
-        "index.html?popout=1&chat={}&title={}",
-        chat_id, encoded_title
-    );
+    let path = format!("index.html?popout=1&chat={}", chat_id);
 
     WebviewWindowBuilder::new(&app, label, WebviewUrl::App(path.into()))
         .title(title)
