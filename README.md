@@ -278,3 +278,17 @@ notepad .env
 `setup-dev.ps1` requires Python 3.12, Node.js 22, Rust/Cargo and the normal Windows Tauri prerequisites. It creates an isolated `.venv`, installs the locked frontend dependencies, creates the ignored local `.env` file and runs the test/build checks. `run-dev.ps1` starts the FastAPI backend, waits for `/health`, opens the Tauri development window and stops the backend when the window exits.
 
 The `.env` file must keep `TELEGRAM_SESSION_PATH` and `TELEGRAM_DATABASE_PATH` under this client's `data/telegram_desktop` directory. Dashboard session, proxy and V2Ray paths are read-only inputs and must never be copied into Git.
+
+
+## Update-safe portable account state
+
+Packaged Windows builds separate replaceable application binaries from persistent Telegram state.
+
+1. Tauri's stable identifier `local.telegram.desktop` keeps the same per-user AppData directory across upgrades.
+2. Sessions, the local message database, downloads, runtime files and the canonical portable account bundle live under that AppData directory rather than beside replaceable program binaries.
+3. If `telegram-portable.json` exists beside the installed executable on the first run for a Windows profile, it is imported into `AppData/portable/telegram-portable.json`.
+4. The AppData copy becomes authoritative after bootstrap, so installing a newer NSIS build over the old version does not replace Telegram authorization or account state.
+5. When the external `telegram-portable.json` remains beside the executable, account additions/removals are mirrored back to it as well.
+6. A clean reinstall on another machine can bootstrap from the same external portable file as long as the contained Telegram authorization is still valid.
+
+Installing a newer signed/unsigned NSIS build over the existing current-user installation is therefore the supported manual upgrade path. A future in-app automatic updater can replace only the application binaries while reusing the same AppData contract; it must never package or overwrite the portable account bundle.
