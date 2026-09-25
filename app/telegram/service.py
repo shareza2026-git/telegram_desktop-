@@ -5,6 +5,8 @@ import mimetypes
 from datetime import datetime, timezone
 from typing import Any
 
+from pydantic import SecretStr
+
 from telethon import TelegramClient, events, functions, types, utils
 from telethon.errors import (
     FloodWaitError,
@@ -17,6 +19,7 @@ from telethon.errors import (
 
 from app.config import Settings
 from app.models import (
+    ApiConfigRequest,
     ChatInfo,
     ClientStatus,
     DeviceSession,
@@ -216,6 +219,48 @@ class TelegramDesktopService:
         self.status = self.status.model_copy(
             update={"connected": False, "authorized": False, "state": "PROXY_ERROR", "last_error": "All Telegram routes failed"}
         )
+
+    async def set_runtime_config(self, values: ApiConfigRequest) -> ClientStatus:
+        key = values.api_hash.strip()
+        if values.api_id < 1 or len(key) < 16:
+            raise DesktopError("API ID یا API Hash معتبر نیست.")
+
+        target = self.settings.data_root / "settings.env"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            f"TELEGRAM_API_ID={values.api_id}\nTELEGRAM_API_HASH={key}\n",
+            encoding="utf-8",
+        )
+
+        async with self._lifecycle_lock:
+            self.settings.telegram_api_id = values.api_id
+            self.settings.telegram_api_hash = SecretStr(key)
+            self._unregister_handlers()
+            if self.client is not None:
+                with suppress(Exception):
+                    await self.client.disconnect()
+            self.client = None
+            if self.route is not None:
+                with suppress(Exception):
+                    await self.route.deactivate()
+            self.route = None
+
+            info = self.sessions.info()
+            self.status = self.status.model_copy(
+                update={
+                    "configured": True,
+                    "connected": False,
+                    "authorized": False,
+                    "state": "CONNECTING",
+                    "client_session_exists": info.client_exists,
+                    "last_error": None,
+                }
+            )
+            await self._connect()
+            await self.events.publish(
+                {"type": "READY", "data": self.status.model_dump(mode="json")}
+            )
+            return self.status
 
     async def import_source(self) -> ClientStatus:
         if not self.settings.telegram_configured:
