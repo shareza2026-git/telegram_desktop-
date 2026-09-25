@@ -2440,15 +2440,15 @@ function App() {
                   >
                     ☺
                   </button>
+                  <button
+                    className={'send-button' + ((!draft.trim() && !pendingAttachments.length && !editing) ? ' voice-mode' : ' send-mode')}
+                    type="submit"
+                    aria-label={(!draft.trim() && !pendingAttachments.length && !editing) ? 'پیام صوتی' : 'ارسال'}
+                    disabled={composerBusy || uploadBusy || (!draft.trim() && !pendingAttachments.length)}
+                  >
+                    <span className="composer-action-icon" aria-hidden="true" />
+                  </button>
                 </div>
-                <button
-                  className={'send-button' + ((!draft.trim() && !pendingAttachments.length && !editing) ? ' voice-mode' : '')}
-                  type="submit"
-                  aria-label={(!draft.trim() && !pendingAttachments.length && !editing) ? 'پیام صوتی' : 'ارسال'}
-                  disabled={composerBusy || uploadBusy || (!draft.trim() && !pendingAttachments.length)}
-                >
-                  {editing ? '✓' : (!draft.trim() && !pendingAttachments.length ? '●' : '➤')}
-                </button>
               </form>
             </div>
           </>
