@@ -14,6 +14,7 @@ __pycache__/
 *.session-journal
 *.session-wal
 *.session-shm
+telegram-portable.json
 
 # Local Telegram desktop data
 data/telegram_desktop/*
