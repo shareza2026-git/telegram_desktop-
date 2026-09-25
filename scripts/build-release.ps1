@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Version = "0.1.11"
+    [string]$Version = "0.1.12"
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,15 +17,13 @@ $SidecarSource = Join-Path $RepoRoot "dist\telegram-desktop-backend.exe"
 $SidecarTarget = Join-Path $TauriRoot "binaries\telegram-desktop-backend-x86_64-pc-windows-msvc.exe"
 $BuildTemp = Join-Path $RepoRoot ".build-temp"
 $PytestTemp = Join-Path $RepoRoot ".pytest-release"
+$SessionSnapshotScript = Join-Path $RepoRoot "scripts\make-session-snapshot.py"
 
 if (-not (Test-Path $Python)) {
     throw "Python virtual environment is missing. Run .\scripts\setup-dev.ps1 first."
 }
 if (-not (Test-Path $SessionSeed)) {
     throw "Authorized Telegram session is missing at data\telegram_desktop\accounts\default\client.session."
-}
-if (-not (Test-Path $ApiSeedSource)) {
-    throw "Telegram API settings are missing at data\telegram_desktop\settings.env."
 }
 if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
     throw "npm is not installed."
@@ -101,8 +99,41 @@ New-Item -ItemType Directory -Force $ReleaseRoot | Out-Null
 
 $FinalInstaller = Join-Path $ReleaseRoot "Telegram-Desktop-Setup-$Version.exe"
 Copy-Item $Installer.FullName $FinalInstaller -Force
-Copy-Item $SessionSeed (Join-Path $ReleaseRoot "telegram-session.session") -Force
-Copy-Item $ApiSeedSource (Join-Path $ReleaseRoot "telegram-api.env") -Force
+
+$SessionSeedTarget = Join-Path $ReleaseRoot "telegram-session.session"
+& $Python $SessionSnapshotScript $SessionSeed $SessionSeedTarget
+if ($LASTEXITCODE -ne 0) {
+    throw "Telegram session snapshot failed or did not contain a usable authorization key."
+}
+
+$ApiSeedTarget = Join-Path $ReleaseRoot "telegram-api.env"
+if (Test-Path $ApiSeedSource) {
+    Copy-Item $ApiSeedSource $ApiSeedTarget -Force
+} elseif (Test-Path $LegacyPortableConfig) {
+    try {
+        $PortableApi = Get-Content $LegacyPortableConfig -Raw -Encoding UTF8 | ConvertFrom-Json
+        $ApiId = [string]$PortableApi.api.id
+        $ApiHash = [string]$PortableApi.api.hash
+        if (-not $ApiId -or -not $ApiHash) {
+            throw "api.id or api.hash is missing"
+        }
+        $ApiLines = @(
+            "TELEGRAM_API_ID=$ApiId",
+            "TELEGRAM_API_HASH=$ApiHash",
+            "TELEGRAM_ALLOW_DIRECT=false"
+        ) -join [Environment]::NewLine
+        $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllText(
+            $ApiSeedTarget,
+            $ApiLines + [Environment]::NewLine,
+            $Utf8NoBom
+        )
+    } catch {
+        throw "Could not create telegram-api.env from local Telegram configuration: $($_.Exception.Message)"
+    }
+} else {
+    throw "Telegram API settings were not found locally."
+}
 
 # Carry currently working proxy routes without committing them to Git.
 # If the old local portable bundle exists, extract only its proxy list for this release.
@@ -143,8 +174,9 @@ Telegram Desktop release package
 5. xray.exe is copied automatically when present beside the installer.
 
 Security:
-- telegram-session.session authorizes the Telegram account. Keep it private.
-- The session is not committed to Git and is copied from the current local client only when building this release.
+- telegram-session.session and telegram-api.env are private account credentials. Keep them private.
+- The session seed is created as a consistent SQLite snapshot and validated during the local build.
+- Local credential files are not committed to Git.
 "@
 Set-Content -Path (Join-Path $ReleaseRoot "README.txt") -Value $Readme -Encoding UTF8
 
