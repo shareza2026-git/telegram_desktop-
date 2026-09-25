@@ -2,16 +2,56 @@
 
 #[cfg(not(debug_assertions))]
 use std::sync::Mutex;
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 #[cfg(not(debug_assertions))]
-use tauri::{Manager, RunEvent};
+use tauri::RunEvent;
 #[cfg(not(debug_assertions))]
 use tauri_plugin_shell::{process::CommandChild, ShellExt};
 
 #[cfg(not(debug_assertions))]
 struct BackendProcess(Mutex<Option<CommandChild>>);
 
+#[tauri::command]
+async fn open_chat_window(
+    app: tauri::AppHandle,
+    chat_id: i64,
+    title: String,
+) -> Result<(), String> {
+    let label = if chat_id < 0 {
+        format!("chat-n{}", chat_id.unsigned_abs())
+    } else {
+        format!("chat-{}", chat_id)
+    };
+
+    if let Some(window) = app.get_webview_window(&label) {
+        window.show().map_err(|error| error.to_string())?;
+        window.set_focus().map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+
+    let encoded_title = urlencoding::encode(&title);
+    let path = format!(
+        "index.html?popout=1&chat={}&title={}",
+        chat_id, encoded_title
+    );
+
+    WebviewWindowBuilder::new(&app, label, WebviewUrl::App(path.into()))
+        .title(title)
+        .inner_size(760.0, 720.0)
+        .min_inner_size(520.0, 420.0)
+        .resizable(true)
+        .decorations(false)
+        .center()
+        .build()
+        .map_err(|error| error.to_string())?;
+
+    Ok(())
+}
+
 fn main() {
-    let builder = tauri::Builder::default().plugin(tauri_plugin_shell::init());
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
+        .invoke_handler(tauri::generate_handler![open_chat_window]);
 
     #[cfg(not(debug_assertions))]
     let builder = builder.setup(|app| {
