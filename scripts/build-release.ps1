@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Version = "0.1.5"
+    [string]$Version = "0.1.6"
 )
 
 $ErrorActionPreference = "Stop"
@@ -106,7 +106,13 @@ if (Test-Path $LegacyPortableConfig) {
         $Portable = Get-Content $LegacyPortableConfig -Raw -Encoding UTF8 | ConvertFrom-Json
         if ($Portable.proxies -and $Portable.proxies.Count -gt 0) {
             $ProxySeed = [ordered]@{ proxies = @($Portable.proxies) }
-            $ProxySeed | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $ReleaseRoot "telegram-proxies.json") -Encoding UTF8
+            $ProxyJson = $ProxySeed | ConvertTo-Json -Depth 10
+            $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllText(
+                (Join-Path $ReleaseRoot "telegram-proxies.json"),
+                $ProxyJson,
+                $Utf8NoBom
+            )
         }
     } catch {
         Write-Warning "Could not extract proxy routes from telegram-portable.json: $($_.Exception.Message)"
