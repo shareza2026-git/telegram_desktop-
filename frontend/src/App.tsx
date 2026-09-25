@@ -872,18 +872,20 @@ function App() {
   function beginSidebarResize(event: ReactMouseEvent<HTMLDivElement>) {
     event.preventDefault()
     sidebarResizeRef.current = { startX: event.clientX, startWidth: sidebarWidth }
+    let latestWidth = sidebarWidth
 
     const handleMove = (moveEvent: MouseEvent) => {
       const resize = sidebarResizeRef.current
       if (!resize) return
       const maxWidth = Math.min(420, Math.max(250, window.innerWidth - 280))
       const nextWidth = Math.max(250, Math.min(maxWidth, resize.startWidth + (moveEvent.clientX - resize.startX)))
+      latestWidth = nextWidth
       setSidebarWidth(nextWidth)
     }
 
     const handleUp = () => {
       sidebarResizeRef.current = null
-      window.localStorage.setItem('telegram-sidebar-width', String(sidebarWidth))
+      window.localStorage.setItem('telegram-sidebar-width', String(latestWidth))
       window.removeEventListener('mousemove', handleMove)
       window.removeEventListener('mouseup', handleUp)
       document.body.classList.remove('sidebar-resizing')
