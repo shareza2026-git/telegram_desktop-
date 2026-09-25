@@ -7,11 +7,13 @@ from app.config import Settings, get_settings
 from app.storage import ChatStore
 from app.telegram.service import TelegramDesktopService
 from app.telegram.transport import TransportCatalog
+from app.telegram.portable import apply_portable_config
 from app.api.routes import router
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     active_settings = settings or get_settings()
+    apply_portable_config(active_settings)
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
