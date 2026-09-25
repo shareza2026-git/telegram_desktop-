@@ -295,6 +295,20 @@ class TelegramDesktopService:
                 self.client.remove_event_handler(callback, builder)
         self.handlers.clear()
 
+    def _persist_message_background(self, message: Message) -> None:
+        async def persist() -> None:
+            try:
+                await self.store.upsert_message(message)
+            except Exception:
+                logger.warning(
+                    "Live message persistence failed for chat=%s message=%s",
+                    message.chat_id,
+                    message.message_id,
+                    exc_info=True,
+                )
+
+        asyncio.create_task(persist())
+
     @staticmethod
     def _as_utc(value: datetime | None) -> datetime:
         if value is None:
@@ -463,15 +477,15 @@ class TelegramDesktopService:
         if event.chat_id is None:
             return
         message = self._message_model(event.message, int(event.chat_id))
-        await self.store.upsert_message(message)
         await self.events.publish({"type": "MESSAGE_NEW", "data": message.model_dump(mode="json")})
+        self._persist_message_background(message)
 
     async def _on_edit(self, event: Any) -> None:
         if event.chat_id is None:
             return
         message = self._message_model(event.message, int(event.chat_id), edited=True)
-        await self.store.upsert_message(message)
         await self.events.publish({"type": "MESSAGE_EDITED", "data": message.model_dump(mode="json")})
+        self._persist_message_background(message)
 
     async def _on_user_update(self, event: Any) -> None:
         if event.chat_id is None or event.action is None:
