@@ -4,6 +4,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile, W
 from fastapi.responses import FileResponse
 
 from app.models import (
+    ApiConfigRequest,
     DesktopError,
     DialogStateRequest,
     EditMessageRequest,
@@ -34,6 +35,14 @@ def error_response(error: Exception) -> HTTPException:
 @router.get("/api/telegram/status")
 async def status(request: Request):
     return service(request).status
+
+
+@router.post("/api/telegram/runtime-config")
+async def runtime_config(values: ApiConfigRequest, request: Request):
+    try:
+        return await service(request).set_runtime_config(values)
+    except (DesktopError, ValueError) as exc:
+        raise error_response(exc) from None
 
 
 @router.get("/api/telegram/transport")
