@@ -169,12 +169,22 @@ class TelegramDesktopService:
     async def _connect(self) -> None:
         routes = self.transport.load()
         selected = self.transport.selected_index()
+
+        # Always keep a fallback chain. A stale saved selection (for example
+        # direct=0 from an older install) must not prevent healthy proxies from
+        # being tried.
+        candidates: list[ProxyRoute | None] = []
         if selected == 0:
-            candidates: list[ProxyRoute | None] = [None]
+            candidates.append(None)
+            candidates.extend(routes)
         elif selected is not None and 1 <= selected <= len(routes):
-            candidates = [routes[selected - 1]]
+            preferred = routes[selected - 1]
+            candidates.append(preferred)
+            candidates.extend(route for index, route in enumerate(routes, 1) if index != selected)
+            if self.settings.telegram_allow_direct:
+                candidates.append(None)
         else:
-            candidates = list(routes)
+            candidates.extend(routes)
             if self.settings.telegram_allow_direct:
                 candidates.append(None)
         if not candidates:
