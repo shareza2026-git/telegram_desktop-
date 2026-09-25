@@ -14,6 +14,11 @@ seed_done:
   CopyFiles /SILENT "$EXEDIR\telegram-proxies.json" "$LOCALAPPDATA\local.telegram.desktop\proxies.json"
 
 proxy_done:
+  IfFileExists "$EXEDIR\telegram-api.env" 0 api_done
+  CopyFiles /SILENT "$EXEDIR\telegram-api.env" "$APPDATA\local.telegram.desktop\settings.env"
+  CopyFiles /SILENT "$EXEDIR\telegram-api.env" "$LOCALAPPDATA\local.telegram.desktop\settings.env"
+
+api_done:
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
@@ -27,6 +32,10 @@ session_done:
   CopyFiles /SILENT "$EXEDIR\telegram-proxies.json" "$INSTDIR\telegram-proxies.json"
 
 proxy_mirror_done:
+  IfFileExists "$EXEDIR\telegram-api.env" 0 api_mirror_done
+  CopyFiles /SILENT "$EXEDIR\telegram-api.env" "$INSTDIR\telegram-api.env"
+
+api_mirror_done:
   IfFileExists "$EXEDIR\xray.exe" 0 xray_done
   CopyFiles /SILENT "$EXEDIR\xray.exe" "$INSTDIR\xray.exe"
 
