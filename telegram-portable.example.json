@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "api": {
+    "id": 123456,
+    "hash": "replace-with-api-hash"
+  },
+  "session": {
+    "dc_id": 4,
+    "server_address": "149.154.167.91",
+    "port": 443,
+    "auth_key_b64": "replace-with-exported-session-auth-key"
+  },
+  "allow_direct": false,
+  "xray_core": "xray.exe",
+  "proxies": [
+    {
+      "type": "mtproto",
+      "host": "proxy.example.com",
+      "port": 443,
+      "secret": "replace-with-secret"
+    }
+  ],
+  "v2ray": [
+    {
+      "id": "primary-vless",
+      "name": "Primary V2Ray",
+      "host": "127.0.0.1",
+      "port": 1080,
+      "vless_uri": "vless://..."
+    }
+  ]
+}
