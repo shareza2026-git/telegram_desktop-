@@ -66,6 +66,14 @@ async def dialogs(request: Request, search: str | None = None):
         raise error_response(exc) from None
 
 
+@router.get("/api/telegram/dialog-folders")
+async def dialog_folders(request: Request):
+    try:
+        return await service(request).list_dialog_folders()
+    except DesktopError as exc:
+        raise error_response(exc) from None
+
+
 @router.post("/api/telegram/chats/{chat_id}/pin")
 async def set_dialog_pinned(chat_id: int, values: DialogStateRequest, request: Request):
     try:
