@@ -50,6 +50,34 @@ fn main() {
             }
         }
 
+        // Seed proxy routes from a local release package when available.
+        // This keeps proxy credentials out of Git while allowing a locally built
+        // package to carry the working routes to another Windows profile.
+        let target_proxies = data_root.join("proxies.json");
+        if !target_proxies.is_file() {
+            let executable = std::env::current_exe()?;
+            let executable_dir = executable
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .to_path_buf();
+
+            let mut proxy_candidates = vec![
+                executable_dir.join("telegram-proxies.json"),
+            ];
+            if let Ok(current_dir) = std::env::current_dir() {
+                proxy_candidates.push(current_dir.join("telegram-proxies.json"));
+            }
+            if let Some(profile) = std::env::var_os("USERPROFILE") {
+                let profile = std::path::PathBuf::from(profile);
+                proxy_candidates.push(profile.join("Downloads").join("telegram-proxies.json"));
+                proxy_candidates.push(profile.join("Desktop").join("telegram-proxies.json"));
+            }
+
+            if let Some(source) = proxy_candidates.into_iter().find(|path| path.is_file()) {
+                std::fs::copy(source, &target_proxies)?;
+            }
+        }
+
         let data_root_arg = data_root.to_string_lossy().into_owned();
 
         let sidecar = app
