@@ -1621,3 +1621,57 @@ body.sidebar-resizing * {
 }
 .session-health-dot.ok { background: #4fd27f; }
 .session-health-dot.bad { background: #ef6b6b; }
+
+
+/* Dialog context menu + separate chat window */
+.dialog-context-menu {
+  position: fixed;
+  z-index: 120;
+  width: 210px;
+  padding: 6px;
+  color: #e8f1f7;
+  background: #172734;
+  border: 1px solid #30495a;
+  border-radius: 10px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, .34);
+  direction: ltr;
+}
+.dialog-context-menu button {
+  width: 100%;
+  min-height: 38px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: inherit;
+  background: transparent;
+  border-radius: 7px;
+  text-align: left;
+}
+.dialog-context-menu button:hover {
+  background: #243b4c;
+}
+.dialog-context-menu span {
+  color: #67c9ef;
+  font-size: 17px;
+}
+
+.telegram-shell.popout-mode {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+.telegram-shell.popout-mode .chat-sidebar,
+.telegram-shell.popout-mode .sidebar-resizer,
+.telegram-shell.popout-mode .info-panel,
+.telegram-shell.popout-mode .main-menu-backdrop {
+  display: none !important;
+}
+.telegram-shell.popout-mode .chat-panel {
+  grid-column: 1 !important;
+}
+.telegram-shell.popout-mode .app-titlebar {
+  grid-column: 1 !important;
+}
+.telegram-shell.popout-mode .titlebar-brand {
+  width: auto !important;
+  min-width: 160px;
+}
