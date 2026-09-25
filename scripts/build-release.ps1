@@ -13,6 +13,8 @@ $PortableConfig = Join-Path $RepoRoot "telegram-portable.json"
 $ReleaseRoot = Join-Path $RepoRoot "release"
 $SidecarSource = Join-Path $RepoRoot "dist\telegram-desktop-backend.exe"
 $SidecarTarget = Join-Path $TauriRoot "binaries\telegram-desktop-backend-x86_64-pc-windows-msvc.exe"
+$BuildTemp = Join-Path $RepoRoot ".build-temp"
+$PytestTemp = Join-Path $RepoRoot ".pytest-release"
 
 if (-not (Test-Path $Python)) {
     throw "Python virtual environment is missing. Run .\scripts\setup-dev.ps1 first."
@@ -29,18 +31,33 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
 
 Write-Host "Preparing Telegram Desktop release $Version ..." -ForegroundColor Cyan
 
+# Avoid Windows user Temp ACL issues (for example pytest-of-IT access denied).
+# Keep all release temporary files inside the repository instead.
+foreach ($Path in @($BuildTemp, $PytestTemp)) {
+    if (Test-Path $Path) {
+        Remove-Item $Path -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    New-Item -ItemType Directory -Force $Path | Out-Null
+}
+$PreviousTemp = $env:TEMP
+$PreviousTmp = $env:TMP
+$env:TEMP = $BuildTemp
+$env:TMP = $BuildTemp
+
 Push-Location $RepoRoot
 try {
     & $Python -m pip install -e ".[test,package]"
     if ($LASTEXITCODE -ne 0) { throw "Backend dependencies failed to install." }
 
-    & $Python -m pytest -q
+    & $Python -m pytest -q --basetemp $PytestTemp
     if ($LASTEXITCODE -ne 0) { throw "Backend tests failed." }
 
     & $Python -m PyInstaller --noconfirm --clean --onefile --name telegram-desktop-backend --collect-all uvicorn app/desktop.py
     if ($LASTEXITCODE -ne 0) { throw "Backend sidecar build failed." }
 } finally {
     Pop-Location
+    $env:TEMP = $PreviousTemp
+    $env:TMP = $PreviousTmp
 }
 
 New-Item -ItemType Directory -Force (Split-Path -Parent $SidecarTarget) | Out-Null
