@@ -32,6 +32,7 @@ from app.storage import ChatStore
 from app.telegram.client import build_client
 from app.telegram.media import DownloadedMedia, media_path, safe_media_name
 from app.telegram.profile import chat_photo_path, is_fresh_chat_photo
+from app.telegram.portable import remove_account_from_portable, sync_account_to_portable
 from app.telegram.session import SessionManager
 from app.telegram.session_import import SessionImporter
 from app.telegram.transport import ProxyRoute, TransportCatalog
@@ -280,6 +281,15 @@ class TelegramDesktopService:
                 "client_session_exists": True,
             }
         )
+        try:
+            sync_account_to_portable(
+                self.settings,
+                user_id=int(account.id),
+                display_name=self.status.display_name,
+                phone=self.status.phone,
+            )
+        except Exception:
+            logger.warning("Portable account bundle could not be updated", exc_info=True)
 
     def _register_handlers(self) -> None:
         if self.client is None or self.handlers:
@@ -1230,6 +1240,7 @@ class TelegramDesktopService:
         return {"code_sent": True, "requires_2fa": False, "authorized": True}
 
     async def logout(self) -> None:
+        logged_out_user_id = self.status.user_id
         self._unregister_handlers()
         if self.client is not None:
             try:
@@ -1244,6 +1255,10 @@ class TelegramDesktopService:
         self.login_phone = None
         self.login_code_hash = None
         self.sessions.remove_client_session()
+        try:
+            remove_account_from_portable(self.settings, logged_out_user_id)
+        except Exception:
+            logger.warning("Portable account bundle could not remove logged-out account", exc_info=True)
         info = self.sessions.info()
         self.status = ClientStatus(
             configured=self.settings.telegram_configured,
