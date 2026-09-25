@@ -2298,32 +2298,40 @@ function App() {
               <form className="composer" ref={composerFormRef} onSubmit={sendMessage}>
                 <button
                   type="button"
-                  className="icon-button"
+                  className="composer-attach"
                   aria-label="ارسال عکس یا فایل"
+                  title="پیوست"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={uploadBusy || editing !== null}
                 >
-                  ＋
+                  📎
                 </button>
+                <div className="composer-input-shell">
+                  <input
+                    ref={composerInputRef}
+                    value={draft}
+                    onChange={event => setDraft(event.target.value)}
+                    onPaste={handleComposerPaste}
+                    placeholder={editing ? 'ویرایش پیام...' : replyingTo ? 'کپشن یا پاسخ...' : 'Message'}
+                    disabled={uploadBusy}
+                  />
+                  <button
+                    type="button"
+                    className={'composer-emoji' + (mediaPanel ? ' active' : '')}
+                    aria-label="ایموجی، استیکر و GIF"
+                    onClick={() => openMediaPanel(mediaPanel || 'emoji')}
+                    disabled={uploadBusy || editing !== null}
+                  >
+                    ☺
+                  </button>
+                </div>
                 <button
-                  type="button"
-                  className={'icon-button' + (mediaPanel ? ' active' : '')}
-                  aria-label="ایموجی، استیکر و GIF"
-                  onClick={() => openMediaPanel(mediaPanel || 'emoji')}
-                  disabled={uploadBusy || editing !== null}
+                  className={'send-button' + ((!draft.trim() && !pendingAttachments.length && !editing) ? ' voice-mode' : '')}
+                  type="submit"
+                  aria-label={(!draft.trim() && !pendingAttachments.length && !editing) ? 'پیام صوتی' : 'ارسال'}
+                  disabled={composerBusy || uploadBusy || (!draft.trim() && !pendingAttachments.length)}
                 >
-                  ☺
-                </button>
-                <input
-                  ref={composerInputRef}
-                  value={draft}
-                  onChange={event => setDraft(event.target.value)}
-                  onPaste={handleComposerPaste}
-                  placeholder={editing ? 'ویرایش پیام...' : replyingTo ? 'کپشن یا پاسخ...' : 'پیام یا کپشن فایل...'}
-                  disabled={uploadBusy}
-                />
-                <button className="send-button" type="submit" disabled={composerBusy || uploadBusy || (!draft.trim() && !pendingAttachments.length)}>
-                  {editing ? '✓' : '➤'}
+                  {editing ? '✓' : (!draft.trim() && !pendingAttachments.length ? '●' : '➤')}
                 </button>
               </form>
             </div>
