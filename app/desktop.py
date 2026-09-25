@@ -34,6 +34,10 @@ def main() -> None:
         "TELEGRAM_DATABASE_PATH",
         str(data_root / "accounts" / "default" / "client.db"),
     )
+    os.environ.setdefault(
+        "TELEGRAM_PROXY_CONFIG",
+        str(data_root / "proxies.json"),
+    )
 
     import uvicorn
     from app.main import app
