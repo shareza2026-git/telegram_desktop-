@@ -348,6 +348,9 @@ function App() {
   const [password, setPassword] = useState('')
   const [authBusy, setAuthBusy] = useState(false)
   const [authNotice, setAuthNotice] = useState('')
+  const [apiIdDraft, setApiIdDraft] = useState('')
+  const [apiHashDraft, setApiHashDraft] = useState('')
+  const [runtimeConfigBusy, setRuntimeConfigBusy] = useState(false)
   const [activeFolder, setActiveFolder] = useState<FolderKey>('all')
   const [telegramFolders, setTelegramFolders] = useState<DialogFolder[]>([])
   const [sidebarWidth, setSidebarWidth] = useState(() => Number(window.localStorage.getItem('telegram-sidebar-width')) || 312)
@@ -1179,6 +1182,49 @@ function App() {
     }
   }
 
+  async function saveRuntimeConfig(event: FormEvent) {
+    event.preventDefault()
+    const apiId = Number(apiIdDraft.trim())
+    const apiHash = apiHashDraft.trim()
+    if (!Number.isInteger(apiId) || apiId < 1 || apiHash.length < 16) {
+      setError('API ID یا API Hash معتبر نیست.')
+      return
+    }
+
+    setRuntimeConfigBusy(true)
+    setError('')
+    try {
+      if (proxyLinkDraft.trim()) {
+        const added = await api<{ index: number }>('/api/telegram/transport/add-link', {
+          method: 'POST',
+          body: JSON.stringify({ link: proxyLinkDraft.trim() })
+        })
+        await api('/api/telegram/transport/select', {
+          method: 'POST',
+          body: JSON.stringify({ index: added.index })
+        })
+      }
+
+      const nextStatus = await api<Status>('/api/telegram/runtime-config', {
+        method: 'POST',
+        body: JSON.stringify({ api_id: apiId, api_hash: apiHash })
+      })
+      setStatus(nextStatus)
+      if (nextStatus.authorized) {
+        const [nextDialogs, nextFolders] = await Promise.all([
+          api<Dialog[]>('/api/telegram/dialogs'),
+          api<DialogFolder[]>('/api/telegram/dialog-folders')
+        ])
+        setDialogs(nextDialogs)
+        setTelegramFolders(nextFolders)
+      }
+    } catch (caught) {
+      setError(errorMessage(caught, 'ذخیره تنظیمات و اتصال انجام نشد.'))
+    } finally {
+      setRuntimeConfigBusy(false)
+    }
+  }
+
   async function sendCode(event: FormEvent) {
     event.preventDefault()
     const value = phone.trim()
@@ -1960,7 +2006,43 @@ function App() {
           )}
 
           {status.state === 'UNCONFIGURED' ? (
-            <p className="muted">ابتدا API ID و API Hash را در فایل تنظیمات محلی وارد کنید.</p>
+            <form className="auth-form setup-form" onSubmit={saveRuntimeConfig}>
+              <p className="muted">سشن آماده است. فقط اطلاعات API را یک‌بار وارد کنید.</p>
+              <label className="auth-field">
+                <span>API ID</span>
+                <input
+                  value={apiIdDraft}
+                  onChange={event => setApiIdDraft(event.target.value.replace(/\D/g, ''))}
+                  placeholder="12345678"
+                  inputMode="numeric"
+                  dir="ltr"
+                  autoFocus
+                />
+              </label>
+              <label className="auth-field">
+                <span>API Hash</span>
+                <input
+                  value={apiHashDraft}
+                  onChange={event => setApiHashDraft(event.target.value.trim())}
+                  placeholder="0123456789abcdef..."
+                  dir="ltr"
+                  autoComplete="off"
+                />
+              </label>
+              <label className="auth-field">
+                <span>Proxy Link <small>(اختیاری)</small></span>
+                <input
+                  value={proxyLinkDraft}
+                  onChange={event => setProxyLinkDraft(event.target.value)}
+                  placeholder="tg://proxy?... or https://t.me/proxy?..."
+                  dir="ltr"
+                  autoComplete="off"
+                />
+              </label>
+              <button className="primary-action auth-submit" type="submit" disabled={runtimeConfigBusy}>
+                {runtimeConfigBusy ? 'در حال اتصال…' : 'ذخیره و اتصال'}
+              </button>
+            </form>
           ) : (
             <form className="auth-form" onSubmit={authStep === 'phone' ? sendCode : authStep === 'code' ? verifyCode : verifyPassword}>
               {authStep === 'phone' && (
