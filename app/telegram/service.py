@@ -303,12 +303,15 @@ class TelegramDesktopService:
 
     @staticmethod
     def _sender_name(message: Any) -> str | None:
+        post_author = getattr(message, "post_author", None)
+        if post_author:
+            return str(post_author)
         sender = getattr(message, "sender", None)
         if sender is None:
-            return getattr(message, "post_author", None)
+            return None
         title = getattr(sender, "title", None)
         name = " ".join(filter(None, [getattr(sender, "first_name", None), getattr(sender, "last_name", None)]))
-        return name or title or getattr(sender, "username", None) or getattr(message, "post_author", None)
+        return name or title or getattr(sender, "username", None)
 
     @staticmethod
     def _media(message: Any) -> MediaInfo | None:
@@ -735,7 +738,7 @@ class TelegramDesktopService:
                     id=folder_id,
                     title=title,
                     chat_ids=ordered_ids,
-                    unread_count=sum(item.unread_count for item in values),
+                    unread_count=sum(1 for item in values if item.unread_count > 0),
                 )
             )
         return folders
