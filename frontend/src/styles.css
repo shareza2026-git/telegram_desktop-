@@ -811,3 +811,102 @@ html, body, button, input, select, textarea {
 .window-controls button {
   pointer-events: auto;
 }
+
+
+/* Telegram Desktop side menu match */
+.main-menu-backdrop {
+  background: rgba(0,0,0,.05);
+}
+.main-menu-drawer {
+  width: 264px;
+  background: #fff;
+  border-right: 1px solid #d9d9d9;
+  box-shadow: 5px 0 18px rgba(0,0,0,.16);
+  scrollbar-width: none;
+}
+.main-menu-drawer::-webkit-scrollbar { display: none; }
+
+.menu-account {
+  min-height: 104px;
+  padding: 14px 14px 10px;
+  grid-template-columns: 50px minmax(0,1fr) 26px;
+  grid-template-rows: 28px 24px;
+  column-gap: 10px;
+  background: #fff;
+}
+.menu-account .avatar.menu-profile-photo {
+  width: 48px;
+  height: 48px;
+  flex-basis: 48px;
+  font-size: 18px;
+}
+.menu-account strong {
+  align-self: end;
+  color: #202124;
+  font-size: 14px;
+  font-weight: 600;
+}
+.menu-account small {
+  align-self: start;
+  color: #6e7478;
+  font-size: 11px;
+}
+.menu-night {
+  top: 13px;
+  right: 12px;
+  width: 28px;
+  height: 28px;
+  color: #4f565a;
+  font-size: 21px;
+}
+.menu-night:hover { background: #eef2f3; }
+
+.menu-chevron {
+  right: 14px;
+  bottom: 15px;
+  color: #62686c;
+  font-size: 13px;
+}
+
+.main-menu-drawer hr {
+  margin: 7px 10px;
+  border-top: 1px solid #e5e5e5;
+}
+
+.menu-item {
+  height: 41px;
+  padding: 0 15px 0 14px;
+  gap: 14px;
+  color: #272b2e;
+  background: #fff;
+  text-align: left;
+}
+.menu-item:hover {
+  background: #f2f3f4;
+}
+.menu-item i {
+  width: 22px;
+  flex: 0 0 22px;
+  color: #353b3f;
+  font-size: 18px;
+  line-height: 1;
+}
+.menu-item span {
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.menu-item.active {
+  background: #fff;
+}
+.menu-item.active:hover {
+  background: #f2f3f4;
+}
+.menu-item.active::before {
+  left: 0;
+  top: 7px;
+  bottom: 7px;
+  width: 3px;
+  background: #2a9fd6;
+  border-radius: 0 2px 2px 0;
+}
