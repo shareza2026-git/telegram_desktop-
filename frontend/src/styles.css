@@ -1356,3 +1356,230 @@ body.sidebar-resizing * {
   background: #fff;
   transform: rotate(-1deg);
 }
+
+
+/* Proxy recovery screen shown before authorization when Telegram routes fail */
+.proxy-recovery-card {
+  width: min(560px, calc(100vw - 36px));
+  max-height: calc(100vh - 42px);
+  padding: 28px 26px 24px;
+  overflow: auto;
+}
+.proxy-recovery-card .brand-mark {
+  width: 58px;
+  height: 58px;
+  font-size: 29px;
+}
+.proxy-recovery-card h1 {
+  margin-top: 10px;
+  font-size: 22px;
+}
+.auth-proxy-manager {
+  margin-top: 18px;
+  direction: ltr;
+  text-align: left;
+}
+.auth-proxy-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 2px 10px;
+}
+.auth-proxy-title > div {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.auth-proxy-title strong {
+  color: #f1f7fb;
+  font-size: 17px;
+  font-weight: 600;
+}
+.auth-proxy-title small {
+  color: #8ca5b7;
+  font-size: 10px;
+}
+.proxy-refresh-button {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  display: grid;
+  place-items: center;
+  color: #86cfee;
+  background: #203342;
+  border: 1px solid #324d60;
+  border-radius: 50%;
+  font-size: 20px;
+}
+.proxy-refresh-button:hover { background: #284358; }
+.proxy-refresh-button:disabled { opacity: .55; cursor: wait; }
+
+.auth-proxy-list,
+.auth-proxy-connections {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.auth-proxy-row {
+  width: 100%;
+  min-height: 56px;
+  padding: 9px 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #eaf2f8;
+  background: #132230;
+  border: 1px solid #2d4556;
+  border-radius: 10px;
+  text-align: left;
+}
+.auth-proxy-row:hover {
+  background: #182a39;
+  border-color: #3d6076;
+}
+.auth-proxy-row:disabled {
+  cursor: wait;
+  opacity: .65;
+}
+.auth-proxy-row.selected-route {
+  border-color: #2aabee;
+  box-shadow: inset 0 0 0 1px #2aabee33;
+}
+.auth-proxy-row.add {
+  margin-top: 2px;
+  color: #79cff2;
+}
+.auth-proxy-row .proxy-radio {
+  border-color: #6d8494;
+  background: transparent;
+}
+.auth-proxy-row .proxy-radio.selected {
+  border-color: #2aabee;
+  background: #172434;
+}
+.auth-proxy-row .proxy-plus {
+  color: #2aabee;
+}
+.auth-proxy-copy {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.auth-proxy-copy strong {
+  overflow: hidden;
+  color: #eef6fb;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.auth-proxy-copy small {
+  overflow: hidden;
+  color: #849bab;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.auth-proxy-ping {
+  flex: 0 0 auto;
+  padding-left: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.auth-proxy-ping.ok { color: #55d78a; }
+.auth-proxy-ping.bad { color: #f17676; }
+.auth-proxy-ping.checking { color: #8ca5b7; }
+
+.auth-proxy-add {
+  display: flex;
+  gap: 7px;
+  margin: 2px 0 4px;
+}
+.auth-proxy-add input {
+  min-width: 0;
+  height: 39px;
+  flex: 1;
+  padding: 0 10px;
+  outline: 0;
+  color: #ecf5fb;
+  background: #10202d;
+  border: 1px solid #334e61;
+  border-radius: 9px;
+  font-size: 10px;
+}
+.auth-proxy-add input:focus {
+  border-color: #2aabee;
+  box-shadow: 0 0 0 3px #2aabee1f;
+}
+.auth-proxy-add button {
+  min-width: 62px;
+  padding: 0 12px;
+  color: #fff;
+  background: #2aabee;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.auth-proxy-add button:disabled { opacity: .55; cursor: wait; }
+
+.auth-proxy-section-title {
+  margin: 18px 2px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #9cb1bf;
+  font-size: 11px;
+  font-weight: 600;
+}
+.auth-proxy-section-title small {
+  margin: 0;
+  padding: 2px 7px;
+  color: #8ccfed;
+  background: #203643;
+  border-radius: 10px;
+}
+.auth-proxy-empty {
+  padding: 16px 12px;
+  color: #849baa;
+  background: #132230;
+  border: 1px dashed #304a5c;
+  border-radius: 10px;
+  font-size: 11px;
+  line-height: 1.7;
+  text-align: center;
+  direction: rtl;
+}
+.auth-proxy-footer {
+  margin-top: 12px;
+}
+.auth-proxy-footer button {
+  width: 100%;
+  height: 39px;
+  color: #dff5ff;
+  background: #214257;
+  border: 1px solid #35637d;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.auth-proxy-footer button:hover { background: #28506a; }
+.auth-proxy-footer button:disabled { opacity: .6; cursor: wait; }
+
+@media (max-height: 720px) {
+  .proxy-recovery-card {
+    padding-top: 18px;
+  }
+  .proxy-recovery-card .brand-mark {
+    width: 46px;
+    height: 46px;
+    font-size: 24px;
+  }
+  .proxy-recovery-card h1 {
+    margin: 7px 0 4px;
+  }
+}
