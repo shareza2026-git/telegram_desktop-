@@ -6,6 +6,7 @@ from pathlib import Path
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Telegram Desktop local backend")
     parser.add_argument("--data-root", required=True, help="Writable private client data directory")
+    parser.add_argument("--transfer-dir", help="Directory for portable transfer files")
     parser.add_argument("--portable-config", help="Canonical writable portable Telegram bundle")
     parser.add_argument("--portable-mirror", help="Optional external mirror of the portable Telegram bundle")
     return parser.parse_args()
@@ -22,6 +23,8 @@ def main() -> None:
 
     load_dotenv(data_root / "settings.env", override=False)
     os.environ["TELEGRAM_CLIENT_DATA_ROOT"] = str(data_root)
+    if args.transfer_dir:
+        os.environ["TELEGRAM_TRANSFER_DIR"] = str(Path(args.transfer_dir).expanduser().resolve())
     if args.portable_config:
         os.environ["TELEGRAM_PORTABLE_CONFIG"] = str(Path(args.portable_config).expanduser().resolve())
     if args.portable_mirror:
