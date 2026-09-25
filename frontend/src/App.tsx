@@ -136,8 +136,15 @@ type TransportStatus = {
     port: number
     managed_v2ray: boolean
     name: string
+    selected?: boolean
   }>
   allow_direct: boolean
+}
+
+type ProxyProbe = {
+  index: number
+  available: boolean
+  latency_ms?: number | null
 }
 
 type AuthResponse = {
@@ -390,6 +397,11 @@ function App() {
   const [selectedMessageIds, setSelectedMessageIds] = useState<Set<number>>(() => new Set())
   const [bulkBusy, setBulkBusy] = useState<'delete' | 'forward' | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [proxySettingsOpen, setProxySettingsOpen] = useState(false)
+  const [proxyProbes, setProxyProbes] = useState<ProxyProbe[]>([])
+  const [proxyBusy, setProxyBusy] = useState(false)
+  const [proxyLinkDraft, setProxyLinkDraft] = useState('')
+  const [showProxyAdd, setShowProxyAdd] = useState(false)
   const [mainMenuOpen, setMainMenuOpen] = useState(false)
   const [transportStatus, setTransportStatus] = useState<TransportStatus | null>(null)
   const [deviceSessions, setDeviceSessions] = useState<DeviceSession[]>([])
@@ -1250,6 +1262,78 @@ function App() {
     setPreferences(current => ({ ...current, ...values }))
   }
 
+  async function refreshProxySettings() {
+    const [transport, probes] = await Promise.all([
+      api<TransportStatus>('/api/telegram/transport'),
+      api<ProxyProbe[]>('/api/telegram/transport/probe')
+    ])
+    setTransportStatus(transport)
+    setProxyProbes(probes)
+  }
+
+  async function openProxySettings() {
+    setMainMenuOpen(false)
+    setProxySettingsOpen(true)
+    setProxyBusy(true)
+    setError('')
+    try {
+      await refreshProxySettings()
+    } catch (caught) {
+      setError(errorMessage(caught, 'وضعیت پراکسی دریافت نشد.'))
+    } finally {
+      setProxyBusy(false)
+    }
+  }
+
+  async function selectProxy(index: number | null) {
+    if (proxyBusy) return
+    setProxyBusy(true)
+    setError('')
+    try {
+      await api('/api/telegram/transport/select', {
+        method: 'POST',
+        body: JSON.stringify({ index })
+      })
+      const nextStatus = await api<Status>('/api/telegram/status')
+      setStatus(nextStatus)
+      await refreshProxySettings()
+    } catch (caught) {
+      setError(errorMessage(caught, 'تغییر پراکسی انجام نشد.'))
+    } finally {
+      setProxyBusy(false)
+    }
+  }
+
+  async function addProxyLink(link: string) {
+    const value = link.trim()
+    if (!value || proxyBusy) return
+    setProxyBusy(true)
+    setError('')
+    try {
+      const added = await api<{ index: number }>('/api/telegram/transport/add-link', {
+        method: 'POST',
+        body: JSON.stringify({ link: value })
+      })
+      setProxySettingsOpen(true)
+      setShowProxyAdd(false)
+      setProxyLinkDraft('')
+      await selectProxy(added.index)
+    } catch (caught) {
+      setError(errorMessage(caught, 'لینک پراکسی معتبر نیست یا اضافه نشد.'))
+      setProxyBusy(false)
+    }
+  }
+
+  function renderMessageText(value: string) {
+    const pattern = /(tg:\/\/(?:proxy|socks)\?[^\s]+|https?:\/\/(?:t\.me|telegram\.me)\/(?:proxy|socks)\?[^\s]+)/gi
+    const parts = value.split(pattern)
+    return parts.map((part, index) => (
+      /^(?:tg:\/\/(?:proxy|socks)\?|https?:\/\/(?:t\.me|telegram\.me)\/(?:proxy|socks)\?)/i.test(part)
+        ? <button className="proxy-link" type="button" key={index} onClick={() => void addProxyLink(part)}>{part}</button>
+        : <Fragment key={index}>{part}</Fragment>
+    ))
+  }
+
   async function openSettings() {
     setMainMenuOpen(false)
     setSettingsOpen(true)
@@ -1974,11 +2058,11 @@ function App() {
             <button type="button" aria-label="به‌روزرسانی گفتگوها" title="به‌روزرسانی" onClick={refreshDialogs}>✎</button>
           </div>
           <button
-            className={'sidebar-tool ' + (notificationsEnabled ? 'active' : '')}
-            aria-label={notificationsEnabled ? 'غیرفعال‌کردن اعلان‌ها' : 'فعال‌کردن اعلان‌ها'}
-            title={notificationsEnabled ? 'اعلان‌ها فعال است' : 'فعال‌کردن اعلان‌ها'}
-            onClick={toggleNotifications}
-          >◇</button>
+            className={'sidebar-tool ' + (status.active_route && status.active_route !== 'direct' ? 'active' : '')}
+            aria-label="تنظیمات پراکسی"
+            title="Proxy Settings"
+            onClick={() => void openProxySettings()}
+          >♢</button>
         </div>
         <div className="folder-tabs">
           <button className={activeFolder === 'all' ? 'active' : ''} onClick={() => setActiveFolder('all')}>All Chats{dialogs.some(item => !item.archived && item.unread_count > 0) && <b>{dialogs.filter(item => !item.archived && item.unread_count > 0).length}</b>}</button>
@@ -2186,7 +2270,7 @@ function App() {
                   {message.media && renderMedia(message)}
                   {message.deleted
                     ? <span className="message-text">پیام حذف شده است</span>
-                    : message.text.trim() && <span className="message-text">{message.text.trim()}</span>}
+                    : message.text.trim() && <span className="message-text">{renderMessageText(message.text.trim())}</span>}
                   {!message.deleted && Boolean(message.reactions?.length) && (
                     <div className="message-reactions">
                       {message.reactions.map(reaction => (
@@ -2478,6 +2562,66 @@ function App() {
         </div>
       )}
 
+      {proxySettingsOpen && (
+        <div className="proxy-settings-backdrop" onMouseDown={() => setProxySettingsOpen(false)}>
+          <section className="proxy-settings-panel" role="dialog" aria-modal="true" aria-label="Proxy Settings" onMouseDown={event => event.stopPropagation()}>
+            <header className="proxy-settings-header">
+              <button type="button" aria-label="بازگشت" onClick={() => setProxySettingsOpen(false)}>‹</button>
+              <strong>Proxy Settings</strong>
+            </header>
+            <div className="proxy-settings-scroll">
+              <button className="proxy-choice" type="button" disabled={proxyBusy} onClick={() => void selectProxy(0)}>
+                <span className={'proxy-radio ' + (transportStatus?.routes.every(route => !route.selected) && status.active_route === 'direct' ? 'selected' : '')} />
+                <span>Disable Proxy</span>
+              </button>
+              <button className="proxy-choice disabled" type="button" disabled title="Telethon MTProto does not use Windows system proxy automatically">
+                <span className="proxy-radio" />
+                <span>Use System Proxy Settings</span>
+                <small>Not available for MTProto</small>
+              </button>
+              <button className="proxy-choice add" type="button" onClick={() => setShowProxyAdd(value => !value)}>
+                <span className="proxy-plus">＋</span>
+                <span>Add Proxy</span>
+              </button>
+              {showProxyAdd && (
+                <form className="proxy-add-form" onSubmit={event => { event.preventDefault(); void addProxyLink(proxyLinkDraft) }}>
+                  <input
+                    value={proxyLinkDraft}
+                    onChange={event => setProxyLinkDraft(event.target.value)}
+                    placeholder="tg://proxy?... or https://t.me/proxy?..."
+                    dir="ltr"
+                    autoFocus
+                  />
+                  <button type="submit" disabled={proxyBusy || !proxyLinkDraft.trim()}>Add</button>
+                </form>
+              )}
+              <h3>Connections</h3>
+              <div className="proxy-connections">
+                {transportStatus?.routes.map(route => {
+                  const probe = proxyProbes.find(item => item.index === route.index)
+                  return (
+                    <button className="proxy-route" type="button" key={route.index} disabled={proxyBusy} onClick={() => void selectProxy(route.index)}>
+                      <span className={'proxy-radio ' + (route.selected ? 'selected' : '')} />
+                      <span className="proxy-route-copy">
+                        <strong dir="ltr">{route.name}</strong>
+                        <small className={probe?.available === false ? 'unavailable' : ''}>
+                          {probe?.available
+                            ? 'Connected, Ping: ' + Math.round(probe.latency_ms || 0) + ' ms'
+                            : probe
+                              ? 'Unavailable'
+                              : 'Checking…'}
+                          {route.managed_v2ray ? ' · V2Ray' : ''}
+                        </small>
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
+
       {settingsOpen && (
         <div className="settings-backdrop" onMouseDown={() => setSettingsOpen(false)}>
           <section className="settings-modal" role="dialog" aria-modal="true" aria-label="تنظیمات برنامه" onMouseDown={event => event.stopPropagation()}>
@@ -2528,7 +2672,7 @@ function App() {
                 )}
               </section>
 
-              <section className="settings-section">
+              <section className="settings-section settings-proxy-shortcut" onClick={() => { setSettingsOpen(false); void openProxySettings() }}>
                 <h3>اتصال و پراکسی</h3>
                 {settingsBusy ? (
                   <div className="settings-muted">در حال دریافت وضعیت…</div>
