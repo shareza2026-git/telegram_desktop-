@@ -1225,6 +1225,42 @@ function App() {
     }
   }
 
+  async function recoverProxyConnection(event: FormEvent) {
+    event.preventDefault()
+    const link = proxyLinkDraft.trim()
+    if (!link) {
+      setError('لینک پراکسی را وارد کنید.')
+      return
+    }
+
+    setProxyBusy(true)
+    setError('')
+    try {
+      const added = await api<{ index: number }>('/api/telegram/transport/add-link', {
+        method: 'POST',
+        body: JSON.stringify({ link })
+      })
+      await api('/api/telegram/transport/select', {
+        method: 'POST',
+        body: JSON.stringify({ index: added.index })
+      })
+      const nextStatus = await api<Status>('/api/telegram/status')
+      setStatus(nextStatus)
+      if (nextStatus.authorized) {
+        const [nextDialogs, nextFolders] = await Promise.all([
+          api<Dialog[]>('/api/telegram/dialogs'),
+          api<DialogFolder[]>('/api/telegram/dialog-folders')
+        ])
+        setDialogs(nextDialogs)
+        setTelegramFolders(nextFolders)
+      }
+    } catch (caught) {
+      setError(errorMessage(caught, 'پراکسی اضافه شد یا اتصال برقرار نشد.'))
+    } finally {
+      setProxyBusy(false)
+    }
+  }
+
   async function sendCode(event: FormEvent) {
     event.preventDefault()
     const value = phone.trim()
@@ -2041,6 +2077,24 @@ function App() {
               </label>
               <button className="primary-action auth-submit" type="submit" disabled={runtimeConfigBusy}>
                 {runtimeConfigBusy ? 'در حال اتصال…' : 'ذخیره و اتصال'}
+              </button>
+            </form>
+          ) : status.state === 'PROXY_ERROR' ? (
+            <form className="auth-form setup-form" onSubmit={recoverProxyConnection}>
+              <p className="muted">سشن و API آماده است؛ فقط مسیر اتصال تلگرام در دسترس نیست.</p>
+              <label className="auth-field">
+                <span>Proxy Link</span>
+                <input
+                  value={proxyLinkDraft}
+                  onChange={event => setProxyLinkDraft(event.target.value)}
+                  placeholder="tg://proxy?... or https://t.me/proxy?..."
+                  dir="ltr"
+                  autoComplete="off"
+                  autoFocus
+                />
+              </label>
+              <button className="primary-action auth-submit" type="submit" disabled={proxyBusy}>
+                {proxyBusy ? 'در حال اتصال…' : 'افزودن پراکسی و اتصال'}
               </button>
             </form>
           ) : (
