@@ -190,6 +190,10 @@ class TransportCatalog:
 
     def load(self) -> list[ProxyRoute]:
         if not self.path.exists():
+            user_records = self._load_user_records()
+            if user_records:
+                self.last_error = None
+                return [ProxyRoute.model_validate(item) for item in user_records]
             self.last_error = "Proxy configuration was not found"
             return []
         try:
