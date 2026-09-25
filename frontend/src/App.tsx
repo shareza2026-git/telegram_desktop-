@@ -2059,11 +2059,11 @@ function App() {
             <button type="button" aria-label="به‌روزرسانی گفتگوها" title="به‌روزرسانی" onClick={refreshDialogs}>✎</button>
           </div>
           <button
-            className={'sidebar-tool ' + (status.active_route && status.active_route !== 'direct' ? 'active' : '')}
+            className={'sidebar-tool proxy-tool ' + (status.active_route && status.active_route !== 'direct' ? 'active' : '')}
             aria-label="تنظیمات پراکسی"
             title="Proxy Settings"
             onClick={() => void openProxySettings()}
-          >♢</button>
+          ><span className="proxy-shield-icon" aria-hidden="true" /></button>
         </div>
         <div className="folder-tabs">
           <button className={activeFolder === 'all' ? 'active' : ''} onClick={() => setActiveFolder('all')}>All Chats{dialogs.some(item => !item.archived && item.unread_count > 0) && <b>{dialogs.filter(item => !item.archived && item.unread_count > 0).length}</b>}</button>
