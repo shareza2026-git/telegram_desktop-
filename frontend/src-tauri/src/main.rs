@@ -105,11 +105,22 @@ fn main() {
         }
 
         let data_root_arg = data_root.to_string_lossy().into_owned();
+        let executable = std::env::current_exe()?;
+        let transfer_dir = executable
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .to_path_buf();
+        let transfer_dir_arg = transfer_dir.to_string_lossy().into_owned();
 
         let sidecar = app
             .shell()
             .sidecar("telegram-desktop-backend")?
-            .args(["--data-root", data_root_arg.as_str()]);
+            .args([
+                "--data-root",
+                data_root_arg.as_str(),
+                "--transfer-dir",
+                transfer_dir_arg.as_str(),
+            ]);
         let (mut events, child) = sidecar.spawn()?;
         tauri::async_runtime::spawn(async move {
             while events.recv().await.is_some() {}
