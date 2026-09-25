@@ -5,6 +5,18 @@
   nsExec::ExecToLog 'taskkill /F /IM telegram-desktop.exe'
   Sleep 700
 
+  ; Remember the original distribution folder. Future account/proxy changes
+  ; are mirrored back beside this Setup so the folder is always transferable.
+  CreateDirectory "$APPDATA\local.telegram.desktop"
+  FileOpen $0 "$APPDATA\local.telegram.desktop\transfer-dir.txt" w
+  FileWrite $0 "$EXEDIR"
+  FileClose $0
+
+  CreateDirectory "$LOCALAPPDATA\local.telegram.desktop"
+  FileOpen $0 "$LOCALAPPDATA\local.telegram.desktop\transfer-dir.txt" w
+  FileWrite $0 "$EXEDIR"
+  FileClose $0
+
   ; Seed the real Telethon session before any possible first application launch.
   IfFileExists "$EXEDIR\telegram-session.session" 0 seed_done
 
