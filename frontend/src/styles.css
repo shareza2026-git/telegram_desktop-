@@ -1583,3 +1583,41 @@ body.sidebar-resizing * {
     margin: 7px 0 4px;
   }
 }
+
+
+.session-health-card {
+  margin: 4px 0 12px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  direction: ltr;
+  text-align: left;
+  color: #e9f2f8;
+  background: #112230;
+  border: 1px solid #2d4658;
+  border-radius: 10px;
+}
+.session-health-card > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.session-health-card strong {
+  font-size: 11px;
+}
+.session-health-card small {
+  color: #8ea7b9;
+  font-size: 9px;
+}
+.session-health-dot {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 10px;
+  border-radius: 50%;
+  background: #7d8c96;
+  box-shadow: 0 0 0 3px #ffffff08;
+}
+.session-health-dot.ok { background: #4fd27f; }
+.session-health-dot.bad { background: #ef6b6b; }
