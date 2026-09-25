@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Version = "0.1.0"
+    [string]$Version = "0.1.1"
 )
 
 $ErrorActionPreference = "Stop"
@@ -111,7 +111,36 @@ $InstallHelper = @'
 $ErrorActionPreference = "Stop"
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Setup = Get-ChildItem $Here -Filter "Telegram-Desktop-Setup-*.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$PortableSource = Join-Path $Here "telegram-portable.json"
+
 if (-not $Setup) { throw "Telegram Desktop setup was not found." }
+if (-not (Test-Path $PortableSource)) { throw "telegram-portable.json was not found beside INSTALL.cmd." }
+
+# Validate the portable bundle before touching the installed application.
+try {
+    $PortableJson = Get-Content $PortableSource -Raw -Encoding UTF8 | ConvertFrom-Json
+    if (-not $PortableJson.api.id -or -not $PortableJson.api.hash) {
+        throw "API ID/HASH are missing."
+    }
+    if (-not $PortableJson.accounts -and -not $PortableJson.session) {
+        throw "Telegram session authorization is missing."
+    }
+} catch {
+    throw "telegram-portable.json is invalid: $($_.Exception.Message)"
+}
+
+# Seed both possible Tauri AppData roots BEFORE running NSIS. This prevents an
+# installer-triggered first launch from ever seeing an unconfigured backend.
+$PersistentRoots = @(
+    (Join-Path $env:APPDATA "local.telegram.desktop"),
+    (Join-Path $env:LOCALAPPDATA "local.telegram.desktop")
+)
+foreach ($Root in $PersistentRoots) {
+    if (-not $Root) { continue }
+    $PortableDir = Join-Path $Root "portable"
+    New-Item -ItemType Directory -Force $PortableDir | Out-Null
+    Copy-Item $PortableSource (Join-Path $PortableDir "telegram-portable.json") -Force
+}
 
 Start-Process -FilePath $Setup.FullName -Wait
 
@@ -131,7 +160,6 @@ if (-not $InstalledExe) {
 }
 
 $InstallDir = Split-Path -Parent $InstalledExe
-$PortableSource = Join-Path $Here "telegram-portable.json"
 
 # The NSIS installer may launch the app immediately. Stop that first launch so
 # the next startup sees the portable account bundle from the very beginning.
@@ -144,19 +172,6 @@ Start-Sleep -Milliseconds 500
 # Keep a copy beside the installed executable (portable bootstrap/mirror).
 Copy-Item $PortableSource (Join-Path $InstallDir "telegram-portable.json") -Force
 
-# Also seed the persistent Tauri data location before relaunch. Tauri uses the
-# stable identifier local.telegram.desktop, so future upgrades reuse this copy.
-$PersistentRoots = @(
-    (Join-Path $env:APPDATA "local.telegram.desktop"),
-    (Join-Path $env:LOCALAPPDATA "local.telegram.desktop")
-)
-foreach ($Root in $PersistentRoots) {
-    if (-not $Root) { continue }
-    $PortableDir = Join-Path $Root "portable"
-    New-Item -ItemType Directory -Force $PortableDir | Out-Null
-    Copy-Item $PortableSource (Join-Path $PortableDir "telegram-portable.json") -Force
-}
-
 $Xray = Join-Path $Here "xray.exe"
 if (Test-Path $Xray) {
     Copy-Item $Xray (Join-Path $InstallDir "xray.exe") -Force
@@ -167,7 +182,7 @@ Start-Process -FilePath $InstalledExe
 
 Write-Host "Telegram Desktop is ready." -ForegroundColor Green
 Write-Host "Installed at: $InstallDir"
-Write-Host "Portable account configuration seeded before first launch."
+Write-Host "Portable account configuration was seeded before installation and mirrored beside the executable."
 '@
 Set-Content -Path (Join-Path $ReleaseRoot "Install-Telegram-Desktop.ps1") -Value $InstallHelper -Encoding UTF8
 
