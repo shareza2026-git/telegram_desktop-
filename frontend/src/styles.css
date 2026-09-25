@@ -1167,3 +1167,105 @@ body.sidebar-resizing * {
 .proxy-tool.active .proxy-shield-icon::after {
   border-color: #249fd8;
 }
+
+
+/* Telegram Desktop title + composer final match */
+.app-title {
+  color: #202124;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.composer-shell {
+  background: rgba(211, 229, 194, .78);
+}
+.composer {
+  min-height: 58px;
+  padding: 7px 12px 8px;
+  gap: 8px;
+}
+.composer-input-shell {
+  height: 44px;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  background: rgba(255,255,255,.92);
+  border: 1px solid #d6ddd8;
+  border-radius: 23px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.08);
+}
+.composer-input-shell .composer-attach {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  color: #1f2a30;
+  background: transparent;
+  border-radius: 50%;
+  transform: none;
+}
+.composer-input-shell .composer-attach:hover {
+  background: rgba(0,0,0,.045);
+}
+.paperclip-icon {
+  position: relative;
+  width: 14px;
+  height: 24px;
+  display: block;
+  border: 2px solid currentColor;
+  border-radius: 8px;
+  transform: rotate(38deg);
+  box-sizing: border-box;
+}
+.paperclip-icon::after {
+  content: "";
+  position: absolute;
+  width: 6px;
+  height: 15px;
+  left: 2px;
+  top: 2px;
+  border: 2px solid currentColor;
+  border-top: 0;
+  border-radius: 0 0 5px 5px;
+  box-sizing: border-box;
+}
+.composer-input-shell input,
+.composer input {
+  height: 42px;
+  padding: 0 8px 0 0;
+  font-size: 13px;
+}
+.composer-emoji {
+  width: 40px;
+  height: 42px;
+  flex: 0 0 40px;
+  color: #26343b;
+  background: transparent;
+  font-size: 23px;
+}
+.composer-emoji:hover,
+.composer-emoji.active {
+  color: #168dcc;
+  background: rgba(0,0,0,.035);
+}
+.send-button {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  background: #2aa3df;
+  border-radius: 50%;
+}
+.send-button:hover { background: #2298d2; }
+.send-button.voice-mode::before {
+  content: "🎙";
+  font-size: 18px;
+  filter: grayscale(1) brightness(0) invert(1);
+}
+.send-button.voice-mode:disabled {
+  background: #2aa3df;
+}
