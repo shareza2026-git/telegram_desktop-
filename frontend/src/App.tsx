@@ -153,6 +153,7 @@ const COMPOSER_EMOJIS = [
 ]
 const backendBase = (import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8110').replace(/\/$/, '')
 const socketBase = backendBase.replace(/^http/, 'ws')
+const appWindow = getCurrentWindow()
 const mediaLabels: Record<MediaInfo['kind'], string> = {
   photo: 'تصویر',
   video: 'ویدئو',
@@ -288,6 +289,13 @@ function presenceLabel(value: string | null | undefined) {
 
 function avatarUrl(chatId: number) {
   return backendBase + '/api/telegram/chats/' + encodeURIComponent(String(chatId)) + '/photo'
+}
+
+function startWindowDrag(event: ReactMouseEvent<HTMLElement>) {
+  if (event.button !== 0) return
+  const target = event.target as HTMLElement
+  if (target.closest('button, input, select, textarea, a')) return
+  void appWindow.startDragging()
 }
 
 function ChatAvatar({ chatId, title, className = '' }: { chatId: number; title: string; className?: string }) {
@@ -1840,7 +1848,7 @@ function App() {
 
   return (
     <main className={'telegram-shell' + (preferences.compact ? ' compact-mode' : '')} onMouseDown={() => setMessageContextMenu(null)}>
-      <header className="app-titlebar" data-tauri-drag-region>
+      <header className="app-titlebar" data-tauri-drag-region onMouseDown={startWindowDrag}>
         <div className="titlebar-brand" data-tauri-drag-region>
           <button className="titlebar-menu" aria-label="منوی اصلی" title="منوی اصلی" onClick={() => setMainMenuOpen(value => !value)}>☰</button>
           <span className="account-stack" aria-hidden="true"><i /><i /></span>
@@ -1848,9 +1856,9 @@ function App() {
           <strong className="app-title">Unigram</strong>
         </div>
         <div className="window-controls">
-          <button aria-label="کمینه" onClick={() => void getCurrentWindow().minimize()}>—</button>
-          <button aria-label="بیشینه" onClick={() => void getCurrentWindow().toggleMaximize()}>□</button>
-          <button className="window-close" aria-label="بستن" onClick={() => void getCurrentWindow().close()}>×</button>
+          <button aria-label="کمینه" onClick={() => void appWindow.minimize()}>—</button>
+          <button aria-label="بیشینه" onClick={() => void appWindow.toggleMaximize()}>□</button>
+          <button className="window-close" aria-label="بستن" onClick={() => void appWindow.close()}>×</button>
         </div>
       </header>
       {mainMenuOpen && (
