@@ -42,6 +42,14 @@ async def transport(request: Request):
     }
 
 
+@router.get("/api/telegram/devices")
+async def devices(request: Request):
+    try:
+        return await service(request).devices()
+    except DesktopError as exc:
+        raise error_response(exc) from None
+
+
 @router.post("/api/telegram/session/import")
 async def import_session(request: Request):
     try:

@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type FormEvent, type MouseEvent as ReactMouseEvent } from 'react'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 
 import { DRAFT_STORAGE_KEY, parseDraftMap, updateDraftMap } from './drafts'
 import { PREFERENCES_STORAGE_KEY, parsePreferences, resolvedTheme, type ClientPreferences } from './preferences'
@@ -12,6 +13,8 @@ type Dialog = {
   pinned: boolean
   archived: boolean
   muted: boolean
+  last_message_at?: string | null
+  last_message_preview?: string | null
 }
 
 type DialogPatch = {
@@ -77,7 +80,9 @@ type Status = {
   connected: boolean
   authorized: boolean
   state: string
+  user_id?: number | null
   display_name?: string | null
+  phone?: string | null
   active_route?: string | null
   source_session_available: boolean
   client_session_exists: boolean
@@ -135,7 +140,7 @@ type AuthResponse = {
 }
 
 type AuthStep = 'phone' | 'code' | 'password'
-type FolderKey = 'all' | 'private' | 'groups' | 'channels' | 'archived'
+type FolderKey = 'all' | 'private' | 'unread' | 'groups' | 'channels' | 'archived'
 type MediaState = 'loading' | 'ready' | 'downloading' | 'done' | 'error'
 
 const HISTORY_PAGE_SIZE = 80
@@ -176,6 +181,29 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
 
 function formatTime(value: string) {
   return new Intl.DateTimeFormat('fa-IR', { hour: '2-digit', minute: '2-digit' }).format(new Date(value))
+}
+
+type DeviceSession = {
+  hash: number
+  current: boolean
+  device_model: string
+  platform: string
+  system_version: string
+  app_name: string
+  app_version: string
+  date_active: string
+  country?: string | null
+  region?: string | null
+}
+
+function formatDialogTime(value?: string | null) {
+  if (!value) return ''
+  const date = new Date(value)
+  const now = new Date()
+  if (date.toDateString() === now.toDateString()) {
+    return new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' }).format(date)
+  }
+  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(date)
 }
 
 function messageDayKey(value: string) {
@@ -350,7 +378,9 @@ function App() {
   const [selectedMessageIds, setSelectedMessageIds] = useState<Set<number>>(() => new Set())
   const [bulkBusy, setBulkBusy] = useState<'delete' | 'forward' | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [mainMenuOpen, setMainMenuOpen] = useState(false)
   const [transportStatus, setTransportStatus] = useState<TransportStatus | null>(null)
+  const [deviceSessions, setDeviceSessions] = useState<DeviceSession[]>([])
   const [settingsBusy, setSettingsBusy] = useState(false)
   const [logoutBusy, setLogoutBusy] = useState(false)
   const [preferences, setPreferences] = useState<ClientPreferences>(() => (
@@ -367,6 +397,7 @@ function App() {
   const visibleDialogs = useMemo(() => {
     let values = dialogs
     if (activeFolder === 'private') values = values.filter(item => item.dialog_type === 'user' && !item.archived)
+    if (activeFolder === 'unread') values = values.filter(item => item.unread_count > 0 && !item.archived)
     if (activeFolder === 'groups') values = values.filter(item => (item.dialog_type === 'group' || item.dialog_type === 'supergroup') && !item.archived)
     if (activeFolder === 'channels') values = values.filter(item => item.dialog_type === 'channel' && !item.archived)
     if (activeFolder === 'archived') values = values.filter(item => item.archived)
@@ -1132,14 +1163,35 @@ function App() {
   }
 
   async function openSettings() {
+    setMainMenuOpen(false)
     setSettingsOpen(true)
     setSettingsBusy(true)
     try {
-      setTransportStatus(await api<TransportStatus>('/api/telegram/transport'))
+      const [transport, devices] = await Promise.all([
+        api<TransportStatus>('/api/telegram/transport'),
+        api<DeviceSession[]>('/api/telegram/devices'),
+      ])
+      setTransportStatus(transport)
+      setDeviceSessions(devices)
     } catch (caught) {
       setError(errorMessage(caught, 'وضعیت مسیر اتصال دریافت نشد.'))
     } finally {
       setSettingsBusy(false)
+    }
+  }
+
+  function menuUnavailable(label: string) {
+    setMainMenuOpen(false)
+    setError(label + ' در نسخهٔ فعلی هنوز فعال نشده است.')
+  }
+
+  function openSelfChat() {
+    const selfDialog = dialogs.find(item => item.chat_id === status?.user_id)
+    setMainMenuOpen(false)
+    if (selfDialog) {
+      void openDialog(selfDialog)
+    } else {
+      setError('گفت‌وگوی پیام‌های ذخیره‌شده در فهرست فعلی پیدا نشد.')
     }
   }
 
@@ -1788,48 +1840,76 @@ function App() {
 
   return (
     <main className={'telegram-shell' + (preferences.compact ? ' compact-mode' : '')} onMouseDown={() => setMessageContextMenu(null)}>
+      <header className="app-titlebar" data-tauri-drag-region>
+        <div className="titlebar-brand" data-tauri-drag-region>
+          <button className="titlebar-menu" aria-label="منوی اصلی" title="منوی اصلی" onClick={() => setMainMenuOpen(value => !value)}>☰</button>
+          <span className="account-stack" aria-hidden="true"><i /><i /></span>
+          <span className="telegram-logo" aria-hidden="true">➤</span>
+          <strong className="app-title">Unigram</strong>
+        </div>
+        <div className="window-controls">
+          <button aria-label="کمینه" onClick={() => void getCurrentWindow().minimize()}>—</button>
+          <button aria-label="بیشینه" onClick={() => void getCurrentWindow().toggleMaximize()}>□</button>
+          <button className="window-close" aria-label="بستن" onClick={() => void getCurrentWindow().close()}>×</button>
+        </div>
+      </header>
+      {mainMenuOpen && (
+        <div className="main-menu-backdrop" onMouseDown={() => setMainMenuOpen(false)}>
+          <nav className="main-menu-drawer" aria-label="منوی اصلی تلگرام" onMouseDown={event => event.stopPropagation()}>
+            <section className="menu-account">
+              <ChatAvatar chatId={status.user_id || 0} title={status.display_name || 'Telegram'} className="menu-profile-photo" />
+              <button className="menu-night" type="button" aria-label="حالت شب" onClick={() => updatePreferences({ theme: preferences.theme === 'dark' ? 'light' : 'dark' })}>☾</button>
+              <strong>{status.display_name || 'Telegram'}</strong>
+              <small dir="ltr">{status.phone ? '+' + status.phone : 'Telegram account'}</small>
+              <span className="menu-chevron">⌃</span>
+            </section>
+            <button className="menu-item" type="button" onClick={() => menuUnavailable('افزودن حساب')}><i>♙</i><span>Add Account</span></button>
+            <hr />
+            <button className="menu-item" type="button" onClick={openSelfChat}><i>▱</i><span>Saved Messages</span></button>
+            <button className="menu-item" type="button" onClick={openSelfChat}><i>◉</i><span>My Profile</span></button>
+            <button className="menu-item" type="button" onClick={() => menuUnavailable('گروه جدید')}><i>♧</i><span>New Group</span></button>
+            <button className="menu-item" type="button" onClick={() => menuUnavailable('کانال جدید')}><i>⌁</i><span>New Channel</span></button>
+            <hr />
+            <button className="menu-item active" type="button" onClick={() => setMainMenuOpen(false)}><i>◯</i><span>Chats</span></button>
+            <button className="menu-item" type="button" onClick={() => menuUnavailable('مخاطبین')}><i>♙</i><span>Contacts</span></button>
+            <button className="menu-item" type="button" onClick={() => menuUnavailable('تماس‌ها')}><i>♧</i><span>Calls</span></button>
+            <button className="menu-item" type="button" onClick={() => void openSettings()}><i>⚙</i><span>Settings</span></button>
+            <hr />
+            <button className="menu-item" type="button" onClick={() => menuUnavailable('قابلیت‌های تلگرام')}><i>?</i><span>Telegram Features</span></button>
+          </nav>
+        </div>
+      )}
       <aside className="chat-sidebar">
-        <header className="sidebar-header">
-          <div className="brand-title">
-            <span className="brand-mark small">✈</span>
-            Telegram
-            {totalUnread > 0 && <span className="global-unread">{new Intl.NumberFormat('fa-IR').format(totalUnread)}</span>}
+        <div className="search-row">
+          <div className="search-box">
+            <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search" />
+            <button type="button" aria-label="به‌روزرسانی گفتگوها" title="به‌روزرسانی" onClick={refreshDialogs}>✎</button>
           </div>
           <button
-            className={'icon-button ' + (notificationsEnabled ? 'active' : '')}
+            className={'sidebar-tool ' + (notificationsEnabled ? 'active' : '')}
             aria-label={notificationsEnabled ? 'غیرفعال‌کردن اعلان‌ها' : 'فعال‌کردن اعلان‌ها'}
             title={notificationsEnabled ? 'اعلان‌ها فعال است' : 'فعال‌کردن اعلان‌ها'}
             onClick={toggleNotifications}
-          >
-            {notificationsEnabled ? '🔔' : '♢'}
-          </button>
-          <button className="icon-button" aria-label="به‌روزرسانی گفتگوها" onClick={refreshDialogs}>↻</button>
-          <button className="icon-button" aria-label="تنظیمات" title="تنظیمات" onClick={openSettings}>☰</button>
-        </header>
-        <label className="search-box">
-          <span>⌕</span>
-          <input value={query} onChange={event => setQuery(event.target.value)} placeholder="جست‌وجو" />
-        </label>
+          >◇</button>
+        </div>
         <div className="folder-tabs">
-          <button className={activeFolder === 'all' ? 'active' : ''} onClick={() => setActiveFolder('all')}>همه</button>
-          <button className={activeFolder === 'private' ? 'active' : ''} onClick={() => setActiveFolder('private')}>شخصی</button>
-          <button className={activeFolder === 'groups' ? 'active' : ''} onClick={() => setActiveFolder('groups')}>گروه‌ها</button>
-          <button className={activeFolder === 'channels' ? 'active' : ''} onClick={() => setActiveFolder('channels')}>کانال‌ها</button>
-          <button className={activeFolder === 'archived' ? 'active' : ''} onClick={() => setActiveFolder('archived')}>آرشیو</button>
+          <button className={activeFolder === 'all' ? 'active' : ''} onClick={() => setActiveFolder('all')}>All Chats <b>{dialogs.filter(item => !item.archived).length}</b></button>
+          <button className={activeFolder === 'private' ? 'active' : ''} onClick={() => setActiveFolder('private')}>Personal <b>{dialogs.filter(item => item.dialog_type === 'user' && !item.archived).length}</b></button>
+          <button className={activeFolder === 'unread' ? 'active' : ''} onClick={() => setActiveFolder('unread')}>Unread <b>{totalUnread}</b></button>
         </div>
         <div className="dialog-list">
           {visibleDialogs.map(dialog => (
             <button className={'dialog-row ' + (selected?.chat_id === dialog.chat_id ? 'selected' : '')} key={dialog.chat_id} onClick={() => openDialog(dialog)}>
               <ChatAvatar chatId={dialog.chat_id} title={dialog.title} />
               <span className="dialog-copy">
-                <strong>{dialog.title}</strong>
-                <small>
-                  {dialog.pinned ? '⌖ ' : ''}
-                  {dialog.muted ? '🔕 ' : ''}
-                  {dialogTypeLabel(dialog.dialog_type)}
-                </small>
+                <span className="dialog-title-line"><strong>{dialog.title}</strong>{dialog.muted && <i>⌕</i>}</span>
+                <small>{dialog.last_message_preview || dialog.username || dialogTypeLabel(dialog.dialog_type)}</small>
               </span>
-              {dialog.unread_count > 0 && <span className="unread">{dialog.unread_count}</span>}
+              <span className="dialog-meta">
+                <time>{formatDialogTime(dialog.last_message_at)}</time>
+                {dialog.pinned && <i>◆</i>}
+                {dialog.unread_count > 0 && <span className="unread">{dialog.unread_count}</span>}
+              </span>
             </button>
           ))}
           {!visibleDialogs.length && <div className="empty-list">گفت‌وگویی پیدا نشد</div>}
@@ -1994,6 +2074,13 @@ function App() {
                     ) toggleMessageSelection(message.message_id)
                   }}
                 >
+                  {!message.outgoing && (
+                    <ChatAvatar
+                      chatId={message.sender_id || message.chat_id}
+                      title={message.sender_name || selected.title}
+                      className="message-avatar"
+                    />
+                  )}
                   {selectedMessageIds.size > 0 && (
                     <span className="message-selector" aria-hidden="true">
                       {selectedMessageIds.has(message.message_id) ? '✓' : ''}
@@ -2002,7 +2089,9 @@ function App() {
                   {!message.outgoing && message.sender_name && <strong className="sender-name">{message.sender_name}</strong>}
                   {renderReplyReference(message)}
                   {message.media && renderMedia(message)}
-                  {message.deleted ? <span>پیام حذف شده است</span> : message.text && <span>{message.text}</span>}
+                  {message.deleted
+                    ? <span className="message-text">پیام حذف شده است</span>
+                    : message.text.trim() && <span className="message-text">{message.text.trim()}</span>}
                   {!message.deleted && Boolean(message.reactions?.length) && (
                     <div className="message-reactions">
                       {message.reactions.map(reaction => (
@@ -2334,6 +2423,29 @@ function App() {
                 <button className="danger-action" type="button" onClick={logoutAccount} disabled={logoutBusy}>
                   {logoutBusy ? 'در حال خروج…' : 'خروج امن از حساب'}
                 </button>
+              </section>
+
+              <section className="settings-section">
+                <h3>Devices</h3>
+                {settingsBusy ? (
+                  <div className="settings-muted">در حال دریافت نشست‌های تلگرام…</div>
+                ) : deviceSessions.length ? (
+                  <div className="device-list">
+                    {deviceSessions.map(device => (
+                      <div className="device-card" key={device.hash}>
+                        <span className="device-picture" aria-hidden="true"><i /><i /><i /><i /></span>
+                        <div>
+                          <strong>{device.device_model}</strong>
+                          <span>{device.app_name}{device.app_version ? ' ' + device.app_version : ''}</span>
+                          <small>{[device.region || device.country, device.current ? 'Online' : new Date(device.date_active).toLocaleString('en-US', { hour: 'numeric', minute: '2-digit' })].filter(Boolean).join(' · ')}</small>
+                        </div>
+                        {device.current && <b>Current</b>}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="settings-muted">نشست فعالی گزارش نشده است.</div>
+                )}
               </section>
 
               <section className="settings-section">

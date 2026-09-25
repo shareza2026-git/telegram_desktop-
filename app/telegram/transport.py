@@ -5,8 +5,11 @@ import logging
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, SecretStr
 from telethon import connection
+
+from app.telegram.dashboard_transport import dashboard_proxy_records
+from app.telegram.xray import XrayRuntime, parse_vless_uri
 
 
 class ProxyRoute(BaseModel):
@@ -21,8 +24,18 @@ class ProxyRoute(BaseModel):
     managed_v2ray: bool = False
     v2ray_name: str | None = None
     route_id: str | None = None
+    vless_uri: SecretStr | None = None
+    xray_core_path: Path | None = None
+    runtime_directory: Path | None = None
+    _runtime: XrayRuntime | None = PrivateAttr(default=None)
+
+    @property
+    def display_name(self) -> str:
+        return self.v2ray_name or self.route_id or "Proxy"
 
     def options(self) -> dict:
+        if self.managed_v2ray:
+            raise RuntimeError("Managed V2Ray route must be activated first")
         if self.type == "mtproto":
             value = self.secret.get_secret_value() if self.secret else ""
             try:
@@ -52,6 +65,20 @@ class ProxyRoute(BaseModel):
                 proxy[field] = value.get_secret_value()
         return {"proxy": proxy}
 
+    async def activate(self) -> dict:
+        if not self.managed_v2ray:
+            return self.options()
+        if self.vless_uri is None or self.xray_core_path is None or self.runtime_directory is None:
+            raise RuntimeError("Managed V2Ray route is incomplete")
+        profile = parse_vless_uri(self.vless_uri.get_secret_value())
+        self._runtime = XrayRuntime(profile, self.xray_core_path, self.runtime_directory)
+        return await self._runtime.start()
+
+    async def deactivate(self) -> None:
+        runtime, self._runtime = self._runtime, None
+        if runtime is not None:
+            await runtime.stop()
+
 
 def _safe_host(value: str) -> str:
     if ":" in value and value.count(":") == 1:
@@ -75,7 +102,12 @@ class TransportCatalog:
             return []
         try:
             payload = json.loads(self.path.read_text(encoding="utf-8"))
-            value = payload.get("proxies", []) if isinstance(payload, dict) else []
+            if not isinstance(payload, dict):
+                raise ValueError
+            if "version" in payload and "routes" in payload and "direct" in payload:
+                value = dashboard_proxy_records(self.path, payload)
+            else:
+                value = payload.get("proxies", [])
             self.last_error = None
             return [ProxyRoute.model_validate(item) for item in value]
         except Exception:
@@ -102,11 +134,11 @@ class TransportCatalog:
             result.append(
                 {
                     "index": index,
-                    "type": route.type,
+                    "type": "vless" if route.managed_v2ray else route.type,
                     "host": _safe_host(route.host.get_secret_value()),
                     "port": route.port,
                     "managed_v2ray": route.managed_v2ray,
-                    "name": route.v2ray_name or f"Route {index}",
+                    "name": route.display_name if route.display_name != "Proxy" else f"Route {index}",
                 }
             )
         return result

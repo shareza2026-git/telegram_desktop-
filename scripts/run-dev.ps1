@@ -53,7 +53,7 @@ try {
     Write-Host "Backend is ready. Starting the Tauri desktop window..." -ForegroundColor Green
     Push-Location $FrontendRoot
     try {
-        & npm run tauri dev
+        & npm run tauri dev -- --config src-tauri/tauri.dev.conf.json
         if ($LASTEXITCODE -ne 0) {
             throw "Tauri development mode exited with an error."
         }

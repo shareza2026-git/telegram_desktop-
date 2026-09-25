@@ -19,6 +19,7 @@ from app.config import Settings
 from app.models import (
     ChatInfo,
     ClientStatus,
+    DeviceSession,
     DesktopError,
     Dialog,
     MediaInfo,
@@ -144,6 +145,8 @@ class TelegramDesktopService:
             with suppress(Exception):
                 await client.disconnect()
             self.client = None
+            if self.route is not None:
+                await self.route.deactivate()
             self.route = None
             self.status = self.status.model_copy(
                 update={"connected": False, "state": "CONNECTING", "last_error": None}
@@ -174,10 +177,8 @@ class TelegramDesktopService:
                 self.status = self.status.model_copy(
                     update={"state": "CONNECTING", "last_error": None}
                 )
-                client = build_client(
-                    self.settings,
-                    route.options() if route is not None else None,
-                )
+                route_options = await route.activate() if route is not None else None
+                client = build_client(self.settings, route_options)
                 await client.connect()
                 authorized = await client.is_user_authorized()
                 self.client = client
@@ -190,7 +191,7 @@ class TelegramDesktopService:
                             "connected": True,
                             "authorized": False,
                             "state": "AUTH_REQUIRED",
-                            "active_route": route.v2ray_name if route else "direct",
+                            "active_route": route.display_name if route else "direct",
                         }
                     )
                 return
@@ -200,6 +201,8 @@ class TelegramDesktopService:
                         await client.disconnect()
                     except Exception:
                         pass
+                if route is not None:
+                    await route.deactivate()
 
         self.status = self.status.model_copy(
             update={"connected": False, "authorized": False, "state": "PROXY_ERROR", "last_error": "All Telegram routes failed"}
@@ -263,7 +266,8 @@ class TelegramDesktopService:
                 "state": "CONNECTED",
                 "user_id": account.id,
                 "display_name": " ".join(filter(None, [account.first_name, account.last_name])),
-                "active_route": self.route.v2ray_name if self.route else "direct",
+                "phone": getattr(account, "phone", None),
+                "active_route": self.route.display_name if self.route else "direct",
                 "last_error": None,
                 "client_session_exists": True,
             }
@@ -428,6 +432,7 @@ class TelegramDesktopService:
     @staticmethod
     def _dialog_model(dialog: Any) -> Dialog:
         entity = dialog.entity
+        latest = getattr(dialog, "message", None)
         if dialog.is_user:
             kind = "user"
         elif dialog.is_channel:
@@ -445,8 +450,9 @@ class TelegramDesktopService:
             pinned=bool(getattr(dialog, "pinned", False)),
             archived=bool(getattr(dialog, "folder_id", None) == 1),
             muted=TelegramDesktopService._dialog_muted(dialog),
-            last_message_id=getattr(getattr(dialog, "message", None), "id", None),
-            last_message_at=getattr(getattr(dialog, "message", None), "date", None),
+            last_message_id=getattr(latest, "id", None),
+            last_message_at=getattr(latest, "date", None),
+            last_message_preview=str(getattr(latest, "raw_text", None) or "").strip()[:180] or None,
         )
 
     async def _on_new(self, event: Any) -> None:
@@ -560,6 +566,25 @@ class TelegramDesktopService:
         if self.client is None or not self.status.connected or not self.status.authorized:
             raise DesktopError("Telegram is not connected and authorized")
         return self.client
+
+    async def devices(self) -> list[DeviceSession]:
+        client = self._require_authorized()
+        result = await client(functions.account.GetAuthorizationsRequest())
+        return [
+            DeviceSession(
+                hash=int(item.hash),
+                current=bool(item.current),
+                device_model=str(item.device_model or "Windows PC"),
+                platform=str(item.platform or "Windows"),
+                system_version=str(item.system_version or ""),
+                app_name=str(item.app_name or "Telegram Desktop"),
+                app_version=str(item.app_version or ""),
+                date_active=item.date_active,
+                country=getattr(item, "country", None),
+                region=getattr(item, "region", None),
+            )
+            for item in result.authorizations
+        ]
 
     async def chat_info(self, chat_id: int) -> ChatInfo:
         client = self._require_authorized()
@@ -1058,6 +1083,8 @@ class TelegramDesktopService:
                 logger.warning("Telegram logout request failed")
             await self.client.disconnect()
         self.client = None
+        if self.route is not None:
+            await self.route.deactivate()
         self.route = None
         self.login_phone = None
         self.login_code_hash = None
@@ -1080,4 +1107,7 @@ class TelegramDesktopService:
         if self.client is not None:
             await self.client.disconnect()
         self.client = None
+        if self.route is not None:
+            await self.route.deactivate()
+        self.route = None
         self.status = self.status.model_copy(update={"connected": False, "state": "STOPPED"})

@@ -33,3 +33,8 @@ frontend/src-tauri/binaries/
 build/
 dist/
 *.spec
+
+# Local pytest run directories
+.pytest-devices/
+.pytest-run-final/
+.pytest-run/

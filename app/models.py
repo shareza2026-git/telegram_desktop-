@@ -37,6 +37,7 @@ class Dialog(BaseModel):
     muted: bool = False
     last_message_id: int | None = None
     last_message_at: datetime | None = None
+    last_message_preview: str | None = None
 
 
 class ChatInfo(BaseModel):
@@ -84,10 +85,24 @@ class ClientStatus(BaseModel):
     ] = "UNCONFIGURED"
     user_id: int | None = None
     display_name: str | None = None
+    phone: str | None = None
     active_route: str | None = None
     source_session_available: bool = False
     client_session_exists: bool = False
     last_error: str | None = None
+
+
+class DeviceSession(BaseModel):
+    hash: int
+    current: bool = False
+    device_model: str
+    platform: str
+    system_version: str
+    app_name: str
+    app_version: str
+    date_active: datetime
+    country: str | None = None
+    region: str | None = None
 
 
 class SendMessageRequest(BaseModel):
