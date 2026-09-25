@@ -193,6 +193,7 @@ class TelegramDesktopService:
             )
             return
 
+        route_errors: list[str] = []
         for route in candidates:
             client: TelegramClient | None = None
             try:
@@ -217,7 +218,10 @@ class TelegramDesktopService:
                         }
                     )
                 return
-            except Exception:
+            except Exception as error:
+                route_name = route.display_name if route is not None else "direct"
+                route_errors.append(f"{route_name}: {type(error).__name__}")
+                logger.warning("Telegram route failed (%s): %s", route_name, type(error).__name__)
                 if client is not None:
                     try:
                         await client.disconnect()
@@ -226,8 +230,14 @@ class TelegramDesktopService:
                 if route is not None:
                     await route.deactivate()
 
+        detail = " · ".join(route_errors[:3])
         self.status = self.status.model_copy(
-            update={"connected": False, "authorized": False, "state": "PROXY_ERROR", "last_error": "All Telegram routes failed"}
+            update={
+                "connected": False,
+                "authorized": False,
+                "state": "PROXY_ERROR",
+                "last_error": "All Telegram routes failed" + (f" ({detail})" if detail else ""),
+            }
         )
 
     async def set_runtime_config(self, values: ApiConfigRequest) -> ClientStatus:
