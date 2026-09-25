@@ -506,6 +506,33 @@ function App() {
     operation?.catch(() => undefined)
   }, [totalUnread])
 
+  useEffect(() => {
+    if (status?.state !== 'PROXY_ERROR') return
+
+    let disposed = false
+    const refresh = async () => {
+      try {
+        const [transport, probes] = await Promise.all([
+          api<TransportStatus>('/api/telegram/transport'),
+          api<ProxyProbe[]>('/api/telegram/transport/probe')
+        ])
+        if (!disposed) {
+          setTransportStatus(transport)
+          setProxyProbes(probes)
+        }
+      } catch {
+        // Keep the recovery screen usable; the next polling cycle retries.
+      }
+    }
+
+    void refresh()
+    const timer = window.setInterval(() => void refresh(), 5000)
+    return () => {
+      disposed = true
+      window.clearInterval(timer)
+    }
+  }, [status?.state])
+
   const forwardDialogs = useMemo(() => {
     const value = forwardQuery.trim().toLocaleLowerCase()
     if (!value) return dialogs
@@ -1222,6 +1249,31 @@ function App() {
       setError(errorMessage(caught, 'ذخیره تنظیمات و اتصال انجام نشد.'))
     } finally {
       setRuntimeConfigBusy(false)
+    }
+  }
+
+  async function addProxyFromAuth(event: FormEvent) {
+    event.preventDefault()
+    const link = proxyLinkDraft.trim()
+    if (!link) {
+      setError('لینک پراکسی را وارد کنید.')
+      return
+    }
+
+    setProxyBusy(true)
+    setError('')
+    try {
+      await api<{ index: number }>('/api/telegram/transport/add-link', {
+        method: 'POST',
+        body: JSON.stringify({ link })
+      })
+      setProxyLinkDraft('')
+      setShowProxyAdd(false)
+      await refreshProxySettings()
+    } catch (caught) {
+      setError(errorMessage(caught, 'پراکسی اضافه نشد.'))
+    } finally {
+      setProxyBusy(false)
     }
   }
 
@@ -2024,7 +2076,7 @@ function App() {
   if (!status.authorized) {
     return (
       <div className="auth-screen">
-        <div className="auth-card">
+        <div className={'auth-card' + (status.state === 'PROXY_ERROR' ? ' proxy-recovery-card' : '')}>
           <div className="brand-mark">✈</div>
           <h1>Telegram Desktop</h1>
           <p>ورود به کلاینت مستقل</p>
@@ -2080,23 +2132,105 @@ function App() {
               </button>
             </form>
           ) : status.state === 'PROXY_ERROR' ? (
-            <form className="auth-form setup-form" onSubmit={recoverProxyConnection}>
-              <p className="muted">سشن و API آماده است؛ فقط مسیر اتصال تلگرام در دسترس نیست.</p>
-              <label className="auth-field">
-                <span>Proxy Link</span>
-                <input
-                  value={proxyLinkDraft}
-                  onChange={event => setProxyLinkDraft(event.target.value)}
-                  placeholder="tg://proxy?... or https://t.me/proxy?..."
-                  dir="ltr"
-                  autoComplete="off"
-                  autoFocus
-                />
-              </label>
-              <button className="primary-action auth-submit" type="submit" disabled={proxyBusy}>
-                {proxyBusy ? 'در حال اتصال…' : 'افزودن پراکسی و اتصال'}
-              </button>
-            </form>
+            <section className="auth-proxy-manager">
+              <div className="auth-proxy-title">
+                <div>
+                  <strong>Proxy Settings</strong>
+                  <small>یک مسیر را انتخاب کنید؛ پینگ‌ها هر ۵ ثانیه تازه می‌شوند.</small>
+                </div>
+                <button
+                  className="proxy-refresh-button"
+                  type="button"
+                  disabled={proxyBusy}
+                  onClick={() => void refreshProxySettings()}
+                  title="Refresh ping"
+                >↻</button>
+              </div>
+
+              <div className="auth-proxy-list">
+                <button className="auth-proxy-row" type="button" disabled={proxyBusy} onClick={() => void selectProxy(null)}>
+                  <span className={'proxy-radio ' + (!transportStatus?.routes.some(route => route.selected) && status.active_route !== 'direct' ? 'selected' : '')} />
+                  <span className="auth-proxy-copy">
+                    <strong>Automatic</strong>
+                    <small>Try available proxy routes automatically</small>
+                  </span>
+                </button>
+
+                <button className="auth-proxy-row" type="button" disabled={proxyBusy} onClick={() => void selectProxy(0)}>
+                  <span className={'proxy-radio ' + (status.active_route === 'direct' ? 'selected' : '')} />
+                  <span className="auth-proxy-copy">
+                    <strong>Direct connection</strong>
+                    <small>{transportStatus?.allow_direct ? 'Available as fallback' : 'May be blocked on this network'}</small>
+                  </span>
+                </button>
+
+                <button className="auth-proxy-row add" type="button" onClick={() => setShowProxyAdd(value => !value)}>
+                  <span className="proxy-plus">＋</span>
+                  <span className="auth-proxy-copy">
+                    <strong>Add Proxy</strong>
+                    <small>MTProto or SOCKS Telegram link</small>
+                  </span>
+                </button>
+
+                {showProxyAdd && (
+                  <form className="auth-proxy-add" onSubmit={addProxyFromAuth}>
+                    <input
+                      value={proxyLinkDraft}
+                      onChange={event => setProxyLinkDraft(event.target.value)}
+                      placeholder="https://t.me/proxy?server=...&port=...&secret=..."
+                      dir="ltr"
+                      autoComplete="off"
+                      autoFocus
+                    />
+                    <button type="submit" disabled={proxyBusy || !proxyLinkDraft.trim()}>
+                      {proxyBusy ? '…' : 'Add'}
+                    </button>
+                  </form>
+                )}
+              </div>
+
+              <div className="auth-proxy-section-title">
+                <span>Connections</span>
+                <small>{transportStatus?.routes.length || 0}</small>
+              </div>
+
+              <div className="auth-proxy-connections">
+                {transportStatus?.routes.map(route => {
+                  const probe = proxyProbes.find(item => item.index === route.index)
+                  return (
+                    <button
+                      className={'auth-proxy-row route' + (route.selected ? ' selected-route' : '')}
+                      type="button"
+                      key={route.index}
+                      disabled={proxyBusy}
+                      onClick={() => void selectProxy(route.index)}
+                    >
+                      <span className={'proxy-radio ' + (route.selected ? 'selected' : '')} />
+                      <span className="auth-proxy-copy">
+                        <strong dir="ltr">{route.name}</strong>
+                        <small dir="ltr">{route.type} · {route.host}:{route.port}</small>
+                      </span>
+                      <span className={'auth-proxy-ping ' + (probe?.available ? 'ok' : probe ? 'bad' : 'checking')}>
+                        {probe?.available
+                          ? Math.round(probe.latency_ms || 0) + ' ms'
+                          : probe
+                            ? 'Unavailable'
+                            : 'Checking…'}
+                      </span>
+                    </button>
+                  )
+                })}
+                {!transportStatus?.routes.length && (
+                  <div className="auth-proxy-empty">پراکسی ذخیره‌شده‌ای پیدا نشد. از «Add Proxy» اضافه کنید.</div>
+                )}
+              </div>
+
+              <div className="auth-proxy-footer">
+                <button type="button" disabled={proxyBusy} onClick={() => void selectProxy(null)}>
+                  {proxyBusy ? 'در حال اتصال…' : 'تلاش مجدد با همه مسیرها'}
+                </button>
+              </div>
+            </section>
           ) : (
             <form className="auth-form" onSubmit={authStep === 'phone' ? sendCode : authStep === 'code' ? verifyCode : verifyPassword}>
               {authStep === 'phone' && (
