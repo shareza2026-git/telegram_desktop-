@@ -29,6 +29,10 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="TELEGRAM_CLIENT_DATA_ROOT",
     )
+    telegram_transfer_dir: Path | None = Field(
+        default=None,
+        validation_alias="TELEGRAM_TRANSFER_DIR",
+    )
     telegram_source_session_path: Path | None = Field(
         default=None,
         validation_alias="TELEGRAM_SOURCE_SESSION_PATH",
@@ -64,6 +68,7 @@ class Settings(BaseSettings):
         "telegram_api_id",
         "telegram_api_hash",
         "telegram_client_data_root",
+        "telegram_transfer_dir",
         "telegram_source_session_path",
         mode="before",
     )
