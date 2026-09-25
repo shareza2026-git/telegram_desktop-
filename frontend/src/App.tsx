@@ -298,12 +298,6 @@ function avatarUrl(chatId: number) {
   return backendBase + '/api/telegram/chats/' + encodeURIComponent(String(chatId)) + '/photo'
 }
 
-function startWindowDrag(event: ReactMouseEvent<HTMLElement>) {
-  if (event.button !== 0) return
-  const target = event.target as HTMLElement
-  if (target.closest('button, input, select, textarea, a')) return
-  void appWindow.startDragging()
-}
 
 function ChatAvatar({ chatId, title, className = '' }: { chatId: number; title: string; className?: string }) {
   const [failed, setFailed] = useState(false)
@@ -1904,7 +1898,7 @@ function App() {
 
   return (
     <main className={'telegram-shell' + (preferences.compact ? ' compact-mode' : '')} onMouseDown={() => setMessageContextMenu(null)}>
-      <header className="app-titlebar" data-tauri-drag-region onMouseDown={startWindowDrag}>
+      <header className="app-titlebar" data-tauri-drag-region>
         <div className="titlebar-brand" data-tauri-drag-region>
           <button className="titlebar-menu" aria-label="منوی اصلی" title="منوی اصلی" onClick={() => setMainMenuOpen(value => !value)}>☰</button>
           <span className="account-stack" aria-hidden="true"><i /><i /></span>
