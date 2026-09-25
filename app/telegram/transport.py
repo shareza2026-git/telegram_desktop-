@@ -4,6 +4,7 @@ import json
 import logging
 from pathlib import Path
 from typing import Literal
+from urllib.parse import parse_qs, urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, SecretStr
 from telethon import connection
@@ -96,6 +97,97 @@ class TransportCatalog:
         self.path = path
         self.last_error: str | None = None
 
+    def _user_path(self) -> Path:
+        return self.path.with_name(self.path.stem + ".user.json")
+
+    def _state_path(self) -> Path:
+        return self.path.with_name(self.path.stem + ".state.json")
+
+    def _load_user_records(self) -> list[dict]:
+        path = self._user_path()
+        if not path.exists():
+            return []
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+            return value.get("proxies", []) if isinstance(value, dict) else []
+        except Exception:
+            return []
+
+    def _save_user_records(self, records: list[dict]) -> None:
+        path = self._user_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"proxies": records}, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def selected_index(self) -> int | None:
+        path = self._state_path()
+        if not path.exists():
+            return None
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+            raw = value.get("selected_index")
+            return int(raw) if raw is not None else None
+        except Exception:
+            return None
+
+    def set_selected_index(self, index: int | None) -> None:
+        path = self._state_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"selected_index": index}, indent=2), encoding="utf-8")
+
+    def add_proxy_link(self, link: str) -> dict:
+        raw = link.strip()
+        parsed = urlparse(raw)
+        host = parsed.netloc.casefold()
+        path = parsed.path.casefold()
+        kind = None
+        if parsed.scheme.casefold() == "tg" and parsed.netloc.casefold() in {"proxy", "socks"}:
+            kind = parsed.netloc.casefold()
+        elif parsed.scheme.casefold() in {"http", "https"} and host in {"t.me", "telegram.me"}:
+            if path in {"/proxy", "/socks"}:
+                kind = path.lstrip("/")
+        if kind not in {"proxy", "socks"}:
+            raise ValueError("Unsupported Telegram proxy link")
+
+        values = parse_qs(parsed.query)
+        server = (values.get("server") or [""])[0].strip()
+        port_raw = (values.get("port") or [""])[0].strip()
+        if not server or not port_raw.isdigit():
+            raise ValueError("Proxy link is missing server or port")
+        port = int(port_raw)
+        if port < 1 or port > 65535:
+            raise ValueError("Proxy port is invalid")
+
+        if kind == "proxy":
+            secret = (values.get("secret") or [""])[0].strip()
+            if not secret:
+                raise ValueError("MTProto proxy link is missing secret")
+            record = {"type": "mtproto", "host": server, "port": port, "secret": secret}
+        else:
+            record = {
+                "type": "socks5",
+                "host": server,
+                "port": port,
+                "username": ((values.get("user") or [""])[0].strip() or None),
+                "password": ((values.get("pass") or [""])[0].strip() or None),
+            }
+
+        records = self._load_user_records()
+        fingerprint = (record["type"], record["host"].casefold(), record["port"])
+        for existing in records:
+            current = (str(existing.get("type")), str(existing.get("host", "")).casefold(), int(existing.get("port", 0) or 0))
+            if current == fingerprint:
+                existing.update({key: value for key, value in record.items() if value is not None})
+                break
+        else:
+            records.append(record)
+        self._save_user_records(records)
+
+        routes = self.load()
+        for index, route in enumerate(routes, 1):
+            if route.type == record["type"] and route.host.get_secret_value().casefold() == record["host"].casefold() and route.port == record["port"]:
+                return {"index": index, "name": route.display_name, "type": route.type, "host": record["host"], "port": route.port}
+        raise ValueError("Proxy could not be added")
+
     def load(self) -> list[ProxyRoute]:
         if not self.path.exists():
             self.last_error = "Proxy configuration was not found"
@@ -108,6 +200,7 @@ class TransportCatalog:
                 value = dashboard_proxy_records(self.path, payload)
             else:
                 value = payload.get("proxies", [])
+            value = list(value) + self._load_user_records()
             self.last_error = None
             return [ProxyRoute.model_validate(item) for item in value]
         except Exception:
@@ -138,7 +231,8 @@ class TransportCatalog:
                     "host": _safe_host(route.host.get_secret_value()),
                     "port": route.port,
                     "managed_v2ray": route.managed_v2ray,
-                    "name": route.display_name if route.display_name != "Proxy" else f"Route {index}",
+                    "name": route.display_name if route.display_name != "Proxy" else f"{route.host.get_secret_value()}:{route.port}",
+                    "selected": self.selected_index() == index,
                 }
             )
         return result
