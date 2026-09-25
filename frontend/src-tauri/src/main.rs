@@ -106,10 +106,21 @@ fn main() {
 
         let data_root_arg = data_root.to_string_lossy().into_owned();
         let executable = std::env::current_exe()?;
-        let transfer_dir = executable
-            .parent()
-            .unwrap_or_else(|| std::path::Path::new("."))
-            .to_path_buf();
+
+        // Prefer the folder the installer was originally launched from so
+        // telegram-session.session / telegram-api.env / telegram-proxies.json
+        // beside Setup stay current after account changes.
+        let transfer_marker = data_root.join("transfer-dir.txt");
+        let transfer_dir = std::fs::read_to_string(&transfer_marker)
+            .ok()
+            .map(|value| std::path::PathBuf::from(value.trim()))
+            .filter(|path| path.is_dir())
+            .unwrap_or_else(|| {
+                executable
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new("."))
+                    .to_path_buf()
+            });
         let transfer_dir_arg = transfer_dir.to_string_lossy().into_owned();
 
         let sidecar = app
