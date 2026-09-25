@@ -427,8 +427,14 @@ function App() {
     }
 
     const value = query.trim().toLocaleLowerCase()
-    if (!value) return values
-    return values.filter(item => item.title.toLocaleLowerCase().includes(value))
+    if (value) values = values.filter(item => item.title.toLocaleLowerCase().includes(value))
+
+    return [...values].sort((a, b) => {
+      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
+      const aTime = a.last_message_at ? new Date(a.last_message_at).getTime() : 0
+      const bTime = b.last_message_at ? new Date(b.last_message_at).getTime() : 0
+      return bTime - aTime
+    })
   }, [activeFolder, dialogs, query, telegramFolders])
 
   const totalUnread = useMemo(
@@ -553,17 +559,27 @@ function App() {
       if (packet.type === 'RESYNC') void resyncActiveChat()
       if (packet.type === 'MESSAGE_NEW' || packet.type === 'MESSAGE_EDITED') {
         const message = packet.data as Message
+        setDialogs(current => current.map(dialog => {
+          if (dialog.chat_id !== message.chat_id) return dialog
+          const activeAndVisible = (
+            selectedChatIdRef.current === message.chat_id
+            && document.visibilityState === 'visible'
+          )
+          return {
+            ...dialog,
+            last_message_at: message.date,
+            last_message_preview: message.text || dialog.last_message_preview,
+            unread_count: packet.type === 'MESSAGE_NEW' && !message.outgoing && !activeAndVisible
+              ? dialog.unread_count + 1
+              : dialog.unread_count
+          }
+        }))
         if (packet.type === 'MESSAGE_NEW' && !message.outgoing) {
           const activeAndVisible = (
             selectedChatIdRef.current === message.chat_id
             && document.visibilityState === 'visible'
           )
           if (!activeAndVisible) {
-            setDialogs(current => current.map(dialog => (
-              dialog.chat_id === message.chat_id
-                ? { ...dialog, unread_count: dialog.unread_count + 1 }
-                : dialog
-            )))
             showDesktopNotification(message)
           }
         }
