@@ -22,6 +22,7 @@ from app.models import (
     DeviceSession,
     DesktopError,
     Dialog,
+    DialogFolder,
     MediaInfo,
     Message,
     ReactionSummary,
@@ -679,6 +680,65 @@ class TelegramDesktopService:
                 -(value.last_message_at.timestamp() if value.last_message_at else 0),
             ),
         )
+
+    async def list_dialog_folders(self) -> list[DialogFolder]:
+        client = self._require_authorized()
+        dialogs = await self.list_dialogs()
+        by_id = {item.chat_id: item for item in dialogs}
+        try:
+            result = await client(functions.messages.GetDialogFiltersRequest())
+        except Exception as error:
+            logger.warning("Telegram dialog folders could not be loaded: %s", type(error).__name__)
+            raise DesktopError("Telegram dialog folders could not be loaded") from None
+
+        folders: list[DialogFolder] = []
+        for raw_filter in getattr(result, "filters", None) or []:
+            folder_id = int(getattr(raw_filter, "id", 0) or 0)
+            if folder_id <= 0:
+                continue
+            raw_title = getattr(raw_filter, "title", "")
+            title = str(getattr(raw_title, "text", None) or raw_title or "").strip()
+            if not title:
+                continue
+
+            included: set[int] = set()
+            excluded: set[int] = set()
+            for peer in (getattr(raw_filter, "pinned_peers", None) or []):
+                with suppress(Exception):
+                    included.add(int(utils.get_peer_id(peer)))
+            for peer in (getattr(raw_filter, "include_peers", None) or []):
+                with suppress(Exception):
+                    included.add(int(utils.get_peer_id(peer)))
+            for peer in (getattr(raw_filter, "exclude_peers", None) or []):
+                with suppress(Exception):
+                    excluded.add(int(utils.get_peer_id(peer)))
+
+            if bool(getattr(raw_filter, "groups", False)):
+                included.update(item.chat_id for item in dialogs if item.dialog_type in {"group", "supergroup"})
+            if bool(getattr(raw_filter, "broadcasts", False)):
+                included.update(item.chat_id for item in dialogs if item.dialog_type == "channel")
+            if bool(getattr(raw_filter, "contacts", False)) or bool(getattr(raw_filter, "non_contacts", False)):
+                included.update(item.chat_id for item in dialogs if item.dialog_type == "user")
+
+            included.difference_update(excluded)
+            values = [by_id[chat_id] for chat_id in included if chat_id in by_id]
+            if bool(getattr(raw_filter, "exclude_archived", False)):
+                values = [item for item in values if not item.archived]
+            if bool(getattr(raw_filter, "exclude_muted", False)):
+                values = [item for item in values if not item.muted]
+            if bool(getattr(raw_filter, "exclude_read", False)):
+                values = [item for item in values if item.unread_count > 0]
+
+            ordered_ids = [item.chat_id for item in dialogs if any(value.chat_id == item.chat_id for value in values)]
+            folders.append(
+                DialogFolder(
+                    id=folder_id,
+                    title=title,
+                    chat_ids=ordered_ids,
+                    unread_count=sum(item.unread_count for item in values),
+                )
+            )
+        return folders
 
     async def _publish_dialog_update(self, chat_id: int, **changes: bool) -> dict:
         value = {"chat_id": chat_id, **changes}
