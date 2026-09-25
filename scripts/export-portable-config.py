@@ -72,12 +72,20 @@ def main() -> None:
         (v2ray if kind == "v2ray" else proxies).append(record)
 
     payload = {
-        "version": 1,
+        "version": 2,
         "api": {
             "id": settings.telegram_api_id,
             "hash": settings.telegram_api_hash.get_secret_value(),
         },
-        "session": read_session(settings.telegram_session_path),
+        "active_account_id": "current",
+        "accounts": [
+            {
+                "id": "current",
+                "display_name": "",
+                "phone": "",
+                "session": read_session(settings.telegram_session_path),
+            }
+        ],
         "allow_direct": settings.telegram_allow_direct,
         "xray_core": args.xray_core,
         "proxies": proxies,
