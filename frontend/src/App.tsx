@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type FormEvent, type MouseEvent as ReactMouseEvent } from 'react'
+import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 
 import { DRAFT_STORAGE_KEY, parseDraftMap, updateDraftMap } from './drafts'
@@ -33,6 +34,12 @@ type DialogPatch = {
 
 type MessageContextMenu = {
   message: Message
+  x: number
+  y: number
+}
+
+type DialogContextMenu = {
+  dialog: Dialog
   x: number
   y: number
 }
@@ -173,6 +180,11 @@ const COMPOSER_EMOJIS = [
 const backendBase = (import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8110').replace(/\/$/, '')
 const socketBase = backendBase.replace(/^http/, 'ws')
 const appWindow = getCurrentWindow()
+const startupParams = new URLSearchParams(window.location.search)
+const popoutChatId = startupParams.get('popout') === '1'
+  ? Number(startupParams.get('chat') || 0)
+  : 0
+const isPopoutWindow = Boolean(popoutChatId)
 const mediaLabels: Record<MediaInfo['kind'], string> = {
   photo: 'تصویر',
   video: 'ویدئو',
@@ -461,6 +473,7 @@ function App() {
   const [chatMenuOpen, setChatMenuOpen] = useState(false)
   const [dialogActionBusy, setDialogActionBusy] = useState<string | null>(null)
   const [messageContextMenu, setMessageContextMenu] = useState<MessageContextMenu | null>(null)
+  const [dialogContextMenu, setDialogContextMenu] = useState<DialogContextMenu | null>(null)
   const [selectedMessageIds, setSelectedMessageIds] = useState<Set<number>>(() => new Set())
   const [bulkBusy, setBulkBusy] = useState<'delete' | 'forward' | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -530,6 +543,14 @@ function App() {
   useEffect(() => {
     dialogsRef.current = dialogs
   }, [dialogs])
+
+
+  useEffect(() => {
+    if (!isPopoutWindow || !popoutChatId || !dialogs.length) return
+    if (selected?.chat_id === popoutChatId) return
+    const dialog = dialogs.find(item => item.chat_id === popoutChatId)
+    if (dialog) void openDialog(dialog)
+  }, [dialogs, selected?.chat_id])
 
   useEffect(() => {
     notificationsEnabledRef.current = notificationsEnabled
@@ -1109,6 +1130,18 @@ function App() {
       setError(errorMessage(caught, 'تنظیم گفتگو انجام نشد.'))
     } finally {
       setDialogActionBusy(null)
+    }
+  }
+
+  async function openDialogInNewWindow(dialog: Dialog) {
+    setDialogContextMenu(null)
+    try {
+      await invoke('open_chat_window', {
+        chatId: dialog.chat_id,
+        title: dialog.title
+      })
+    } catch (caught) {
+      setError(errorMessage(caught, 'باز کردن گفتگو در پنجره جدا انجام نشد.'))
     }
   }
 
@@ -2324,7 +2357,7 @@ function App() {
   }
 
   return (
-    <main className={'telegram-shell' + (preferences.compact ? ' compact-mode' : '')} style={{ '--sidebar-width': sidebarWidth + 'px' } as React.CSSProperties} onMouseDown={() => setMessageContextMenu(null)}>
+    <main className={'telegram-shell' + (preferences.compact ? ' compact-mode' : '') + (isPopoutWindow ? ' popout-mode' : '')} style={{ '--sidebar-width': sidebarWidth + 'px' } as React.CSSProperties} onMouseDown={() => { setMessageContextMenu(null); setDialogContextMenu(null) }}>
       <header className="app-titlebar" data-tauri-drag-region>
         <div className="titlebar-brand" data-tauri-drag-region>
           <button className="titlebar-menu" aria-label="منوی اصلی" title="منوی اصلی" onClick={() => setMainMenuOpen(value => !value)}>☰</button>
@@ -2391,7 +2424,16 @@ function App() {
         </div>
         <div className="dialog-list">
           {visibleDialogs.map(dialog => (
-            <button className={'dialog-row ' + (selected?.chat_id === dialog.chat_id ? 'selected' : '')} key={dialog.chat_id} onClick={() => openDialog(dialog)}>
+            <button
+              className={'dialog-row ' + (selected?.chat_id === dialog.chat_id ? 'selected' : '')}
+              key={dialog.chat_id}
+              onClick={() => openDialog(dialog)}
+              onContextMenu={event => {
+                event.preventDefault()
+                event.stopPropagation()
+                setDialogContextMenu({ dialog, x: event.clientX, y: event.clientY })
+              }}
+            >
               <ChatAvatar chatId={dialog.chat_id} title={dialog.title} />
               <span className="dialog-copy">
                 <span className="dialog-title-line"><strong>{dialog.title}</strong>{dialog.muted && <i>⌕</i>}</span>
@@ -2407,6 +2449,18 @@ function App() {
           {!visibleDialogs.length && <div className="empty-list">گفت‌وگویی پیدا نشد</div>}
         </div>
       </aside>
+      {dialogContextMenu && (
+        <div
+          className="dialog-context-menu"
+          style={{ left: dialogContextMenu.x, top: dialogContextMenu.y }}
+          onMouseDown={event => event.stopPropagation()}
+        >
+          <button type="button" onClick={() => void openDialogInNewWindow(dialogContextMenu.dialog)}>
+            <span>□</span>
+            Open in New Window
+          </button>
+        </div>
+      )}
       <div className="sidebar-resizer" onMouseDown={beginSidebarResize} aria-hidden="true" />
 
       <section
