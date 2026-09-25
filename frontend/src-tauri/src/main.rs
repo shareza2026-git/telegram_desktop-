@@ -18,64 +18,44 @@ fn main() {
         let data_root = app.path().app_data_dir()?;
         std::fs::create_dir_all(&data_root)?;
 
-        // Keep account/session state outside the installed binaries so upgrades
-        // can replace the application without replacing the user's Telegram state.
-        let portable_dir = data_root.join("portable");
-        std::fs::create_dir_all(&portable_dir)?;
-        let canonical_portable = portable_dir.join("telegram-portable.json");
+        // Seed the private Telethon session independently from API credentials.
+        // A local telegram-session.session beside the installed executable,
+        // working directory, Downloads or Desktop is copied only when the
+        // per-user client session does not already exist.
+        let session_dir = data_root.join("accounts").join("default");
+        std::fs::create_dir_all(&session_dir)?;
+        let target_session = session_dir.join("client.session");
 
-        // A bundle beside the installed executable is treated as a portable
-        // bootstrap/mirror. Import it only when this Windows profile has no
-        // canonical bundle yet; afterwards AppData is authoritative.
-        let executable = std::env::current_exe()?;
-        let executable_dir = executable
-            .parent()
-            .unwrap_or_else(|| std::path::Path::new("."))
-            .to_path_buf();
+        if !target_session.is_file() {
+            let executable = std::env::current_exe()?;
+            let executable_dir = executable
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .to_path_buf();
 
-        // Prefer a bundle beside the installed executable, but also recover from
-        // the common distribution workflow where setup.exe and
-        // telegram-portable.json were kept together in Downloads/Desktop.
-        let mut external_candidates = vec![
-            executable_dir.join("telegram-portable.json"),
-        ];
-        if let Ok(current_dir) = std::env::current_dir() {
-            external_candidates.push(current_dir.join("telegram-portable.json"));
-        }
-        if let Some(profile) = std::env::var_os("USERPROFILE") {
-            let profile = std::path::PathBuf::from(profile);
-            external_candidates.push(profile.join("Downloads").join("telegram-portable.json"));
-            external_candidates.push(profile.join("Desktop").join("telegram-portable.json"));
-        }
+            let mut candidates = vec![
+                executable_dir.join("telegram-session.session"),
+            ];
+            if let Ok(current_dir) = std::env::current_dir() {
+                candidates.push(current_dir.join("telegram-session.session"));
+            }
+            if let Some(profile) = std::env::var_os("USERPROFILE") {
+                let profile = std::path::PathBuf::from(profile);
+                candidates.push(profile.join("Downloads").join("telegram-session.session"));
+                candidates.push(profile.join("Desktop").join("telegram-session.session"));
+            }
 
-        let external_portable = external_candidates
-            .into_iter()
-            .find(|path| path.is_file());
-
-        if !canonical_portable.is_file() {
-            if let Some(source) = external_portable.as_ref() {
-                std::fs::copy(source, &canonical_portable)?;
+            if let Some(source) = candidates.into_iter().find(|path| path.is_file()) {
+                std::fs::copy(source, &target_session)?;
             }
         }
 
         let data_root_arg = data_root.to_string_lossy().into_owned();
-        let canonical_arg = canonical_portable.to_string_lossy().into_owned();
-
-        let mut args = vec![
-            "--data-root".to_string(),
-            data_root_arg,
-            "--portable-config".to_string(),
-            canonical_arg,
-        ];
-        if let Some(source) = external_portable.as_ref() {
-            args.push("--portable-mirror".to_string());
-            args.push(source.to_string_lossy().into_owned());
-        }
 
         let sidecar = app
             .shell()
             .sidecar("telegram-desktop-backend")?
-            .args(args);
+            .args(["--data-root", data_root_arg.as_str()]);
         let (mut events, child) = sidecar.spawn()?;
         tauri::async_runtime::spawn(async move {
             while events.recv().await.is_some() {}
