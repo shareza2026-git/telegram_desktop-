@@ -40,6 +40,7 @@ from app.telegram.portable import remove_account_from_portable, sync_account_to_
 from app.telegram.session import SessionManager
 from app.telegram.session_import import SessionImporter
 from app.telegram.transport import ProxyRoute, TransportCatalog
+from app.telegram.transfer_bundle import TransferBundle
 
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,7 @@ class TelegramDesktopService:
         self.settings = settings
         self.store = store
         self.transport = transport
+        self.transfer_bundle = TransferBundle(settings, transport)
         self.sessions = SessionManager(settings)
         self.events = EventBroker()
         self.client: TelegramClient | None = None
@@ -300,6 +302,7 @@ class TelegramDesktopService:
                 }
             )
             await self._connect()
+            self.transfer_bundle.sync(include_session=self.status.authorized)
             await self.events.publish(
                 {"type": "READY", "data": self.status.model_dump(mode="json")}
             )
@@ -378,6 +381,7 @@ class TelegramDesktopService:
             )
         except Exception:
             logger.warning("Portable account bundle could not be updated", exc_info=True)
+        self.transfer_bundle.sync(include_session=True)
 
     def _register_handlers(self) -> None:
         if self.client is None or self.handlers:
@@ -717,7 +721,9 @@ class TelegramDesktopService:
 
     async def add_proxy_link(self, link: str) -> dict:
         try:
-            return self.transport.add_proxy_link(link)
+            result = self.transport.add_proxy_link(link)
+            self.transfer_bundle.sync(include_session=self.status.authorized)
+            return result
         except ValueError:
             raise
 
@@ -738,6 +744,7 @@ class TelegramDesktopService:
                     await self.route.deactivate()
             self.route = None
             await self._connect()
+            self.transfer_bundle.sync(include_session=self.status.authorized)
             await self.events.publish({"type": "READY", "data": self.status.model_dump(mode="json")})
         return {
             "selected_index": index,
@@ -1382,6 +1389,8 @@ class TelegramDesktopService:
         self.login_phone = None
         self.login_code_hash = None
         self.sessions.remove_client_session()
+        self.transfer_bundle.remove_session()
+        self.transfer_bundle.sync(include_session=False)
         try:
             remove_account_from_portable(self.settings, logged_out_user_id)
         except Exception:
