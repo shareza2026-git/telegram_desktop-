@@ -1269,3 +1269,90 @@ body.sidebar-resizing * {
 .send-button.voice-mode:disabled {
   background: #2aa3df;
 }
+
+
+/* Keep Telegram mic/send action inside the message capsule */
+.composer {
+  gap: 0;
+}
+.composer-input-shell {
+  padding-right: 4px;
+}
+.composer-input-shell .send-button {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  margin: 0 2px 0 0;
+  padding: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #2aa3df;
+}
+.composer-input-shell .send-button:hover {
+  background: #2298d2;
+}
+.composer-input-shell .send-button:disabled {
+  opacity: 1;
+  cursor: default;
+  background: #2aa3df;
+}
+.composer-action-icon {
+  position: relative;
+  width: 16px;
+  height: 18px;
+  display: block;
+}
+.send-button.voice-mode {
+  font-size: 0;
+}
+.send-button.voice-mode::before {
+  content: none !important;
+}
+.send-button.voice-mode .composer-action-icon::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 8px;
+  height: 11px;
+  border: 2px solid #fff;
+  border-radius: 6px;
+  box-sizing: border-box;
+}
+.send-button.voice-mode .composer-action-icon::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 9px;
+  width: 10px;
+  height: 7px;
+  border: 2px solid #fff;
+  border-top: 0;
+  border-radius: 0 0 7px 7px;
+  box-sizing: border-box;
+}
+.send-button.voice-mode .composer-action-icon {
+  border-bottom: 2px solid #fff;
+}
+.send-button.send-mode .composer-action-icon::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 4px;
+  width: 12px;
+  height: 10px;
+  border-top: 2px solid #fff;
+  border-right: 2px solid #fff;
+  transform: rotate(45deg);
+}
+.send-button.send-mode .composer-action-icon::after {
+  content: "";
+  position: absolute;
+  left: 1px;
+  top: 8px;
+  width: 11px;
+  height: 2px;
+  background: #fff;
+  transform: rotate(-1deg);
+}
