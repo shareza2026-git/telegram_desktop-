@@ -1576,10 +1576,9 @@ function App() {
         '/api/telegram/chats/' + selected.chat_id + '/messages/' + message.message_id + '/delete',
         { method: 'POST' }
       )
-      setMessages(current => current.map(item => item.message_id === message.message_id
-        ? { ...item, deleted: true, text: '' }
-        : item
-      ))
+      setMessages(current => current.filter(item => item.message_id !== message.message_id))
+      setPinnedMessage(current => current?.message_id === message.message_id ? null : current)
+      setReplyingTo(current => current?.message_id === message.message_id ? null : current)
       if (editing?.message_id === message.message_id) cancelComposerContext()
     } catch (caught) {
       setError(errorMessage(caught, 'حذف پیام انجام نشد.'))
