@@ -910,3 +910,50 @@ html, body, button, input, select, textarea {
   background: #2a9fd6;
   border-radius: 0 2px 2px 0;
 }
+
+
+/* Resizable Telegram chat sidebar */
+.telegram-shell {
+  grid-template-columns: var(--sidebar-width, 312px) minmax(0, 1fr) 278px;
+}
+.titlebar-brand {
+  width: var(--sidebar-width, 312px);
+}
+.chat-sidebar {
+  min-width: 250px;
+  max-width: 420px;
+}
+.sidebar-resizer {
+  position: absolute;
+  z-index: 25;
+  top: 31px;
+  bottom: 0;
+  left: var(--sidebar-width, 312px);
+  width: 6px;
+  margin-left: -3px;
+  cursor: col-resize;
+  background: transparent;
+}
+.sidebar-resizer:hover::after,
+body.sidebar-resizing .sidebar-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 2px;
+  background: #2a9fd6;
+}
+body.sidebar-resizing {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+body.sidebar-resizing * {
+  cursor: col-resize !important;
+}
+
+@media (max-width: 1180px) {
+  .telegram-shell {
+    grid-template-columns: var(--sidebar-width, 312px) minmax(0, 1fr);
+  }
+}
