@@ -1116,3 +1116,54 @@ body.sidebar-resizing * {
     margin-left: 24px;
   }
 }
+
+
+/* Telegram Desktop proxy shield icon */
+.proxy-tool {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+.proxy-shield-icon {
+  position: relative;
+  width: 15px;
+  height: 18px;
+  display: block;
+}
+.proxy-shield-icon::before {
+  content: "";
+  position: absolute;
+  inset: 1px 1px 2px;
+  border: 1.6px solid #5f686d;
+  border-radius: 7px 7px 9px 9px / 5px 5px 10px 10px;
+  clip-path: polygon(50% 0, 94% 18%, 88% 66%, 72% 84%, 50% 100%, 28% 84%, 12% 66%, 6% 18%);
+  background: transparent;
+}
+.proxy-shield-icon::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 6px;
+  width: 5px;
+  height: 3px;
+  border-left: 1.6px solid #5f686d;
+  border-bottom: 1.6px solid #5f686d;
+  transform: rotate(-45deg);
+  opacity: .9;
+}
+.proxy-tool:hover {
+  background: #eef4f6;
+}
+.proxy-tool.active {
+  color: #249fd8;
+  background: transparent;
+}
+.proxy-tool.active .proxy-shield-icon::before {
+  border-color: #249fd8;
+}
+.proxy-tool.active .proxy-shield-icon::after {
+  border-color: #249fd8;
+}
