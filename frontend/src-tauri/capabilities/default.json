@@ -3,7 +3,8 @@
   "identifier": "default",
   "description": "Default permissions for Telegram Desktop",
   "windows": [
-    "main"
+    "main",
+    "chat-*"
   ],
   "permissions": [
     "core:default",
