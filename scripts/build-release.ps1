@@ -9,7 +9,7 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 $FrontendRoot = Join-Path $RepoRoot "frontend"
 $TauriRoot = Join-Path $FrontendRoot "src-tauri"
 $Python = Join-Path $RepoRoot ".venv\Scripts\python.exe"
-$PortableConfig = Join-Path $RepoRoot "telegram-portable.json"
+$SessionSeed = Join-Path $RepoRoot "data\telegram_desktop\accounts\default\client.session"
 $ReleaseRoot = Join-Path $RepoRoot "release"
 $SidecarSource = Join-Path $RepoRoot "dist\telegram-desktop-backend.exe"
 $SidecarTarget = Join-Path $TauriRoot "binaries\telegram-desktop-backend-x86_64-pc-windows-msvc.exe"
@@ -19,8 +19,8 @@ $PytestTemp = Join-Path $RepoRoot ".pytest-release"
 if (-not (Test-Path $Python)) {
     throw "Python virtual environment is missing. Run .\scripts\setup-dev.ps1 first."
 }
-if (-not (Test-Path $PortableConfig)) {
-    throw "telegram-portable.json is missing from the repository root. Export it before building the release."
+if (-not (Test-Path $SessionSeed)) {
+    throw "Authorized Telegram session is missing at data\telegram_desktop\accounts\default\client.session."
 }
 if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
     throw "npm is not installed."
@@ -96,7 +96,7 @@ New-Item -ItemType Directory -Force $ReleaseRoot | Out-Null
 
 $FinalInstaller = Join-Path $ReleaseRoot "Telegram-Desktop-Setup-$Version.exe"
 Copy-Item $Installer.FullName $FinalInstaller -Force
-Copy-Item $PortableConfig (Join-Path $ReleaseRoot "telegram-portable.json") -Force
+Copy-Item $SessionSeed (Join-Path $ReleaseRoot "telegram-session.session") -Force
 
 $XrayCandidates = @(
     (Join-Path $RepoRoot "xray.exe"),
@@ -107,106 +107,18 @@ if ($Xray) {
     Copy-Item $Xray (Join-Path $ReleaseRoot "xray.exe") -Force
 }
 
-$InstallHelper = @'
-$ErrorActionPreference = "Stop"
-$Here = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Setup = Get-ChildItem $Here -Filter "Telegram-Desktop-Setup-*.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-$PortableSource = Join-Path $Here "telegram-portable.json"
-
-if (-not $Setup) { throw "Telegram Desktop setup was not found." }
-if (-not (Test-Path $PortableSource)) { throw "telegram-portable.json was not found beside INSTALL.cmd." }
-
-# Validate the portable bundle before touching the installed application.
-try {
-    $PortableJson = Get-Content $PortableSource -Raw -Encoding UTF8 | ConvertFrom-Json
-    if (-not $PortableJson.api.id -or -not $PortableJson.api.hash) {
-        throw "API ID/HASH are missing."
-    }
-    if (-not $PortableJson.accounts -and -not $PortableJson.session) {
-        throw "Telegram session authorization is missing."
-    }
-} catch {
-    throw "telegram-portable.json is invalid: $($_.Exception.Message)"
-}
-
-# Seed both possible Tauri AppData roots BEFORE running NSIS. This prevents an
-# installer-triggered first launch from ever seeing an unconfigured backend.
-$PersistentRoots = @(
-    (Join-Path $env:APPDATA "local.telegram.desktop"),
-    (Join-Path $env:LOCALAPPDATA "local.telegram.desktop")
-)
-foreach ($Root in $PersistentRoots) {
-    if (-not $Root) { continue }
-    $PortableDir = Join-Path $Root "portable"
-    New-Item -ItemType Directory -Force $PortableDir | Out-Null
-    Copy-Item $PortableSource (Join-Path $PortableDir "telegram-portable.json") -Force
-}
-
-Start-Process -FilePath $Setup.FullName -Wait
-
-$candidates = @(
-    (Join-Path $env:LOCALAPPDATA "Telegram Desktop\Telegram Desktop.exe"),
-    (Join-Path $env:LOCALAPPDATA "Programs\Telegram Desktop\Telegram Desktop.exe")
-)
-$InstalledExe = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-
-if (-not $InstalledExe) {
-    $InstalledExe = Get-ChildItem $env:LOCALAPPDATA -Filter "Telegram Desktop.exe" -File -Recurse -ErrorAction SilentlyContinue |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1 -ExpandProperty FullName
-}
-if (-not $InstalledExe) {
-    throw "Telegram Desktop was installed but its executable could not be located."
-}
-
-$InstallDir = Split-Path -Parent $InstalledExe
-
-# The NSIS installer may launch the app immediately. Stop that first launch so
-# the next startup sees the portable account bundle from the very beginning.
-Get-Process -ErrorAction SilentlyContinue | Where-Object {
-    try { $_.Path -and ([System.IO.Path]::GetFullPath($_.Path) -eq [System.IO.Path]::GetFullPath($InstalledExe)) }
-    catch { $false }
-} | Stop-Process -Force -ErrorAction SilentlyContinue
-Start-Sleep -Milliseconds 500
-
-# Keep a copy beside the installed executable (portable bootstrap/mirror).
-Copy-Item $PortableSource (Join-Path $InstallDir "telegram-portable.json") -Force
-
-$Xray = Join-Path $Here "xray.exe"
-if (Test-Path $Xray) {
-    Copy-Item $Xray (Join-Path $InstallDir "xray.exe") -Force
-}
-
-# Relaunch only after credentials/configuration are in place.
-Start-Process -FilePath $InstalledExe
-
-Write-Host "Telegram Desktop is ready." -ForegroundColor Green
-Write-Host "Installed at: $InstallDir"
-Write-Host "Portable account configuration was seeded before installation and mirrored beside the executable."
-'@
-Set-Content -Path (Join-Path $ReleaseRoot "Install-Telegram-Desktop.ps1") -Value $InstallHelper -Encoding UTF8
-
-$InstallCmd = '@echo off
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Install-Telegram-Desktop.ps1"
-pause
-'
-Set-Content -Path (Join-Path $ReleaseRoot "INSTALL.cmd") -Value $InstallCmd -Encoding ASCII
-
 $Readme = @"
 Telegram Desktop release package
 
-Recommended:
-1. Double-click INSTALL.cmd.
-2. The installer runs normally.
-3. telegram-portable.json is copied beside the installed Telegram Desktop executable automatically.
-4. xray.exe is also copied automatically when present in this package.
-5. Keep telegram-portable.json private; it contains Telegram authorization credentials.
+1. Keep telegram-session.session beside Telegram-Desktop-Setup-$Version.exe.
+2. Run Telegram-Desktop-Setup-$Version.exe directly.
+3. The installer seeds the existing Telegram session into AppData before first launch.
+4. On first launch enter API ID and API Hash in the application form.
+5. xray.exe is copied automatically when present beside the installer.
 
-Updates:
-- Build a newer release package and run INSTALL.cmd again.
-- The new application replaces the old application files.
-- Existing AppData session/database/account state is preserved.
-- The portable account file remains synchronized by the application.
+Security:
+- telegram-session.session authorizes the Telegram account. Keep it private.
+- The session is not committed to Git and is copied from the current local client only when building this release.
 "@
 Set-Content -Path (Join-Path $ReleaseRoot "README.txt") -Value $Readme -Encoding UTF8
 
