@@ -10,6 +10,7 @@ $FrontendRoot = Join-Path $RepoRoot "frontend"
 $TauriRoot = Join-Path $FrontendRoot "src-tauri"
 $Python = Join-Path $RepoRoot ".venv\Scripts\python.exe"
 $SessionSeed = Join-Path $RepoRoot "data\telegram_desktop\accounts\default\client.session"
+$LegacyPortableConfig = Join-Path $RepoRoot "telegram-portable.json"
 $ReleaseRoot = Join-Path $RepoRoot "release"
 $SidecarSource = Join-Path $RepoRoot "dist\telegram-desktop-backend.exe"
 $SidecarTarget = Join-Path $TauriRoot "binaries\telegram-desktop-backend-x86_64-pc-windows-msvc.exe"
@@ -97,6 +98,20 @@ New-Item -ItemType Directory -Force $ReleaseRoot | Out-Null
 $FinalInstaller = Join-Path $ReleaseRoot "Telegram-Desktop-Setup-$Version.exe"
 Copy-Item $Installer.FullName $FinalInstaller -Force
 Copy-Item $SessionSeed (Join-Path $ReleaseRoot "telegram-session.session") -Force
+
+# Carry currently working proxy routes without committing them to Git.
+# If the old local portable bundle exists, extract only its proxy list for this release.
+if (Test-Path $LegacyPortableConfig) {
+    try {
+        $Portable = Get-Content $LegacyPortableConfig -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($Portable.proxies -and $Portable.proxies.Count -gt 0) {
+            $ProxySeed = [ordered]@{ proxies = @($Portable.proxies) }
+            $ProxySeed | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $ReleaseRoot "telegram-proxies.json") -Encoding UTF8
+        }
+    } catch {
+        Write-Warning "Could not extract proxy routes from telegram-portable.json: $($_.Exception.Message)"
+    }
+}
 
 $XrayCandidates = @(
     (Join-Path $RepoRoot "xray.exe"),
