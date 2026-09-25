@@ -108,7 +108,7 @@ class TransportCatalog:
         if not path.exists():
             return []
         try:
-            value = json.loads(path.read_text(encoding="utf-8"))
+            value = json.loads(path.read_text(encoding="utf-8-sig"))
             return value.get("proxies", []) if isinstance(value, dict) else []
         except Exception:
             return []
@@ -189,28 +189,40 @@ class TransportCatalog:
         raise ValueError("Proxy could not be added")
 
     def load(self) -> list[ProxyRoute]:
+        user_records = self._load_user_records()
         if not self.path.exists():
-            user_records = self._load_user_records()
             if user_records:
                 self.last_error = None
                 return [ProxyRoute.model_validate(item) for item in user_records]
             self.last_error = "Proxy configuration was not found"
             return []
+
+        base_records: list[dict] = []
         try:
-            payload = json.loads(self.path.read_text(encoding="utf-8"))
+            # PowerShell 5.x writes UTF-8 files with a BOM by default.
+            # utf-8-sig accepts both BOM and normal UTF-8 JSON.
+            payload = json.loads(self.path.read_text(encoding="utf-8-sig"))
             if not isinstance(payload, dict):
                 raise ValueError
             if "version" in payload and "routes" in payload and "direct" in payload:
-                value = dashboard_proxy_records(self.path, payload)
+                base_records = list(dashboard_proxy_records(self.path, payload))
             else:
-                value = payload.get("proxies", [])
-            value = list(value) + self._load_user_records()
+                raw = payload.get("proxies", [])
+                base_records = list(raw) if isinstance(raw, list) else []
             self.last_error = None
-            return [ProxyRoute.model_validate(item) for item in value]
         except Exception:
-            self.last_error = "Proxy configuration is invalid"
+            # A damaged seed file must never block proxies the user adds later.
+            self.last_error = "Proxy configuration is invalid; using user proxies only"
             logging.getLogger(__name__).warning(self.last_error)
-            return []
+
+        records = base_records + user_records
+        result: list[ProxyRoute] = []
+        for item in records:
+            try:
+                result.append(ProxyRoute.model_validate(item))
+            except Exception:
+                logging.getLogger(__name__).warning("Skipping invalid proxy record")
+        return result
 
     async def probe(self, route: ProxyRoute, timeout: float = 4.0) -> float:
         started = asyncio.get_running_loop().time()
