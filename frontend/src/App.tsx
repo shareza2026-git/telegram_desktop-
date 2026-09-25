@@ -145,6 +145,7 @@ type ProxyProbe = {
   index: number
   available: boolean
   latency_ms?: number | null
+  detail?: string | null
 }
 
 type AuthResponse = {
