@@ -28,17 +28,38 @@ fn main() {
         // bootstrap/mirror. Import it only when this Windows profile has no
         // canonical bundle yet; afterwards AppData is authoritative.
         let executable = std::env::current_exe()?;
-        let external_portable = executable
+        let executable_dir = executable
             .parent()
             .unwrap_or_else(|| std::path::Path::new("."))
-            .join("telegram-portable.json");
-        if !canonical_portable.is_file() && external_portable.is_file() {
-            std::fs::copy(&external_portable, &canonical_portable)?;
+            .to_path_buf();
+
+        // Prefer a bundle beside the installed executable, but also recover from
+        // the common distribution workflow where setup.exe and
+        // telegram-portable.json were kept together in Downloads/Desktop.
+        let mut external_candidates = vec![
+            executable_dir.join("telegram-portable.json"),
+        ];
+        if let Ok(current_dir) = std::env::current_dir() {
+            external_candidates.push(current_dir.join("telegram-portable.json"));
+        }
+        if let Some(profile) = std::env::var_os("USERPROFILE") {
+            let profile = std::path::PathBuf::from(profile);
+            external_candidates.push(profile.join("Downloads").join("telegram-portable.json"));
+            external_candidates.push(profile.join("Desktop").join("telegram-portable.json"));
+        }
+
+        let external_portable = external_candidates
+            .into_iter()
+            .find(|path| path.is_file());
+
+        if !canonical_portable.is_file() {
+            if let Some(source) = external_portable.as_ref() {
+                std::fs::copy(source, &canonical_portable)?;
+            }
         }
 
         let data_root_arg = data_root.to_string_lossy().into_owned();
         let canonical_arg = canonical_portable.to_string_lossy().into_owned();
-        let external_arg = external_portable.to_string_lossy().into_owned();
 
         let mut args = vec![
             "--data-root".to_string(),
@@ -46,9 +67,9 @@ fn main() {
             "--portable-config".to_string(),
             canonical_arg,
         ];
-        if external_portable.is_file() {
+        if let Some(source) = external_portable.as_ref() {
             args.push("--portable-mirror".to_string());
-            args.push(external_arg);
+            args.push(source.to_string_lossy().into_owned());
         }
 
         let sidecar = app
