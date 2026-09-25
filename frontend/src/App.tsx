@@ -1941,7 +1941,7 @@ function App() {
           >◇</button>
         </div>
         <div className="folder-tabs">
-          <button className={activeFolder === 'all' ? 'active' : ''} onClick={() => setActiveFolder('all')}>Chats</button>
+          <button className={activeFolder === 'all' ? 'active' : ''} onClick={() => setActiveFolder('all')}>All Chats{dialogs.some(item => !item.archived && item.unread_count > 0) && <b>{dialogs.filter(item => !item.archived && item.unread_count > 0).length}</b>}</button>
           {telegramFolders.map(folder => {
             const key = ('folder:' + folder.id) as FolderKey
             return (
@@ -2160,29 +2160,6 @@ function App() {
                           <small>{new Intl.NumberFormat('fa-IR').format(reaction.count)}</small>
                         </button>
                       ))}
-                    </div>
-                  )}
-                  {!message.deleted && selectedMessageIds.size === 0 && (
-                    <div className="message-actions">
-                      <button type="button" onClick={() => beginReply(message)}>↩ پاسخ</button>
-                      <button
-                        type="button"
-                        onClick={() => setReactionPickerFor(current => current === message.message_id ? null : message.message_id)}
-                      >
-                        ☺ واکنش
-                      </button>
-                      <button type="button" onClick={() => beginForward(message)}>↗ فوروارد</button>
-                      {message.outgoing && message.text && <button type="button" onClick={() => beginEdit(message)}>✎ ویرایش</button>}
-                      {message.outgoing && (
-                        <button
-                          type="button"
-                          className="danger"
-                          onClick={() => deleteMessage(message)}
-                          disabled={messageActionBusy === 'delete:' + mediaKey(message)}
-                        >
-                          حذف
-                        </button>
-                      )}
                     </div>
                   )}
                   {reactionPickerFor === message.message_id && !message.deleted && selectedMessageIds.size === 0 && (
