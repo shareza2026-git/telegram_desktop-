@@ -90,6 +90,7 @@ class TelegramDesktopService:
         self._recent_media: dict[tuple[str, str], Any] = {}
         self._priority_chat_ids: set[int] = set()
         self._connection_monitor: asyncio.Task | None = None
+        self._session_metadata: dict = {}
         info = self.sessions.info()
         self.status = ClientStatus(
             configured=settings.telegram_configured,
@@ -194,6 +195,17 @@ class TelegramDesktopService:
             )
             return
 
+        runtime_session, session_metadata = self.sessions.clone_runtime_session()
+        self._session_metadata = session_metadata
+        self.status = self.status.model_copy(
+            update={
+                "session_dc_id": session_metadata.get("dc_id"),
+                "session_auth_key_present": bool(session_metadata.get("auth_key_present")),
+                "session_auth_key_bytes": int(session_metadata.get("auth_key_bytes") or 0),
+                "runtime_session_cloned": runtime_session is not None,
+            }
+        )
+
         route_errors: list[str] = []
         for route in candidates:
             client: TelegramClient | None = None
@@ -202,7 +214,11 @@ class TelegramDesktopService:
                     update={"state": "CONNECTING", "last_error": None}
                 )
                 route_options = await route.activate() if route is not None else None
-                client = build_client(self.settings, route_options)
+                client = build_client(
+                    self.settings,
+                    route_options,
+                    session=runtime_session,
+                )
                 await client.connect()
                 authorized = await client.is_user_authorized()
                 self.client = client
@@ -221,8 +237,10 @@ class TelegramDesktopService:
                 return
             except Exception as error:
                 route_name = route.display_name if route is not None else "direct"
-                route_errors.append(f"{route_name}: {type(error).__name__}")
-                logger.warning("Telegram route failed (%s): %s", route_name, type(error).__name__)
+                message = str(error).strip().replace("\n", " ")
+                short = f"{type(error).__name__}: {message}" if message else type(error).__name__
+                route_errors.append(f"{route_name}: {short[:180]}")
+                logger.warning("Telegram route failed (%s): %s", route_name, short)
                 if client is not None:
                     try:
                         await client.disconnect()
