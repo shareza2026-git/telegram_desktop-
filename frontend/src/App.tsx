@@ -1310,14 +1310,15 @@ function App() {
     setProxyBusy(true)
     setError('')
     try {
-      const added = await api<{ index: number }>('/api/telegram/transport/add-link', {
+      await api<{ index: number }>('/api/telegram/transport/add-link', {
         method: 'POST',
         body: JSON.stringify({ link: value })
       })
       setProxySettingsOpen(true)
       setShowProxyAdd(false)
       setProxyLinkDraft('')
-      await selectProxy(added.index)
+      await refreshProxySettings()
+      setProxyBusy(false)
     } catch (caught) {
       setError(errorMessage(caught, 'لینک پراکسی معتبر نیست یا اضافه نشد.'))
       setProxyBusy(false)
