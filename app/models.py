@@ -150,6 +150,11 @@ class DialogStateRequest(BaseModel):
     enabled: bool
 
 
+class ApiConfigRequest(BaseModel):
+    api_id: int = Field(ge=1)
+    api_hash: str = Field(min_length=16, max_length=128)
+
+
 class LoginPhoneRequest(BaseModel):
     phone: str = Field(min_length=7, max_length=20)
 
