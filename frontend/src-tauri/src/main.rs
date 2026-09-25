@@ -78,6 +78,32 @@ fn main() {
             }
         }
 
+        // Seed API settings from a local release package when available.
+        let target_settings = data_root.join("settings.env");
+        if !target_settings.is_file() {
+            let executable = std::env::current_exe()?;
+            let executable_dir = executable
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .to_path_buf();
+
+            let mut api_candidates = vec![
+                executable_dir.join("telegram-api.env"),
+            ];
+            if let Ok(current_dir) = std::env::current_dir() {
+                api_candidates.push(current_dir.join("telegram-api.env"));
+            }
+            if let Some(profile) = std::env::var_os("USERPROFILE") {
+                let profile = std::path::PathBuf::from(profile);
+                api_candidates.push(profile.join("Downloads").join("telegram-api.env"));
+                api_candidates.push(profile.join("Desktop").join("telegram-api.env"));
+            }
+
+            if let Some(source) = api_candidates.into_iter().find(|path| path.is_file()) {
+                std::fs::copy(source, &target_settings)?;
+            }
+        }
+
         let data_root_arg = data_root.to_string_lossy().into_owned();
 
         let sidecar = app
