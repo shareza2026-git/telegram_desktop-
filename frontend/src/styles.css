@@ -430,3 +430,80 @@ html[data-theme='dark'] .search-box { color: #222; background: #fff; border-colo
   }
   .info-panel { display: none; }
 }
+
+
+/* Telegram Desktop comparison pass */
+body { font-size: 12px; }
+.folder-tabs {
+  height: 36px;
+  padding: 0 12px;
+  gap: 18px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  white-space: nowrap;
+}
+.folder-tabs::-webkit-scrollbar { display: none; }
+.folder-tabs button {
+  min-width: max-content;
+  height: 36px;
+  padding: 0 2px;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  border-bottom: 2px solid transparent;
+}
+.folder-tabs button.active {
+  color: #168dcc;
+  border-bottom-color: #168dcc;
+}
+.folder-tabs button b {
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  font-size: 9px;
+}
+.dialog-row, .compact-mode .dialog-row {
+  min-height: 58px;
+  padding: 5px 9px;
+  gap: 8px;
+}
+.dialog-row .avatar, .compact-mode .dialog-row .avatar {
+  width: 42px;
+  height: 42px;
+  flex-basis: 42px;
+}
+.dialog-copy { gap: 2px; }
+.dialog-title-line strong { font-size: 12px; }
+.dialog-copy small { font-size: 10px; }
+.dialog-meta { width: 52px; flex-basis: 52px; gap: 3px; }
+.dialog-meta time { font-size: 8px; }
+.dialog-meta .unread { min-width: 19px; padding: 1px 5px; font-size: 8px; }
+.chat-header { height: 44px; padding: 0 11px; }
+.chat-header .avatar.large { width: 34px; height: 34px; flex-basis: 34px; }
+.chat-header strong { font-size: 13px; }
+.chat-header small { font-size: 9px; }
+.message-list { padding: 10px 42px 14px 48px; }
+.message { max-width: min(68%, 560px); padding: 5px 8px 3px; font-size: 12px; line-height: 1.35; }
+.message .sender-name { font-size: 10px; }
+.message .message-meta { font-size: 8px; }
+.message small { font-size: 8px; }
+.composer { min-height: 54px; padding: 7px 12px 8px; }
+.composer input { height: 36px; font-size: 12px; }
+.pinned-banner {
+  min-height: 42px;
+  color: #31424d;
+  background: rgba(255, 255, 255, .96);
+  border-bottom: 1px solid #d8e0e5;
+}
+.pinned-banner strong { color: #168dcc; font-size: 10px; }
+.pinned-banner small { color: #687982; font-size: 9px; }
+.pinned-mark { color: #168dcc; }
+.jump-bottom {
+  color: #65747d;
+  background: #fff;
+  border: 1px solid #d7dfe4;
+  box-shadow: 0 2px 8px #0002;
+}
+.jump-bottom:hover { color: #168dcc; background: #f6f8f9; }
+.jump-bottom strong { color: #fff; background: #279fd8; }
