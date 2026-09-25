@@ -672,3 +672,115 @@ html, body, button, input, select, textarea {
   }
   .info-panel { display: none; }
 }
+
+
+/* Telegram Desktop composer match */
+.composer-shell {
+  background: rgba(245, 247, 244, .96);
+  border-top: 0;
+}
+.composer {
+  min-height: 64px;
+  padding: 8px 10px 9px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  direction: ltr;
+}
+.composer-attach {
+  width: 36px;
+  height: 40px;
+  flex: 0 0 36px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  color: #59676f;
+  background: transparent;
+  border-radius: 50%;
+  font-size: 22px;
+  line-height: 1;
+  transform: rotate(-6deg);
+}
+.composer-attach:hover { background: #e9eeec; }
+.composer-attach:disabled { opacity: .45; cursor: default; }
+
+.composer-input-shell {
+  min-width: 0;
+  height: 42px;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  direction: ltr;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #d5ddda;
+  border-radius: 22px;
+  box-shadow: 0 1px 2px #0000000d;
+}
+.composer-input-shell input,
+.composer input {
+  min-width: 0;
+  height: 40px;
+  flex: 1;
+  padding: 0 10px 0 14px;
+  direction: ltr;
+  color: #30383d;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  font-size: 13px;
+}
+.composer-input-shell input::placeholder {
+  color: #7a8389;
+  opacity: 1;
+}
+.composer-emoji {
+  width: 38px;
+  height: 40px;
+  flex: 0 0 38px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  color: #7b878e;
+  background: transparent;
+  border-radius: 50%;
+  font-size: 21px;
+  line-height: 1;
+}
+.composer-emoji:hover,
+.composer-emoji.active {
+  color: #249fd8;
+  background: #f1f6f8;
+}
+.composer-emoji:disabled { opacity: .45; cursor: default; }
+
+.send-button {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: #2a9fd6;
+  border-radius: 50%;
+  font-size: 19px;
+  box-shadow: none;
+}
+.send-button:hover { background: #238fc3; }
+.send-button.voice-mode {
+  font-size: 0;
+  opacity: 1;
+}
+.send-button.voice-mode::before {
+  content: "🎙";
+  font-size: 19px;
+  line-height: 1;
+}
+.send-button:disabled {
+  cursor: default;
+}
+.send-button.voice-mode:disabled {
+  opacity: 1;
+  background: #2a9fd6;
+}
