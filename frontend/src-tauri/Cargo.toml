@@ -1,6 +1,6 @@
 [package]
 name = "telegram-desktop"
-version = "0.1.15"
+version = "0.1.16"
 description = "Standalone Telegram Desktop client"
 authors = ["shareza2026-git"]
 edition = "2021"
