@@ -1,5 +1,4 @@
 import platform
-import socket
 
 from telethon import TelegramClient
 
@@ -12,7 +11,7 @@ def build_client(settings: Settings, options: dict | None = None, session=None) 
     session_path = settings.telegram_session_path
     session_path.parent.mkdir(parents=True, exist_ok=True)
     client_options = {
-        "device_model": socket.gethostname() or platform.node() or "Windows PC",
+        "device_model": "Desktop",
         "system_version": f"{platform.system()} {platform.release()}",
         "app_version": "1.45.0",
         "sequential_updates": False,
