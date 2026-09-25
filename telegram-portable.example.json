@@ -1,15 +1,23 @@
 {
-  "version": 1,
+  "version": 2,
   "api": {
     "id": 123456,
     "hash": "replace-with-api-hash"
   },
-  "session": {
-    "dc_id": 4,
-    "server_address": "149.154.167.91",
-    "port": 443,
-    "auth_key_b64": "replace-with-exported-session-auth-key"
-  },
+  "active_account_id": "123456789",
+  "accounts": [
+    {
+      "id": "123456789",
+      "display_name": "Primary account",
+      "phone": "98912...",
+      "session": {
+        "dc_id": 4,
+        "server_address": "149.154.167.91",
+        "port": 443,
+        "auth_key_b64": "replace-with-exported-session-auth-key"
+      }
+    }
+  ],
   "allow_direct": false,
   "xray_core": "xray.exe",
   "proxies": [
