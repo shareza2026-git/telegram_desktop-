@@ -40,6 +40,13 @@ class Dialog(BaseModel):
     last_message_preview: str | None = None
 
 
+class DialogFolder(BaseModel):
+    id: int
+    title: str
+    chat_ids: list[int] = Field(default_factory=list)
+    unread_count: int = 0
+
+
 class ChatInfo(BaseModel):
     chat_id: int
     title: str
