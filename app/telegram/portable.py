@@ -3,8 +3,10 @@ from __future__ import annotations
 import base64
 import json
 import os
+import sqlite3
 import sys
 from pathlib import Path
+from urllib.parse import quote
 from typing import Any
 
 from pydantic import SecretStr
@@ -93,13 +95,124 @@ def _write_proxy_catalog(settings: Settings, payload: dict[str, Any]) -> None:
     settings.telegram_proxy_config = target
 
 
+def _session_authorization(path: Path) -> dict[str, Any]:
+    candidates = [path, Path(str(path) + ".session")]
+    source = next((item for item in candidates if item.is_file()), None)
+    if source is None:
+        raise ValueError("Desktop session was not found")
+    uri = f"file:{quote(source.resolve().as_posix(), safe='/:')}?mode=ro"
+    connection = sqlite3.connect(uri, uri=True, timeout=5.0)
+    try:
+        row = connection.execute(
+            "SELECT dc_id, server_address, port, auth_key FROM sessions LIMIT 1"
+        ).fetchone()
+    finally:
+        connection.close()
+    if not row or not row[3]:
+        raise ValueError("Desktop session is not authorized")
+    return {
+        "dc_id": int(row[0]),
+        "server_address": str(row[1]),
+        "port": int(row[2]),
+        "auth_key_b64": base64.b64encode(bytes(row[3])).decode("ascii"),
+    }
+
+
+def _accounts(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = payload.get("accounts")
+    if isinstance(raw, list):
+        return [dict(item) for item in raw if isinstance(item, dict)]
+
+    legacy = payload.get("session")
+    if isinstance(legacy, dict):
+        account = {
+            "id": payload.get("active_account_id") or "legacy",
+            "display_name": payload.get("display_name") or "",
+            "phone": payload.get("phone") or "",
+            "session": dict(legacy),
+        }
+        return [account]
+    return []
+
+
+def _active_account(payload: dict[str, Any]) -> dict[str, Any] | None:
+    accounts = _accounts(payload)
+    if not accounts:
+        return None
+    active_id = str(payload.get("active_account_id") or "")
+    if active_id:
+        for account in accounts:
+            if str(account.get("id")) == active_id:
+                return account
+    return accounts[0]
+
+
+def sync_account_to_portable(
+    settings: Settings,
+    *,
+    user_id: int,
+    display_name: str | None,
+    phone: str | None,
+) -> Path | None:
+    path = find_portable_config(settings)
+    if path is None:
+        return None
+
+    payload = _load_payload(path)
+    accounts = _accounts(payload)
+    account_id = str(user_id)
+    record = {
+        "id": account_id,
+        "display_name": display_name or "",
+        "phone": phone or "",
+        "session": _session_authorization(settings.telegram_session_path),
+    }
+    for index, existing in enumerate(accounts):
+        if str(existing.get("id")) == account_id:
+            accounts[index] = record
+            break
+    else:
+        accounts.append(record)
+
+    payload["version"] = 2
+    payload["accounts"] = accounts
+    payload["active_account_id"] = account_id
+    payload.pop("session", None)
+    payload.pop("display_name", None)
+    payload.pop("phone", None)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
+def remove_account_from_portable(settings: Settings, user_id: int | None) -> Path | None:
+    path = find_portable_config(settings)
+    if path is None or user_id is None:
+        return path
+
+    payload = _load_payload(path)
+    account_id = str(user_id)
+    accounts = [
+        account for account in _accounts(payload)
+        if str(account.get("id")) != account_id
+    ]
+    payload["version"] = 2
+    payload["accounts"] = accounts
+    payload["active_account_id"] = str(accounts[0].get("id")) if accounts else None
+    payload.pop("session", None)
+    payload.pop("display_name", None)
+    payload.pop("phone", None)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
 def _seed_session(settings: Settings, payload: dict[str, Any]) -> None:
     target = settings.telegram_session_path
     candidates = [target, Path(str(target) + ".session")]
     if any(path.is_file() for path in candidates):
         return
 
-    session = payload.get("session")
+    account = _active_account(payload)
+    session = account.get("session") if account else payload.get("session")
     if not isinstance(session, dict):
         return
     try:
