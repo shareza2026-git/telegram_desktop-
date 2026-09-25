@@ -1922,16 +1922,16 @@ function App() {
               <small dir="ltr">{status.phone ? '+' + status.phone : 'Telegram account'}</small>
               <span className="menu-chevron">⌃</span>
             </section>
-            <button className="menu-item" type="button" onClick={() => menuUnavailable('افزودن حساب')}><i>♙</i><span>Add Account</span></button>
+            <button className="menu-item" type="button" onClick={() => menuUnavailable('افزودن حساب')}><i>⊕</i><span>Add Account</span></button>
             <hr />
-            <button className="menu-item" type="button" onClick={openSelfChat}><i>▱</i><span>Saved Messages</span></button>
+            <button className="menu-item" type="button" onClick={openSelfChat}><i>⌑</i><span>Saved Messages</span></button>
             <button className="menu-item" type="button" onClick={openSelfChat}><i>◉</i><span>My Profile</span></button>
             <button className="menu-item" type="button" onClick={() => menuUnavailable('گروه جدید')}><i>♧</i><span>New Group</span></button>
-            <button className="menu-item" type="button" onClick={() => menuUnavailable('کانال جدید')}><i>⌁</i><span>New Channel</span></button>
+            <button className="menu-item" type="button" onClick={() => menuUnavailable('کانال جدید')}><i>▷</i><span>New Channel</span></button>
             <hr />
-            <button className="menu-item active" type="button" onClick={() => setMainMenuOpen(false)}><i>◯</i><span>Chats</span></button>
+            <button className="menu-item active" type="button" onClick={() => setMainMenuOpen(false)}><i>◌</i><span>Chats</span></button>
             <button className="menu-item" type="button" onClick={() => menuUnavailable('مخاطبین')}><i>♙</i><span>Contacts</span></button>
-            <button className="menu-item" type="button" onClick={() => menuUnavailable('تماس‌ها')}><i>♧</i><span>Calls</span></button>
+            <button className="menu-item" type="button" onClick={() => menuUnavailable('تماس‌ها')}><i>⌕</i><span>Calls</span></button>
             <button className="menu-item" type="button" onClick={() => void openSettings()}><i>⚙</i><span>Settings</span></button>
             <hr />
             <button className="menu-item" type="button" onClick={() => menuUnavailable('قابلیت‌های تلگرام')}><i>?</i><span>Telegram Features</span></button>
