@@ -285,7 +285,7 @@ html[data-theme='light'] .safe-note { color: #607687; background: #60768712; }
 }
 
 /* Unigram-inspired desktop shell */
-body { min-width: 760px; overflow: hidden; color: #202124; background: #f7f7f7; }
+body { min-width: 560px; overflow: hidden; color: #202124; background: #f7f7f7; }
 .telegram-shell {
   height: 100vh;
   min-height: 0;
@@ -507,3 +507,168 @@ body { font-size: 12px; }
 }
 .jump-bottom:hover { color: #168dcc; background: #f6f8f9; }
 .jump-bottom strong { color: #fff; background: #279fd8; }
+
+
+/* Telegram Desktop pixel-density comparison pass */
+html, body, button, input, select, textarea {
+  font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+}
+.telegram-shell {
+  grid-template-columns: 312px minmax(0, 1fr) 278px;
+}
+.titlebar-brand { width: 312px; }
+.chat-sidebar { font-size: 12px; }
+.search-row { height: 45px; padding: 5px 10px 4px; }
+.search-box { height: 31px; padding: 0 8px; }
+.search-box input { font-size: 12px; }
+.folder-tabs { height: 35px; padding: 0 10px; gap: 20px; }
+.folder-tabs button { height: 35px; font-size: 12px; }
+.folder-tabs button b {
+  min-width: 20px;
+  height: 18px;
+  padding: 0 5px;
+  font-size: 9px;
+  line-height: 18px;
+}
+.dialog-row, .compact-mode .dialog-row {
+  min-height: 67px;
+  padding: 6px 10px;
+  gap: 9px;
+}
+.dialog-row .avatar, .compact-mode .dialog-row .avatar {
+  width: 46px;
+  height: 46px;
+  flex-basis: 46px;
+}
+.dialog-copy { gap: 3px; }
+.dialog-title-line strong { font-size: 13px; font-weight: 500; }
+.dialog-copy small { font-size: 11px; line-height: 1.25; }
+.dialog-meta { width: 54px; flex-basis: 54px; gap: 4px; }
+.dialog-meta time { font-size: 9px; }
+.dialog-meta .unread { min-width: 22px; padding: 2px 6px; font-size: 9px; }
+
+.chat-header {
+  height: 47px;
+  min-height: 47px;
+  padding: 0 10px;
+  gap: 9px;
+}
+.chat-header .avatar.large {
+  width: 38px;
+  height: 38px;
+  flex-basis: 38px;
+}
+.chat-header strong { font-size: 13px; line-height: 1.25; }
+.chat-header small { font-size: 10px; line-height: 1.2; }
+
+.pinned-banner {
+  min-height: 48px;
+  padding: 5px 12px;
+  gap: 8px;
+  background: rgba(255,255,255,.97);
+}
+.pinned-banner:hover { background: #f7f9fa; }
+.pinned-mark {
+  width: 3px;
+  height: 32px;
+  flex: 0 0 3px;
+  border-radius: 2px;
+  background: #249bd3;
+  color: transparent;
+}
+.pinned-banner strong { font-size: 10px; color: #168dcc; }
+.pinned-banner small { font-size: 10px; color: #374955; }
+
+.message-list {
+  padding: 8px 42px 12px 48px;
+  gap: 5px;
+}
+.message {
+  max-width: min(86%, 420px);
+  padding: 7px 10px 5px;
+  gap: 2px;
+  font-size: 13px;
+  line-height: 1.35;
+  border-radius: 14px 14px 14px 4px;
+}
+.message.outgoing { border-radius: 14px 14px 4px 14px; }
+.message .avatar.message-avatar {
+  left: -39px;
+  bottom: 0;
+  width: 30px;
+  height: 30px;
+  flex-basis: 30px;
+}
+.sender-name {
+  font-size: 10px;
+  line-height: 1.15;
+  font-weight: 500;
+}
+.message-text { line-height: 1.38; }
+.message-meta {
+  margin-top: 0;
+  gap: 3px;
+  font-size: 9px;
+  line-height: 1;
+}
+.message small { font-size: 9px; }
+.message-actions { display: none !important; }
+.reply-reference {
+  padding: 4px 7px;
+  border-right-width: 2px;
+  font-size: 10px;
+}
+.reply-reference strong { font-size: 10px; }
+.reply-reference span { font-size: 9px; }
+
+.unread-divider {
+  height: 29px;
+  margin: 0 -42px 2px -48px;
+  padding: 0 10px;
+  justify-content: center;
+  color: #fff;
+  background: rgba(65,126,93,.58);
+  font-size: 11px;
+  font-weight: 600;
+}
+.unread-divider::before, .unread-divider::after { display: none; }
+.unread-divider span { margin: auto; }
+
+.jump-bottom {
+  width: 40px;
+  height: 40px;
+  bottom: 9px;
+  margin-top: -48px;
+  font-size: 21px;
+}
+
+.composer-shell {
+  padding: 0;
+  background: rgba(247,249,248,.96);
+}
+.composer {
+  min-height: 58px;
+  padding: 8px 10px;
+  gap: 7px;
+}
+.composer input {
+  height: 40px;
+  padding: 0 13px;
+  font-size: 13px;
+  border-radius: 20px;
+}
+.send-button {
+  width: 42px;
+  height: 42px;
+  font-size: 19px;
+}
+
+@media (max-width: 1180px) {
+  .telegram-shell {
+    grid-template-columns: 312px minmax(0, 1fr);
+    grid-template-areas:
+      "titlebar titlebar"
+      "sidebar chat";
+  }
+  .info-panel { display: none; }
+}
