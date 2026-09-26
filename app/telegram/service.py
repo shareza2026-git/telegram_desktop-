@@ -924,15 +924,19 @@ class TelegramDesktopService:
                 mime_type="image/jpeg",
             )
 
-        task = self._chat_photo_tasks.get(chat_id)
+        tasks = getattr(self, "_chat_photo_tasks", None)
+        if tasks is None:
+            tasks = {}
+            self._chat_photo_tasks = tasks
+        task = tasks.get(chat_id)
         if task is None or task.done():
             task = asyncio.create_task(self._download_chat_photo_once(chat_id))
-            self._chat_photo_tasks[chat_id] = task
+            tasks[chat_id] = task
         try:
             return await task
         finally:
-            if self._chat_photo_tasks.get(chat_id) is task and task.done():
-                self._chat_photo_tasks.pop(chat_id, None)
+            if tasks.get(chat_id) is task and task.done():
+                tasks.pop(chat_id, None)
 
     async def _download_media_once(self, chat_id: int, message_id: int) -> DownloadedMedia:
         client = self._require_authorized()
@@ -973,15 +977,19 @@ class TelegramDesktopService:
             )
 
         key = (chat_id, message_id)
-        task = self._media_download_tasks.get(key)
+        tasks = getattr(self, "_media_download_tasks", None)
+        if tasks is None:
+            tasks = {}
+            self._media_download_tasks = tasks
+        task = tasks.get(key)
         if task is None or task.done():
             task = asyncio.create_task(self._download_media_once(chat_id, message_id))
-            self._media_download_tasks[key] = task
+            tasks[key] = task
         try:
             return await task
         finally:
-            if self._media_download_tasks.get(key) is task and task.done():
-                self._media_download_tasks.pop(key, None)
+            if tasks.get(key) is task and task.done():
+                tasks.pop(key, None)
 
     async def _scan_dialogs(self) -> list[Dialog]:
         client = self._require_authorized()
