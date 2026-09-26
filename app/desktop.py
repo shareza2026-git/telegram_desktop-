@@ -81,7 +81,9 @@ def _restore_portable_state(data_root: Path, transfer_dir: Path | None) -> None:
 
     portable_session = transfer_dir / "telegram-session.session"
     local_session = account_dir / "client.session"
-    if _session_has_auth_key(portable_session):
+    # The installed instance is authoritative after the first successful login.
+    # A bundled snapshot may be older than the account selected in this instance.
+    if not _session_has_auth_key(local_session) and _session_has_auth_key(portable_session):
         temporary = account_dir / "client.session.portable.tmp"
         temporary.unlink(missing_ok=True)
         source = sqlite3.connect(str(portable_session))
@@ -100,11 +102,11 @@ def _restore_portable_state(data_root: Path, transfer_dir: Path | None) -> None:
         temporary.replace(local_session)
 
     portable_api = transfer_dir / "telegram-api.env"
-    if portable_api.is_file():
+    if portable_api.is_file() and not (data_root / "settings.env").is_file():
         shutil.copy2(portable_api, data_root / "settings.env")
 
     portable_proxies = transfer_dir / "telegram-proxies.json"
-    if portable_proxies.is_file():
+    if portable_proxies.is_file() and not (data_root / "proxies.json").is_file():
         # Validate before replacing the private copy so a truncated portable
         # file cannot break startup.
         payload = json.loads(portable_proxies.read_text(encoding="utf-8"))

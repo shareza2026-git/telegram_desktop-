@@ -287,8 +287,8 @@ class TelegramDesktopService:
                     route_options,
                     session=runtime_session,
                 )
-                await client.connect()
-                authorized = await client.is_user_authorized()
+                await asyncio.wait_for(client.connect(), timeout=12.0)
+                authorized = await asyncio.wait_for(client.is_user_authorized(), timeout=8.0)
                 self.client = client
                 self.route = route
                 if authorized:
@@ -421,10 +421,12 @@ class TelegramDesktopService:
         self.login_phone = None
         self.login_code_hash = None
 
-    async def _mark_authorized(self) -> None:
+    async def _mark_authorized(self, *, persist_session: bool = False) -> None:
         if self.client is None:
             raise DesktopError("Telegram client is not connected")
-        account = await self.client.get_me()
+        account = await asyncio.wait_for(self.client.get_me(), timeout=8.0)
+        if persist_session and isinstance(self.client.session, MemorySession):
+            await asyncio.to_thread(self.sessions.persist_runtime_session, self.client.session)
         self._register_handlers()
         self.status = self.status.model_copy(
             update={
@@ -865,6 +867,9 @@ class TelegramDesktopService:
         routes = self.transport.load()
         if index is not None and index != 0 and not (1 <= index <= len(routes)):
             raise ValueError("Proxy selection is invalid")
+        if not self.settings.telegram_configured:
+            self.transport.set_selected_index(index)
+            return {"selected_index": index, "active_route": None, "connected": False}
         async with self._lifecycle_lock:
             self.transport.set_selected_index(index)
             client = self.client
@@ -1145,6 +1150,7 @@ class TelegramDesktopService:
         )
         self._dialog_snapshot = ordered
         self._dialog_snapshot_at = asyncio.get_running_loop().time()
+        await self.events.publish({"type": "DIALOGS_REFRESHED", "data": {}})
         return ordered
 
     async def list_dialogs(
@@ -1166,7 +1172,11 @@ class TelegramDesktopService:
                 task = asyncio.create_task(self._scan_dialogs())
                 self._dialog_scan_task = task
             try:
-                dialogs = await task
+                # Telegram can stall midway through a large dialog scan. Keep
+                # the local list visible, then notify the UI when it finishes.
+                dialogs = await asyncio.wait_for(asyncio.shield(task), timeout=4.0)
+            except asyncio.TimeoutError:
+                dialogs = self._dialog_snapshot or await self.store.list_dialogs()
             finally:
                 if self._dialog_scan_task is task and task.done():
                     self._dialog_scan_task = None
@@ -1189,7 +1199,7 @@ class TelegramDesktopService:
             dialogs = await self.list_dialogs()
         by_id = {item.chat_id: item for item in dialogs}
         try:
-            result = await client(functions.messages.GetDialogFiltersRequest())
+            result = await asyncio.wait_for(client(functions.messages.GetDialogFiltersRequest()), timeout=5.0)
         except Exception as error:
             logger.warning("Telegram dialog folders could not be loaded: %s", type(error).__name__)
             raise DesktopError("Telegram dialog folders could not be loaded") from None
@@ -1689,7 +1699,7 @@ class TelegramDesktopService:
         except Exception as error:
             self._log_auth_error(error)
             raise self._auth_error(error, "تأیید کد انجام نشد.") from None
-        await self._mark_authorized()
+        await self._mark_authorized(persist_session=True)
         self._clear_login_challenge()
         return {"code_sent": True, "requires_2fa": False, "authorized": True}
 
@@ -1701,7 +1711,7 @@ class TelegramDesktopService:
         except Exception as error:
             self._log_auth_error(error)
             raise self._auth_error(error, "تأیید رمز دومرحله‌ای انجام نشد.") from None
-        await self._mark_authorized()
+        await self._mark_authorized(persist_session=True)
         self._clear_login_challenge()
         return {"code_sent": True, "requires_2fa": False, "authorized": True}
 

@@ -121,6 +121,19 @@ class SessionManager:
             metadata["error"] = f"{type(error).__name__}: {error}"
             return None, metadata
 
+    def persist_runtime_session(self, session: MemorySession) -> None:
+        """Keep a newly authorized in-memory session usable on the next launch."""
+        auth_key = session.auth_key
+        if auth_key is None or not getattr(auth_key, "key", None):
+            raise ValueError("Telegram session has no authorization key")
+        target = SQLiteSession(str(self.client_path))
+        try:
+            target.set_dc(session.dc_id, session.server_address, session.port)
+            target.auth_key = auth_key
+            target.save()
+        finally:
+            target.close()
+
     def remove_client_session(self) -> None:
         root = self.settings.data_root
         for candidate in self._client_candidates():
