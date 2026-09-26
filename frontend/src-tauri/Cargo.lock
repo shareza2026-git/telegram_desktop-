@@ -3422,7 +3422,7 @@ dependencies = [
 
 [[package]]
 name = "telegram-desktop"
-version = "0.1.0"
+version = "0.1.17"
 dependencies = [
  "tauri",
  "tauri-build",
