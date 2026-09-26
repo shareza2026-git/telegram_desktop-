@@ -38,6 +38,7 @@ class VlessRealityProfile:
     fingerprint: str
     reality_public_key: str = field(repr=False)
     short_id: str = field(repr=False)
+    flow: str = ""
     display_name: str = ""
 
 
@@ -72,19 +73,33 @@ def parse_vless_uri(uri: str) -> VlessRealityProfile:
         if port is None or not 1 <= port <= 65535 or not _valid_host(parts.hostname):
             raise VlessProfileError("PROFILE_INVALID")
         query = parse_qs(parts.query, keep_blank_values=True)
-        if _required(query, "encryption").lower() != "none":
+        encryption = (query.get("encryption") or ["none"])[0].strip().lower()
+        security = _required(query, "security").lower()
+        network = (query.get("type") or ["tcp"])[0].strip().lower()
+        header_type = (
+            (query.get("headerType") or query.get("headertype") or ["none"])[0]
+            .strip()
+            .lower()
+        )
+        flow = (query.get("flow") or [""])[0].strip()
+        if encryption != "none":
             raise VlessProfileError("PROFILE_UNSUPPORTED")
-        if _required(query, "security").lower() != "reality":
+        if security != "reality":
             raise VlessProfileError("PROFILE_UNSUPPORTED")
-        if _required(query, "type").lower() not in {"tcp", "raw"}:
+        if network not in {"tcp", "raw"}:
             raise VlessProfileError("PROFILE_UNSUPPORTED")
-        if _required(query, "headerType").lower() != "none":
+        if header_type != "none":
+            raise VlessProfileError("PROFILE_UNSUPPORTED")
+        if flow not in {"", "xtls-rprx-vision"}:
             raise VlessProfileError("PROFILE_UNSUPPORTED")
         public_key = _required(query, "pbk")
-        short_id = _required(query, "sid")
+        short_id = (query.get("sid") or [""])[0].strip()
         if not re.fullmatch(r"[A-Za-z0-9_-]{20,}", public_key):
             raise VlessProfileError("PROFILE_INVALID")
-        if not re.fullmatch(r"[0-9a-fA-F]{2,16}", short_id) or len(short_id) % 2:
+        if short_id and (
+            not re.fullmatch(r"[0-9a-fA-F]{2,16}", short_id)
+            or len(short_id) % 2
+        ):
             raise VlessProfileError("PROFILE_INVALID")
         return VlessRealityProfile(
             user_id=user_id,
@@ -94,6 +109,7 @@ def parse_vless_uri(uri: str) -> VlessRealityProfile:
             fingerprint=_required(query, "fp"),
             reality_public_key=public_key,
             short_id=short_id.lower(),
+            flow=flow,
             display_name=unquote(parts.fragment),
         )
     except VlessProfileError:
@@ -122,7 +138,11 @@ def _xray_config(profile: VlessRealityProfile, port: int) -> dict:
             "settings": {"vnext": [{
                 "address": profile.host,
                 "port": profile.port,
-                "users": [{"id": profile.user_id, "encryption": "none"}],
+                "users": [{
+                    "id": profile.user_id,
+                    "encryption": "none",
+                    **({"flow": profile.flow} if profile.flow else {}),
+                }],
             }]},
             "streamSettings": {
                 "method": "raw",
