@@ -122,9 +122,9 @@ class TelegramDesktopService:
         )
 
     async def start(self) -> None:
-        if self._message_persist_worker is None:
+        if self._message_persist_worker is None or self._message_persist_worker.done():
             self._message_persist_worker = asyncio.create_task(self._message_persist_loop())
-        if self._connection_monitor is None:
+        if self._connection_monitor is None or self._connection_monitor.done():
             self._connection_monitor = asyncio.create_task(self._monitor_connection())
         self.sessions.ensure_client_path()
         info = self.sessions.info()
@@ -156,6 +156,14 @@ class TelegramDesktopService:
             return
         await self._connect()
 
+    def _reset_connection_caches(self) -> None:
+        self._dialog_snapshot = []
+        self._dialog_snapshot_at = 0.0
+        self._chat_info_cache.clear()
+        self._pinned_cache.clear()
+        self._typing_state.clear()
+        self._read_ack_at.clear()
+
     async def _monitor_connection(self) -> None:
         while True:
             await asyncio.sleep(5)
@@ -181,6 +189,7 @@ class TelegramDesktopService:
             if self.route is not None:
                 await self.route.deactivate()
             self.route = None
+            self._reset_connection_caches()
             self.status = self.status.model_copy(
                 update={"connected": False, "state": "CONNECTING", "last_error": None}
             )
@@ -312,6 +321,7 @@ class TelegramDesktopService:
                 with suppress(Exception):
                     await self.route.deactivate()
             self.route = None
+            self._reset_connection_caches()
 
             info = self.sessions.info()
             self.status = self.status.model_copy(
@@ -1601,6 +1611,7 @@ class TelegramDesktopService:
         if self.route is not None:
             await self.route.deactivate()
         self.route = None
+        self._reset_connection_caches()
         self.login_phone = None
         self.login_code_hash = None
         self.sessions.remove_client_session()
@@ -1624,6 +1635,24 @@ class TelegramDesktopService:
             with suppress(asyncio.CancelledError):
                 await self._connection_monitor
             self._connection_monitor = None
+
+        pending_tasks = []
+        if self._dialog_scan_task is not None and not self._dialog_scan_task.done():
+            pending_tasks.append(self._dialog_scan_task)
+        pending_tasks.extend(
+            task for task in self._chat_photo_tasks.values() if not task.done()
+        )
+        pending_tasks.extend(
+            task for task in self._media_download_tasks.values() if not task.done()
+        )
+        for task in pending_tasks:
+            task.cancel()
+        if pending_tasks:
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
+        self._dialog_scan_task = None
+        self._chat_photo_tasks.clear()
+        self._media_download_tasks.clear()
+
         await self._flush_message_persistence()
         if self._message_persist_worker is not None:
             self._message_persist_worker.cancel()
@@ -1632,9 +1661,12 @@ class TelegramDesktopService:
             self._message_persist_worker = None
         self._unregister_handlers()
         if self.client is not None:
-            await self.client.disconnect()
+            with suppress(Exception):
+                await self.client.disconnect()
         self.client = None
         if self.route is not None:
-            await self.route.deactivate()
+            with suppress(Exception):
+                await self.route.deactivate()
         self.route = None
+        self._reset_connection_caches()
         self.status = self.status.model_copy(update={"connected": False, "state": "STOPPED"})
