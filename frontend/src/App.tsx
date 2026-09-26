@@ -1256,11 +1256,9 @@ function App() {
 
   async function refreshDialogs() {
     try {
-      const [nextDialogs, nextFolders] = await Promise.all([
-        api<Dialog[]>('/api/telegram/dialogs'),
-        api<DialogFolder[]>('/api/telegram/dialog-folders')
-      ])
+      const nextDialogs = await api<Dialog[]>('/api/telegram/dialogs')
       setDialogs(nextDialogs)
+      const nextFolders = await api<DialogFolder[]>('/api/telegram/dialog-folders')
       setTelegramFolders(nextFolders)
     } catch (caught) {
       setError(errorMessage(caught, 'به‌روزرسانی گفتگوها انجام نشد.'))
@@ -1297,12 +1295,10 @@ function App() {
   async function refreshAuthorizedState() {
     const nextStatus = await api<Status>('/api/telegram/status')
     setStatus(nextStatus)
-    if (nextStatus.authorized) {
-      const [nextDialogs, nextFolders] = await Promise.all([
-        api<Dialog[]>('/api/telegram/dialogs'),
-        api<DialogFolder[]>('/api/telegram/dialog-folders')
-      ])
+    if (nextStatus.authorized && !isPopoutWindow) {
+      const nextDialogs = await api<Dialog[]>('/api/telegram/dialogs')
       setDialogs(nextDialogs)
+      const nextFolders = await api<DialogFolder[]>('/api/telegram/dialog-folders')
       setTelegramFolders(nextFolders)
     }
   }
