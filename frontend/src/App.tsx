@@ -157,6 +157,7 @@ type ProxyProbe = {
   available: boolean
   latency_ms?: number | null
   detail?: string | null
+  active?: boolean
 }
 
 type AuthResponse = {
@@ -695,7 +696,7 @@ function App() {
       chatActionTimerRef.current = null
     }
     setSelectedChatAction(null)
-  }, [selected?.chat_id])
+  }, [selected?.chat_id, status?.authorized])
 
   useEffect(() => {
     return () => {
@@ -824,6 +825,19 @@ function App() {
     let socket: WebSocket | undefined
     let snapshotPromise: Promise<void> | null = null
     let lastFullSnapshotAt = 0
+    let cacheHydrated = false
+
+    async function hydrateCachedDialogs() {
+      if (isPopoutWindow || disposed || cacheHydrated) return
+      try {
+        const cached = await api<Dialog[]>('/api/cache/dialogs')
+        if (disposed) return
+        cacheHydrated = true
+        if (cached.length) setDialogs(cached)
+      } catch {
+        // The sidecar may still be starting; socket open retries this immediately.
+      }
+    }
 
     async function refreshStatus() {
       try {
@@ -891,6 +905,8 @@ function App() {
       socket.onopen = () => {
         const wasReconnect = retryCount > 0
         retryCount = 0
+        void hydrateCachedDialogs()
+        if (!isPopoutWindow && !lastFullSnapshotAt) void refreshSnapshot()
         if (wasReconnect) void resyncActiveChat()
       }
       socket.onmessage = event => {
@@ -1012,6 +1028,7 @@ function App() {
       socket.onerror = () => socket?.close()
     }
 
+    void hydrateCachedDialogs()
     void refreshSnapshot()
     connectSocket()
     return () => {
@@ -1056,6 +1073,7 @@ function App() {
     const chatId = selected.chat_id
     const unreadCount = selected.unread_count
     const controller = new AbortController()
+    let remoteHistoryApplied = false
     const isCurrentChat = () => !controller.signal.aborted && selectedChatIdRef.current === chatId
 
     setMessages([])
@@ -1085,6 +1103,22 @@ function App() {
     setSelectedMessageIds(new Set())
     setSelectedChatAction(null)
 
+    api<Message[]>('/api/cache/chats/' + chatId + '/messages?limit=' + HISTORY_PAGE_SIZE, { signal: controller.signal })
+      .then(items => {
+        if (!isCurrentChat() || remoteHistoryApplied || !items.length) return
+        const visibleItems = items.filter(item => !item.deleted)
+        setMessages(visibleItems)
+        setHasOlder(items.length === HISTORY_PAGE_SIZE)
+        window.requestAnimationFrame(() => {
+          if (isCurrentChat() && !remoteHistoryApplied) scrollToBottom('auto')
+        })
+      })
+      .catch(() => undefined)
+
+    if (!status?.authorized) {
+      return () => controller.abort()
+    }
+
     api<ChatInfo>('/api/telegram/chats/' + chatId, { signal: controller.signal })
       .then(info => {
         if (isCurrentChat()) setChatInfo(info)
@@ -1106,6 +1140,7 @@ function App() {
     api<Message[]>('/api/telegram/chats/' + chatId + '/messages?limit=' + HISTORY_PAGE_SIZE, { signal: controller.signal })
       .then(items => {
         if (!isCurrentChat()) return
+        remoteHistoryApplied = true
         const visibleItems = items.filter(item => !item.deleted)
         setMessages(visibleItems)
         setHasOlder(items.length === HISTORY_PAGE_SIZE)
@@ -2611,11 +2646,13 @@ function App() {
                         <small dir="ltr">{route.type} · {route.host}:{route.port}</small>
                       </span>
                       <span className={'auth-proxy-ping ' + (probe?.available ? 'ok' : probe ? 'bad' : 'checking')}>
-                        {probe?.available
-                          ? Math.round(probe.latency_ms || 0) + ' ms'
-                          : probe
-                            ? 'Unavailable'
-                            : 'Checking…'}
+                        {probe?.active
+                          ? 'Connected'
+                          : probe?.available
+                            ? (probe.latency_ms != null ? Math.round(probe.latency_ms) + ' ms' : 'Available')
+                            : probe
+                              ? 'Unavailable'
+                              : 'Checking…'}
                       </span>
                     </button>
                   )
