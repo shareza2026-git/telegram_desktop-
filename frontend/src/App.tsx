@@ -1043,7 +1043,12 @@ function App() {
       setSelectedChatAction(null)
       return
     }
+
+    const chatId = selected.chat_id
     const unreadCount = selected.unread_count
+    const controller = new AbortController()
+    const isCurrentChat = () => !controller.signal.aborted && selectedChatIdRef.current === chatId
+
     setMessages([])
     setHasOlder(false)
     setChatInfo(null)
@@ -1054,7 +1059,7 @@ function App() {
     stickToBottomRef.current = true
     setReplyingTo(null)
     setEditing(null)
-    setDraft(draftsRef.current[String(selected.chat_id)] || '')
+    setDraft(draftsRef.current[String(chatId)] || '')
     setMessageSearchOpen(false)
     setMessageQuery('')
     setSearchResults([])
@@ -1069,32 +1074,56 @@ function App() {
     setMessageContextMenu(null)
     setSelectedMessageIds(new Set())
     setSelectedChatAction(null)
-    api<ChatInfo>('/api/telegram/chats/' + selected.chat_id)
-      .then(setChatInfo)
-      .catch(() => setChatInfo(null))
 
-    api<Message | null>('/api/telegram/chats/' + selected.chat_id + '/pinned')
-      .then(setPinnedMessage)
-      .catch(() => setPinnedMessage(null))
+    api<ChatInfo>('/api/telegram/chats/' + chatId, { signal: controller.signal })
+      .then(info => {
+        if (isCurrentChat()) setChatInfo(info)
+      })
+      .catch(error => {
+        if (error instanceof DOMException && error.name === 'AbortError') return
+        if (isCurrentChat()) setChatInfo(null)
+      })
 
-    api<Message[]>('/api/telegram/chats/' + selected.chat_id + '/messages?limit=' + HISTORY_PAGE_SIZE)
+    api<Message | null>('/api/telegram/chats/' + chatId + '/pinned', { signal: controller.signal })
+      .then(message => {
+        if (isCurrentChat()) setPinnedMessage(message)
+      })
+      .catch(error => {
+        if (error instanceof DOMException && error.name === 'AbortError') return
+        if (isCurrentChat()) setPinnedMessage(null)
+      })
+
+    api<Message[]>('/api/telegram/chats/' + chatId + '/messages?limit=' + HISTORY_PAGE_SIZE, { signal: controller.signal })
       .then(items => {
+        if (!isCurrentChat()) return
         const visibleItems = items.filter(item => !item.deleted)
         setMessages(visibleItems)
         setHasOlder(items.length === HISTORY_PAGE_SIZE)
         const incoming = items.filter(item => !item.outgoing && !item.deleted)
         const unreadIndex = Math.max(0, incoming.length - unreadCount)
         setUnreadBoundaryId(unreadCount > 0 && incoming.length > 0 ? incoming[unreadIndex].message_id : null)
-        window.requestAnimationFrame(() => scrollToBottom('auto'))
+        window.requestAnimationFrame(() => {
+          if (isCurrentChat()) scrollToBottom('auto')
+        })
       })
-      .catch(error => setError(errorMessage(error, 'تاریخچه این گفتگو دریافت نشد.')))
+      .catch(error => {
+        if (error instanceof DOMException && error.name === 'AbortError') return
+        if (isCurrentChat()) setError(errorMessage(error, 'تاریخچه این گفتگو دریافت نشد.'))
+      })
 
-    api<{ chat_id: number; read: boolean }>('/api/telegram/chats/' + selected.chat_id + '/read', { method: 'POST' })
+    api<{ chat_id: number; read: boolean }>('/api/telegram/chats/' + chatId + '/read', {
+      method: 'POST',
+      signal: controller.signal
+    })
       .then(() => {
-        setDialogs(current => current.map(item => item.chat_id === selected.chat_id ? { ...item, unread_count: 0 } : item))
-        setSelected(current => current && current.chat_id === selected.chat_id ? { ...current, unread_count: 0 } : current)
+        setDialogs(current => current.map(item => item.chat_id === chatId ? { ...item, unread_count: 0 } : item))
+        if (isCurrentChat()) {
+          setSelected(current => current && current.chat_id === chatId ? { ...current, unread_count: 0 } : current)
+        }
       })
       .catch(() => undefined)
+
+    return () => controller.abort()
   }, [selected?.chat_id])
 
   useEffect(() => {
@@ -1494,13 +1523,14 @@ function App() {
       const older = await api<Message[]>(
         '/api/telegram/chats/' + selected.chat_id + '/messages?limit=' + HISTORY_PAGE_SIZE + '&offset_id=' + oldestId
       )
+      if (selectedChatIdRef.current !== selected.chat_id) return
       setMessages(current => {
         const known = new Set(current.map(item => item.message_id))
         return [...older.filter(item => !item.deleted && !known.has(item.message_id)), ...current]
       })
       setHasOlder(older.length === HISTORY_PAGE_SIZE)
       window.requestAnimationFrame(() => {
-        if (!viewport) return
+        if (!viewport || selectedChatIdRef.current !== selected.chat_id) return
         viewport.scrollTop = previousTop + viewport.scrollHeight - previousHeight
       })
     } catch (caught) {
