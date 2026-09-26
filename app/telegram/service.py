@@ -1340,7 +1340,15 @@ class TelegramDesktopService:
         # even if the live delete update was missed by an older build.
         if offset_id == 0 and cached:
             remote_ids = {message.message_id for message in values}
-            if values:
+            if not values or len(values) < limit:
+                # Telegram reached the beginning of the chat; anything still in
+                # the cached latest window but absent remotely has been deleted.
+                stale_ids = [
+                    message.message_id
+                    for message in cached
+                    if message.message_id not in remote_ids
+                ]
+            else:
                 oldest_remote_id = min(remote_ids)
                 newest_remote_id = max(remote_ids)
                 stale_ids = [
@@ -1349,8 +1357,6 @@ class TelegramDesktopService:
                     if oldest_remote_id <= message.message_id <= newest_remote_id
                     and message.message_id not in remote_ids
                 ]
-            else:
-                stale_ids = [message.message_id for message in cached]
             marker = getattr(self.store, "mark_deleted_many", None)
             if marker is not None and stale_ids:
                 await marker(chat_id, stale_ids)
