@@ -31,7 +31,7 @@ def test_windows_install_keeps_portable_state_instance_local():
     assert "$LOCALAPPDATA\\local.telegram.desktop" not in hooks
     assert '"binaries/xray"' in windows_config
     assert '"identifier": "local.telegram.desktop"' in tauri_config
-    assert '"version": "0.1.23"' in tauri_config
+    assert '"version": "0.1.24"' in tauri_config
     assert 'Delete "$INSTDIR\\telegram-session.session"' in template
     assert 'Delete "$INSTDIR\\telegram-api.env"' in template
     assert 'Delete "$INSTDIR\\telegram-proxies.json"' in template
