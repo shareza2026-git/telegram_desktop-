@@ -102,6 +102,8 @@ class TelegramDesktopService:
         self._recent_media: dict[tuple[str, str], Any] = {}
         self._priority_chat_ids: set[int] = set()
         self._dialog_snapshot: list[Dialog] = []
+        self._message_persist_queue: asyncio.Queue[Message] = asyncio.Queue(maxsize=5000)
+        self._message_persist_worker: asyncio.Task | None = None
         self._connection_monitor: asyncio.Task | None = None
         self._session_metadata: dict = {}
         info = self.sessions.info()
@@ -112,6 +114,8 @@ class TelegramDesktopService:
         )
 
     async def start(self) -> None:
+        if self._message_persist_worker is None:
+            self._message_persist_worker = asyncio.create_task(self._message_persist_loop())
         if self._connection_monitor is None:
             self._connection_monitor = asyncio.create_task(self._monitor_connection())
         self.sessions.ensure_client_path()
@@ -416,18 +420,49 @@ class TelegramDesktopService:
         self.handlers.clear()
 
     def _persist_message_background(self, message: Message) -> None:
-        async def persist() -> None:
+        try:
+            self._message_persist_queue.put_nowait(message)
+        except asyncio.QueueFull:
             try:
-                await self.store.upsert_message(message)
+                self._message_persist_queue.get_nowait()
+                self._message_persist_queue.task_done()
+            except asyncio.QueueEmpty:
+                pass
+            with suppress(asyncio.QueueFull):
+                self._message_persist_queue.put_nowait(message)
+            logger.warning(
+                "Live message persistence queue overflow; oldest item dropped"
+            )
+
+    async def _message_persist_loop(self) -> None:
+        while True:
+            message = await self._message_persist_queue.get()
+            batch = [message]
+            try:
+                await asyncio.sleep(0.02)
+                while len(batch) < 100:
+                    try:
+                        batch.append(self._message_persist_queue.get_nowait())
+                    except asyncio.QueueEmpty:
+                        break
+                await self.store.upsert_messages(batch)
+            except asyncio.CancelledError:
+                raise
             except Exception:
                 logger.warning(
-                    "Live message persistence failed for chat=%s message=%s",
-                    message.chat_id,
-                    message.message_id,
+                    "Live message batch persistence failed for %s messages",
+                    len(batch),
                     exc_info=True,
                 )
+            finally:
+                for _ in batch:
+                    self._message_persist_queue.task_done()
 
-        asyncio.create_task(persist())
+    async def _flush_message_persistence(self) -> None:
+        if self._message_persist_queue.empty():
+            return
+        with suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(self._message_persist_queue.join(), timeout=2.0)
 
     @staticmethod
     def _as_utc(value: datetime | None) -> datetime:
@@ -1423,6 +1458,12 @@ class TelegramDesktopService:
             with suppress(asyncio.CancelledError):
                 await self._connection_monitor
             self._connection_monitor = None
+        await self._flush_message_persistence()
+        if self._message_persist_worker is not None:
+            self._message_persist_worker.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._message_persist_worker
+            self._message_persist_worker = None
         self._unregister_handlers()
         if self.client is not None:
             await self.client.disconnect()
