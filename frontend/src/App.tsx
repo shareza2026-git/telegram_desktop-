@@ -186,6 +186,9 @@ const popoutChatId = startupParams.get('popout') === '1'
   ? Number(startupParams.get('chat') || 0)
   : 0
 const isPopoutWindow = Boolean(popoutChatId)
+if (isPopoutWindow) {
+  document.documentElement.classList.add('popout-window')
+}
 const mediaLabels: Record<MediaInfo['kind'], string> = {
   photo: 'تصویر',
   video: 'ویدئو',
@@ -2680,11 +2683,27 @@ function App() {
   return (
     <main className={'telegram-shell' + (preferences.compact ? ' compact-mode' : '') + (isPopoutWindow ? ' popout-mode' : '')} style={{ '--sidebar-width': sidebarWidth + 'px' } as React.CSSProperties} onMouseDown={() => { setMessageContextMenu(null); setDialogContextMenu(null) }}>
       <header className="app-titlebar" data-tauri-drag-region>
-        <div className="titlebar-brand" data-tauri-drag-region>
-          <button className="titlebar-menu" aria-label="منوی اصلی" title="منوی اصلی" onClick={() => setMainMenuOpen(value => !value)}>☰</button>
-          <span className="account-stack" aria-hidden="true"><i /><i /></span>
-          <span className="telegram-logo" aria-hidden="true">➤</span>
-          <strong className="app-title">Telegram</strong>
+        <div className={'titlebar-brand' + (isPopoutWindow ? ' popout-titlebar-brand' : '')} data-tauri-drag-region>
+          {isPopoutWindow && selected ? (
+            <>
+              <ChatAvatar chatId={selected.chat_id} title={selected.title} className="popout-title-avatar" />
+              <span className="popout-title-copy" data-tauri-drag-region>
+                <strong dir="auto">{chatInfo?.title || selected.title}</strong>
+                <small dir="auto">
+                  {chatInfo?.participants_count != null
+                    ? new Intl.NumberFormat('fa-IR').format(chatInfo.participants_count) + ' عضو'
+                    : presenceLabel(chatInfo?.status) || dialogTypeLabel(chatInfo?.dialog_type || selected.dialog_type)}
+                </small>
+              </span>
+            </>
+          ) : (
+            <>
+              <button className="titlebar-menu" aria-label="منوی اصلی" title="منوی اصلی" onClick={() => setMainMenuOpen(value => !value)}>☰</button>
+              <span className="account-stack" aria-hidden="true"><i /><i /></span>
+              <span className="telegram-logo" aria-hidden="true">➤</span>
+              <strong className="app-title">Telegram</strong>
+            </>
+          )}
         </div>
         <div className="titlebar-drag-fill" data-tauri-drag-region aria-hidden="true" />
         <div className="window-controls">
