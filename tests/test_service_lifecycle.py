@@ -43,6 +43,7 @@ async def test_start_restarts_completed_background_tasks():
     service.status = ClientStatus(configured=False, state="UNCONFIGURED")
 
     await service.start()
+    await asyncio.sleep(0)
 
     assert started == {"persist": 1, "monitor": 1}
 
