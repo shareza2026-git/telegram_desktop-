@@ -108,6 +108,8 @@ class TelegramDesktopService:
         self._media_download_tasks: dict[tuple[int, int], asyncio.Task[DownloadedMedia]] = {}
         self._chat_info_cache: dict[int, tuple[float, ChatInfo]] = {}
         self._pinned_cache: dict[int, tuple[float, Message | None]] = {}
+        self._typing_state: dict[int, tuple[bool, float]] = {}
+        self._read_ack_at: dict[int, float] = {}
         self._message_persist_queue: asyncio.Queue[Message] = asyncio.Queue(maxsize=5000)
         self._message_persist_worker: asyncio.Task | None = None
         self._connection_monitor: asyncio.Task | None = None
@@ -1275,6 +1277,19 @@ class TelegramDesktopService:
 
     async def send_typing(self, chat_id: int, active: bool = True) -> dict:
         client = self._require_authorized()
+        states = getattr(self, "_typing_state", None)
+        if states is None:
+            states = {}
+            self._typing_state = states
+        now = asyncio.get_running_loop().time()
+        previous = states.get(chat_id)
+
+        if previous is not None:
+            previous_active, previous_at = previous
+            if previous_active == active:
+                if not active or now - previous_at < 2.5:
+                    return {"chat_id": chat_id, "typing": active}
+
         try:
             peer = await client.get_input_entity(chat_id)
             action = (
@@ -1291,6 +1306,8 @@ class TelegramDesktopService:
         except Exception as error:
             logger.warning("Telegram typing operation failed: %s", type(error).__name__)
             raise DesktopError("Telegram typing status could not be updated") from None
+
+        states[chat_id] = (active, now)
         return {"chat_id": chat_id, "typing": active}
 
     async def send_text(
@@ -1510,7 +1527,17 @@ class TelegramDesktopService:
 
     async def mark_read(self, chat_id: int) -> dict:
         client = self._require_authorized()
-        await client.send_read_acknowledge(chat_id)
+        acknowledgements = getattr(self, "_read_ack_at", None)
+        if acknowledgements is None:
+            acknowledgements = {}
+            self._read_ack_at = acknowledgements
+        now = asyncio.get_running_loop().time()
+        previous = acknowledgements.get(chat_id)
+
+        if previous is None or now - previous >= 2.0:
+            await client.send_read_acknowledge(chat_id)
+            acknowledgements[chat_id] = now
+
         await self.store.mark_dialog_read(chat_id)
         return {"chat_id": chat_id, "read": True}
 
