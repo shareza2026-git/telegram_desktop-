@@ -54,82 +54,41 @@ fn main() {
         let data_root = app.path().app_data_dir()?;
         std::fs::create_dir_all(&data_root)?;
 
-        // Telegram authorization is intentionally never seeded from the installer,
-        // executable directory, Downloads or Desktop. Existing per-user app data is
-        // preserved by upgrades; a genuinely fresh install must use phone/code/2FA.
+        let executable = std::env::current_exe()?;
+        let executable_dir = executable
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .to_path_buf();
 
-        // Seed proxy routes from a local release package when available.
-        // This keeps proxy credentials out of Git while allowing a locally built
-        // package to carry the working routes to another Windows profile.
-        let target_proxies = data_root.join("proxies.json");
-        if !target_proxies.is_file() {
-            let executable = std::env::current_exe()?;
-            let executable_dir = executable
-                .parent()
-                .unwrap_or_else(|| std::path::Path::new("."))
-                .to_path_buf();
+        // Portable state is deliberately tied to the actual executable folder.
+        // Do not inspect the working directory, Desktop, Downloads, or shortcut
+        // locations. Moving the application folder to another Windows machine
+        // therefore moves exactly the same API/proxy/session state with it.
+        let account_dir = data_root.join("accounts").join("default");
+        std::fs::create_dir_all(&account_dir)?;
 
-            let mut proxy_candidates = vec![
-                executable_dir.join("telegram-proxies.json"),
-            ];
-            if let Ok(current_dir) = std::env::current_dir() {
-                proxy_candidates.push(current_dir.join("telegram-proxies.json"));
-            }
-            if let Some(profile) = std::env::var_os("USERPROFILE") {
-                let profile = std::path::PathBuf::from(profile);
-                proxy_candidates.push(profile.join("Downloads").join("telegram-proxies.json"));
-                proxy_candidates.push(profile.join("Desktop").join("telegram-proxies.json"));
-            }
-
-            if let Some(source) = proxy_candidates.into_iter().find(|path| path.is_file()) {
-                std::fs::copy(source, &target_proxies)?;
-            }
-        }
-
-        // Seed API settings from a local release package when available.
-        let target_settings = data_root.join("settings.env");
-        if !target_settings.is_file() {
-            let executable = std::env::current_exe()?;
-            let executable_dir = executable
-                .parent()
-                .unwrap_or_else(|| std::path::Path::new("."))
-                .to_path_buf();
-
-            let mut api_candidates = vec![
+        let portable_files = [
+            (
                 executable_dir.join("telegram-api.env"),
-            ];
-            if let Ok(current_dir) = std::env::current_dir() {
-                api_candidates.push(current_dir.join("telegram-api.env"));
-            }
-            if let Some(profile) = std::env::var_os("USERPROFILE") {
-                let profile = std::path::PathBuf::from(profile);
-                api_candidates.push(profile.join("Downloads").join("telegram-api.env"));
-                api_candidates.push(profile.join("Desktop").join("telegram-api.env"));
-            }
-
-            if let Some(source) = api_candidates.into_iter().find(|path| path.is_file()) {
-                std::fs::copy(source, &target_settings)?;
+                data_root.join("settings.env"),
+            ),
+            (
+                executable_dir.join("telegram-proxies.json"),
+                data_root.join("proxies.json"),
+            ),
+            (
+                executable_dir.join("telegram-session.session"),
+                account_dir.join("client.session"),
+            ),
+        ];
+        for (source, target) in portable_files {
+            if !target.is_file() && source.is_file() {
+                std::fs::copy(source, target)?;
             }
         }
 
         let data_root_arg = data_root.to_string_lossy().into_owned();
-        let executable = std::env::current_exe()?;
-
-        // Prefer the folder the installer was originally launched from so
-        // telegram-session.session / telegram-api.env / telegram-proxies.json
-        // beside Setup stay current after account changes.
-        let transfer_marker = data_root.join("transfer-dir.txt");
-        let transfer_dir = std::fs::read_to_string(&transfer_marker)
-            .ok()
-            .map(|value| std::path::PathBuf::from(value.trim()))
-            .filter(|path| path.is_dir())
-            .unwrap_or_else(|| {
-                executable
-                    .parent()
-                    .unwrap_or_else(|| std::path::Path::new("."))
-                    .to_path_buf()
-            });
-        let transfer_dir_arg = transfer_dir.to_string_lossy().into_owned();
+        let transfer_dir_arg = executable_dir.to_string_lossy().into_owned();
 
         let sidecar = app
             .shell()
