@@ -327,6 +327,44 @@ class ChatStore:
                 (chat_id, message_id, datetime.now().astimezone().isoformat()),
             )
 
+    async def find_unique_message_chat(self, message_id: int) -> int | None:
+        async with self._lock:
+            return await asyncio.to_thread(self._find_unique_message_chat_sync, message_id)
+
+    def _find_unique_message_chat_sync(self, message_id: int) -> int | None:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT chat_id FROM messages
+                WHERE message_id=? AND deleted=0
+                LIMIT 2
+                """,
+                (message_id,),
+            ).fetchall()
+        return int(rows[0]["chat_id"]) if len(rows) == 1 else None
+
+    async def mark_deleted_many(self, chat_id: int, message_ids: list[int]) -> None:
+        if not message_ids:
+            return
+        async with self._lock:
+            await asyncio.to_thread(self._mark_deleted_many_sync, chat_id, message_ids)
+
+    def _mark_deleted_many_sync(self, chat_id: int, message_ids: list[int]) -> None:
+        now = datetime.now().astimezone().isoformat()
+        with self._connect() as connection:
+            connection.executemany(
+                """
+                INSERT INTO messages(chat_id, message_id, text, date, deleted)
+                VALUES (?, ?, '', ?, 1)
+                ON CONFLICT(chat_id, message_id) DO UPDATE SET
+                    text='',
+                    media_json=NULL,
+                    reactions_json=NULL,
+                    deleted=1
+                """,
+                [(chat_id, int(message_id), now) for message_id in message_ids],
+            )
+
     async def list_dialogs(self, search: str | None = None) -> list[Dialog]:
         async with self._lock:
             return await asyncio.to_thread(self._list_dialogs_sync, search)
