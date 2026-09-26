@@ -13,8 +13,9 @@ def test_packaged_runtime_uses_only_executable_folder_for_portable_state():
     assert 'executable_dir.join("telegram-session.session")' in main_rs
     assert 'let transfer_dir_arg = executable_dir.to_string_lossy().into_owned();' in main_rs
     assert "transfer-dir.txt" not in main_rs
-    assert "Downloads" not in main_rs
-    assert "Desktop" not in main_rs
+    assert "std::env::current_dir()" not in main_rs
+    assert 'profile.join("Downloads")' not in main_rs
+    assert 'profile.join("Desktop")' not in main_rs
     assert "Path.cwd()" not in portable
     assert "settings.project_root / PORTABLE_FILE_NAME" not in portable
 
