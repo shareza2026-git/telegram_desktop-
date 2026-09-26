@@ -55,6 +55,7 @@ class FakeStore:
     def __init__(self, history_values=None):
         self.history_values = history_values or []
         self.saved = []
+        self.deleted_batches = []
 
     async def history(self, chat_id: int, limit: int, offset_id: int = 0):
         return list(self.history_values)
@@ -64,6 +65,9 @@ class FakeStore:
 
     async def upsert_messages(self, messages):
         self.saved.extend(messages)
+
+    async def mark_deleted_many(self, chat_id: int, message_ids: list[int]):
+        self.deleted_batches.append((chat_id, list(message_ids)))
 
 
 def build_service(client, store):
@@ -104,7 +108,7 @@ async def test_pinned_message_caches_empty_result():
 
 
 @pytest.mark.asyncio
-async def test_history_uses_local_cache_when_latest_id_matches_dialog():
+async def test_history_revalidates_local_cache_even_when_latest_id_matches_dialog():
     cached = Message(
         chat_id=7,
         message_id=5,
@@ -130,11 +134,12 @@ async def test_history_uses_local_cache_when_latest_id_matches_dialog():
     values = await service.history(7, limit=80)
 
     assert [item.message_id for item in values] == [5]
-    assert client.iter_calls == 0
+    assert client.iter_calls == 1
+    assert store.deleted_batches == []
 
 
 @pytest.mark.asyncio
-async def test_history_falls_back_to_telegram_when_local_cache_is_stale():
+async def test_history_reconciles_deleted_cached_messages_with_telegram():
     cached = Message(
         chat_id=7,
         message_id=4,
@@ -161,3 +166,4 @@ async def test_history_falls_back_to_telegram_when_local_cache_is_stale():
 
     assert [item.message_id for item in values] == [5]
     assert client.iter_calls == 1
+    assert store.deleted_batches == [(7, [4])]
