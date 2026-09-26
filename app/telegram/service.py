@@ -421,10 +421,11 @@ class TelegramDesktopService:
         self.login_phone = None
         self.login_code_hash = None
 
-    async def _mark_authorized(self, *, persist_session: bool = False) -> None:
+    async def _mark_authorized(self, *, account: Any | None = None, persist_session: bool = False) -> None:
         if self.client is None:
             raise DesktopError("Telegram client is not connected")
-        account = await asyncio.wait_for(self.client.get_me(), timeout=8.0)
+        if account is None:
+            account = await asyncio.wait_for(self.client.get_me(), timeout=8.0)
         if persist_session and isinstance(self.client.session, MemorySession):
             await asyncio.to_thread(self.sessions.persist_runtime_session, self.client.session)
         self._register_handlers()
@@ -1689,7 +1690,7 @@ class TelegramDesktopService:
         if self.client is None or not self.login_phone or not self.login_code_hash:
             raise DesktopError("Request a new login code")
         try:
-            await self.client.sign_in(
+            account = await self.client.sign_in(
                 phone=self.login_phone,
                 code=code.strip(),
                 phone_code_hash=self.login_code_hash,
@@ -1699,7 +1700,7 @@ class TelegramDesktopService:
         except Exception as error:
             self._log_auth_error(error)
             raise self._auth_error(error, "تأیید کد انجام نشد.") from None
-        await self._mark_authorized(persist_session=True)
+        await self._mark_authorized(account=account, persist_session=True)
         self._clear_login_challenge()
         return {"code_sent": True, "requires_2fa": False, "authorized": True}
 
@@ -1707,11 +1708,11 @@ class TelegramDesktopService:
         if self.client is None:
             raise DesktopError("Request a new login code")
         try:
-            await self.client.sign_in(password=password)
+            account = await self.client.sign_in(password=password)
         except Exception as error:
             self._log_auth_error(error)
             raise self._auth_error(error, "تأیید رمز دومرحله‌ای انجام نشد.") from None
-        await self._mark_authorized(persist_session=True)
+        await self._mark_authorized(account=account, persist_session=True)
         self._clear_login_challenge()
         return {"code_sent": True, "requires_2fa": False, "authorized": True}
 
