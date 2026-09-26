@@ -365,44 +365,13 @@ function BackendImage({
   onLoad?: () => void
   onError?: () => void
 }) {
-  const [objectUrl, setObjectUrl] = useState<string | null>(null)
-
-  useEffect(() => {
-    let disposed = false
-    let currentUrl: string | null = null
-
-    async function load() {
-      try {
-        const response = await fetch(src, { cache: 'force-cache' })
-        if (!response.ok) throw new Error('HTTP ' + response.status)
-        const blob = await response.blob()
-        if (!blob.size) throw new Error('Empty image')
-        currentUrl = URL.createObjectURL(blob)
-        if (disposed) {
-          URL.revokeObjectURL(currentUrl)
-          return
-        }
-        setObjectUrl(currentUrl)
-      } catch {
-        if (!disposed) onError?.()
-      }
-    }
-
-    setObjectUrl(null)
-    void load()
-    return () => {
-      disposed = true
-      if (currentUrl) URL.revokeObjectURL(currentUrl)
-    }
-  }, [src])
-
-  if (!objectUrl) return null
   return (
     <img
       className={className}
-      src={objectUrl}
+      src={src}
       alt={alt}
       loading={loading}
+      decoding="async"
       onLoad={onLoad}
       onError={onError}
     />
