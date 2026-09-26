@@ -22,6 +22,13 @@ def main() -> None:
     from dotenv import load_dotenv
 
     load_dotenv(data_root / "settings.env", override=False)
+
+    # Packaged Windows installs must never bootstrap authorization from another
+    # Telegram session. A fresh install always uses phone/code/2FA. Upgrades
+    # keep using this app's own private session under the stable data root.
+    os.environ["TELEGRAM_SOURCE_SESSION_PATH"] = ""
+    os.environ["TELEGRAM_AUTO_IMPORT_SOURCE"] = "false"
+
     os.environ["TELEGRAM_CLIENT_DATA_ROOT"] = str(data_root)
     if args.transfer_dir:
         os.environ["TELEGRAM_TRANSFER_DIR"] = str(Path(args.transfer_dir).expanduser().resolve())
