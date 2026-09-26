@@ -52,3 +52,20 @@ def test_each_executable_folder_gets_isolated_runtime_state():
     assert "instanceStorageKey" in app_tsx
     assert "http://127.0.0.1:*" in tauri_config
     assert "ws://127.0.0.1:*" in tauri_config
+
+
+def test_windows_installer_is_true_multi_instance():
+    windows_config = (ROOT / "frontend" / "src-tauri" / "tauri.windows.conf.json").read_text(encoding="utf-8")
+    template = (ROOT / "frontend" / "src-tauri" / "windows" / "installer-multi-instance.nsi").read_text(encoding="utf-8")
+    hooks = (ROOT / "frontend" / "src-tauri" / "windows" / "hooks.nsh").read_text(encoding="utf-8")
+
+    assert '"template": "./windows/installer-multi-instance.nsi"' in windows_config
+    assert "PageReinstall" not in template
+    assert "alreadyInstalledLong" not in template
+    assert 'CreateShortcut "$DESKTOP\\$InstanceName.lnk"' in template
+    assert 'CreateShortcut "$SMPROGRAMS\\$InstanceName.lnk"' in template
+    assert 'StrCpy $INSTDIR "$LOCALAPPDATA\\Telegram Desktop Instances\\$InstanceName"' in template
+    assert "taskkill" not in hooks.lower()
+    assert "accounts\\default\\client.session" not in hooks
+    assert "proxies.json" not in hooks
+    assert "settings.env" not in hooks
