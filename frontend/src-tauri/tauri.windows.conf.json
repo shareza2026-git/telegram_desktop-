@@ -5,7 +5,8 @@
       "nsis"
     ],
     "externalBin": [
-      "binaries/telegram-desktop-backend"
+      "binaries/telegram-desktop-backend",
+      "binaries/xray"
     ],
     "windows": {
       "nsis": {
