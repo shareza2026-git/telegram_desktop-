@@ -1,4 +1,6 @@
 import json
+import sys
+from pathlib import Path
 
 from app.telegram.transport import TransportCatalog
 
@@ -63,3 +65,26 @@ def test_dashboard_catalog_loads_legacy_proxy_and_managed_v2ray_read_only(tmp_pa
     assert snapshot[0]["type"] == "vless"
     assert snapshot[1]["type"] == "mtproto"
     assert "00112233445566778899aabbccddeeff" not in str(snapshot)
+
+
+def test_add_proxy_link_accepts_vless_reality_and_rebinds_xray_paths(tmp_path):
+    path = tmp_path / "proxies.json"
+    path.write_text('{"proxies":[]}', encoding="utf-8")
+    catalog = TransportCatalog(path)
+    link = (
+        "vless://11111111-1111-4111-8111-111111111111@example.com:443"
+        "?encryption=none&security=reality&type=tcp&sni=example.com"
+        "&fp=chrome&pbk=abcdefghijklmnopqrstuvwx1234567890ABCD"
+        "&sid=aabb&flow=xtls-rprx-vision#Portable"
+    )
+
+    added = catalog.add_proxy_link(link)
+    routes = catalog.load()
+    route = routes[added["index"] - 1]
+
+    assert added["type"] == "vless"
+    assert route.managed_v2ray is True
+    assert route.vless_uri.get_secret_value() == link
+    assert route.v2ray_name == "Portable"
+    assert route.xray_core_path == Path(sys.executable).resolve().parent / "xray.exe"
+    assert route.runtime_directory == path.parent / "runtime" / "xray"
