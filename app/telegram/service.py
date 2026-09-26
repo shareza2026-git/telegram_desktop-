@@ -656,11 +656,25 @@ class TelegramDesktopService:
     def _is_priority_chat(self, chat_id: int) -> bool:
         return chat_id in self._priority_chat_ids
 
+    def _update_dialog_snapshot_from_message(self, message: Message) -> None:
+        for index, dialog in enumerate(self._dialog_snapshot):
+            if dialog.chat_id != message.chat_id:
+                continue
+            self._dialog_snapshot[index] = dialog.model_copy(
+                update={
+                    "last_message_id": message.message_id,
+                    "last_message_at": message.date,
+                    "last_message_preview": message.text.strip()[:180] or dialog.last_message_preview,
+                }
+            )
+            return
+
     async def _on_new(self, event: Any) -> None:
         if event.chat_id is None:
             return
         chat_id = int(event.chat_id)
         message = self._message_model(event.message, chat_id)
+        self._update_dialog_snapshot_from_message(message)
         packet = {
             "type": "MESSAGE_NEW",
             "data": message.model_dump(mode="json"),
@@ -679,6 +693,7 @@ class TelegramDesktopService:
             return
         chat_id = int(event.chat_id)
         message = self._message_model(event.message, chat_id, edited=True)
+        self._update_dialog_snapshot_from_message(message)
         packet = {
             "type": "MESSAGE_EDITED",
             "data": message.model_dump(mode="json"),
@@ -1644,21 +1659,26 @@ class TelegramDesktopService:
             self._connection_monitor = None
 
         pending_tasks = []
-        if self._dialog_scan_task is not None and not self._dialog_scan_task.done():
-            pending_tasks.append(self._dialog_scan_task)
+        dialog_scan_task = getattr(self, "_dialog_scan_task", None)
+        if dialog_scan_task is not None and not dialog_scan_task.done():
+            pending_tasks.append(dialog_scan_task)
         pending_tasks.extend(
-            task for task in self._chat_photo_tasks.values() if not task.done()
+            task
+            for task in getattr(self, "_chat_photo_tasks", {}).values()
+            if not task.done()
         )
         pending_tasks.extend(
-            task for task in self._media_download_tasks.values() if not task.done()
+            task
+            for task in getattr(self, "_media_download_tasks", {}).values()
+            if not task.done()
         )
         for task in pending_tasks:
             task.cancel()
         if pending_tasks:
             await asyncio.gather(*pending_tasks, return_exceptions=True)
         self._dialog_scan_task = None
-        self._chat_photo_tasks.clear()
-        self._media_download_tasks.clear()
+        getattr(self, "_chat_photo_tasks", {}).clear()
+        getattr(self, "_media_download_tasks", {}).clear()
 
         await self._flush_message_persistence()
         if self._message_persist_worker is not None:
