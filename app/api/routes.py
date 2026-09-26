@@ -91,9 +91,9 @@ async def import_session(request: Request):
 
 
 @router.get("/api/telegram/dialogs")
-async def dialogs(request: Request, search: str | None = None):
+async def dialogs(request: Request, search: str | None = None, force: bool = False):
     try:
-        return await service(request).list_dialogs(search)
+        return await service(request).list_dialogs(search, force=force)
     except DesktopError as exc:
         raise error_response(exc) from None
 
