@@ -170,6 +170,7 @@ type FolderKey = 'all' | 'private' | 'unread' | 'groups' | 'channels' | 'archive
 type MediaState = 'loading' | 'ready' | 'downloading' | 'done' | 'error'
 
 const HISTORY_PAGE_SIZE = 80
+const MAX_LOADED_MESSAGES = 480
 const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🔥']
 const COMPOSER_EMOJIS = [
   '😀', '😃', '😄', '😁', '😆', '😅', '😂', '🙂', '🙃', '😉',
@@ -490,6 +491,7 @@ function App() {
   const sidebarResizeRef = useRef<{ startX: number; startWidth: number } | null>(null)
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [hasOlder, setHasOlder] = useState(false)
+  const [hasNewer, setHasNewer] = useState(false)
   const [mediaStates, setMediaStates] = useState<Record<string, MediaState>>({})
   const [replyingTo, setReplyingTo] = useState<Message | null>(null)
   const [editing, setEditing] = useState<Message | null>(null)
@@ -556,9 +558,11 @@ function App() {
   const liveDraftRef = useRef(draft)
   const editingRef = useRef<Message | null>(editing)
   const pendingAttachmentsRef = useRef<PendingAttachment[]>([])
+  const hasNewerRef = useRef(hasNewer)
 
   liveDraftRef.current = draft
   editingRef.current = editing
+  hasNewerRef.current = hasNewer
 
   const visibleDialogs = useMemo(() => {
     let values = dialogs
@@ -878,6 +882,7 @@ function App() {
         if (!disposed && selectedChatIdRef.current === chatId) {
           setMessages(current.filter(item => !item.deleted))
           setHasOlder(current.length === HISTORY_PAGE_SIZE)
+          setHasNewer(false)
         }
       } catch {
         // A later reconnect or explicit refresh will retry the active chat.
@@ -942,13 +947,18 @@ function App() {
           }
         }
         if (selectedChatIdRef.current === message.chat_id) {
-          const shouldFollow = message.outgoing || isNearBottom()
+          const browsingOlderWindow = hasNewerRef.current
+          const shouldFollow = !browsingOlderWindow && (message.outgoing || isNearBottom())
           setMessages(current => {
             const exists = current.some(item => item.message_id === message.message_id)
-            if (packet.type === 'MESSAGE_NEW' && !message.outgoing && !shouldFollow && !exists) {
+            if (packet.type === 'MESSAGE_NEW' && !message.outgoing && (!shouldFollow || browsingOlderWindow) && !exists) {
               setNewBelowCount(count => count + 1)
             }
-            return upsertSortedMessage(current, message)
+            if (browsingOlderWindow && packet.type === 'MESSAGE_NEW' && !exists) return current
+            const next = upsertSortedMessage(current, message)
+            return next.length > MAX_LOADED_MESSAGES
+              ? next.slice(next.length - MAX_LOADED_MESSAGES)
+              : next
           })
           if (shouldFollow) {
             window.requestAnimationFrame(() => scrollToBottom(message.outgoing ? 'smooth' : 'auto'))
@@ -1017,6 +1027,7 @@ function App() {
     if (!selected) {
       setMessages([])
       setHasOlder(false)
+      setHasNewer(false)
       setChatInfo(null)
       setPinnedMessage(null)
       setUnreadBoundaryId(null)
@@ -1051,6 +1062,7 @@ function App() {
 
     setMessages([])
     setHasOlder(false)
+    setHasNewer(false)
     setChatInfo(null)
     setPinnedMessage(null)
     setUnreadBoundaryId(null)
@@ -1099,6 +1111,7 @@ function App() {
         const visibleItems = items.filter(item => !item.deleted)
         setMessages(visibleItems)
         setHasOlder(items.length === HISTORY_PAGE_SIZE)
+        setHasNewer(false)
         const incoming = items.filter(item => !item.outgoing && !item.deleted)
         const unreadIndex = Math.max(0, incoming.length - unreadCount)
         setUnreadBoundaryId(unreadCount > 0 && incoming.length > 0 ? incoming[unreadIndex].message_id : null)
@@ -1526,7 +1539,10 @@ function App() {
       if (selectedChatIdRef.current !== selected.chat_id) return
       setMessages(current => {
         const known = new Set(current.map(item => item.message_id))
-        return [...older.filter(item => !item.deleted && !known.has(item.message_id)), ...current]
+        const merged = [...older.filter(item => !item.deleted && !known.has(item.message_id)), ...current]
+        if (merged.length <= MAX_LOADED_MESSAGES) return merged
+        setHasNewer(true)
+        return merged.slice(0, MAX_LOADED_MESSAGES)
       })
       setHasOlder(older.length === HISTORY_PAGE_SIZE)
       window.requestAnimationFrame(() => {
@@ -1537,6 +1553,28 @@ function App() {
       setError(errorMessage(caught, 'پیام‌های قدیمی‌تر دریافت نشد.'))
     } finally {
       setLoadingOlder(false)
+    }
+  }
+
+  async function loadLatest() {
+    if (!selected || !hasNewer) return
+    const chatId = selected.chat_id
+    try {
+      const latest = await api<Message[]>(
+        '/api/telegram/chats/' + chatId + '/messages?limit=' + HISTORY_PAGE_SIZE
+      )
+      if (selectedChatIdRef.current !== chatId) return
+      setMessages(latest.filter(item => !item.deleted))
+      setHasOlder(latest.length === HISTORY_PAGE_SIZE)
+      setHasNewer(false)
+      setUnreadBoundaryId(null)
+      window.requestAnimationFrame(() => {
+        if (selectedChatIdRef.current === chatId) scrollToBottom('auto')
+      })
+    } catch (caught) {
+      if (selectedChatIdRef.current === chatId) {
+        setError(errorMessage(caught, 'بازگشت به پیام‌های جدید انجام نشد.'))
+      }
     }
   }
 
@@ -2852,6 +2890,11 @@ function App() {
               {hasOlder && (
                 <button className="older-button" onClick={loadOlder} disabled={loadingOlder}>
                   {loadingOlder ? 'در حال دریافت…' : 'پیام‌های قدیمی‌تر'}
+                </button>
+              )}
+              {hasNewer && (
+                <button className="newer-button" onClick={() => void loadLatest()}>
+                  بازگشت به پیام‌های جدید
                 </button>
               )}
               {messageNodes}
