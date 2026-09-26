@@ -912,7 +912,7 @@ class TelegramDesktopService:
                 self._priority_chat_ids.add(value.chat_id)
             else:
                 self._priority_chat_ids.discard(value.chat_id)
-            await self.store.upsert_dialog(value)
+        await self.store.upsert_dialogs(dialogs)
         ordered = sorted(
             dialogs,
             key=lambda value: (
@@ -1056,9 +1056,8 @@ class TelegramDesktopService:
             limit=limit,
             offset_id=offset_id or 0,
         ):
-            value = self._message_model(item, chat_id)
-            values.append(value)
-            await self.store.upsert_message(value)
+            values.append(self._message_model(item, chat_id))
+        await self.store.upsert_messages(values)
         return list(reversed(values))
 
     async def _own_message(self, chat_id: int, message_id: int) -> tuple[TelegramClient, Any]:
