@@ -1867,10 +1867,10 @@ function App() {
   }
 
   function renderMessageText(value: string) {
-    const pattern = /(tg:\/\/(?:proxy|socks)\?[^\s]+|https?:\/\/(?:t\.me|telegram\.me)\/(?:proxy|socks)\?[^\s]+)/gi
+    const pattern = /(tg:\/\/(?:proxy|socks)\?[^\s]+|https?:\/\/(?:t\.me|telegram\.me)\/(?:proxy|socks)\?[^\s]+|vless:\/\/[^\s]+)/gi
     const parts = value.split(pattern)
     return parts.map((part, index) => (
-      /^(?:tg:\/\/(?:proxy|socks)\?|https?:\/\/(?:t\.me|telegram\.me)\/(?:proxy|socks)\?)/i.test(part)
+      /^(?:tg:\/\/(?:proxy|socks)\?|https?:\/\/(?:t\.me|telegram\.me)\/(?:proxy|socks)\?|vless:\/\/)/i.test(part)
         ? <button className="proxy-link" type="button" key={index} onClick={() => void addProxyLink(part)}>{part}</button>
         : <Fragment key={index}>{part}</Fragment>
     ))
@@ -2542,7 +2542,7 @@ function App() {
                 <input
                   value={proxyLinkDraft}
                   onChange={event => setProxyLinkDraft(event.target.value)}
-                  placeholder="tg://proxy?... or https://t.me/proxy?..."
+                  placeholder="tg://proxy?... or vless://..."
                   dir="ltr"
                   autoComplete="off"
                 />
@@ -2603,7 +2603,7 @@ function App() {
                   <span className="proxy-plus">＋</span>
                   <span className="auth-proxy-copy">
                     <strong>Add Proxy</strong>
-                    <small>MTProto or SOCKS Telegram link</small>
+                    <small>MTProto, SOCKS or VLESS/V2Ray link</small>
                   </span>
                 </button>
 
@@ -2612,7 +2612,7 @@ function App() {
                     <input
                       value={proxyLinkDraft}
                       onChange={event => setProxyLinkDraft(event.target.value)}
-                      placeholder="https://t.me/proxy?server=...&port=...&secret=..."
+                      placeholder="https://t.me/proxy?... or vless://..."
                       dir="ltr"
                       autoComplete="off"
                       autoFocus
@@ -3233,7 +3233,7 @@ function App() {
                   <input
                     value={proxyLinkDraft}
                     onChange={event => setProxyLinkDraft(event.target.value)}
-                    placeholder="tg://proxy?... or https://t.me/proxy?..."
+                    placeholder="tg://proxy?... or vless://..."
                     dir="ltr"
                     autoFocus
                   />
