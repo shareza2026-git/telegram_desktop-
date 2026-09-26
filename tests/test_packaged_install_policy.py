@@ -48,11 +48,14 @@ def test_each_executable_folder_gets_isolated_runtime_state():
     assert 'backend_port_for_instance(instance_hash)' in main_rs
     assert 'RunEvent::ExitRequested { .. } | RunEvent::Exit' in main_rs
     assert '"--port"' in main_rs
+    assert '"--parent-pid"' in main_rs
+    assert 'backend.pid' in main_rs
+    assert 'app.pid' in main_rs
     assert 'parser.add_argument("--port"' in desktop
     assert 'port=args.port' in desktop
     assert "runtime_backend_port" in frontend_main
     assert "runtime_instance_id" in frontend_main
-    assert "shutdown_instance_backend" in app_tsx
+    assert "close_current_window" in app_tsx
     assert "instanceStorageKey" in app_tsx
     assert "http://127.0.0.1:*" in tauri_config
     assert "ws://127.0.0.1:*" in tauri_config
@@ -73,3 +76,21 @@ def test_windows_installer_is_true_multi_instance():
     assert "accounts\\default\\client.session" not in hooks
     assert "proxies.json" not in hooks
     assert "settings.env" not in hooks
+
+
+def test_installer_updates_only_selected_instance_and_clears_locked_binaries():
+    hooks = (ROOT / "frontend" / "src-tauri" / "windows" / "hooks.nsh").read_text(encoding="utf-8")
+    template = (ROOT / "frontend" / "src-tauri" / "windows" / "installer-multi-instance.nsi").read_text(encoding="utf-8")
+    desktop = (ROOT / "app" / "desktop.py").read_text(encoding="utf-8")
+
+    assert "telegram-desktop-backend" in hooks
+    assert "telegram-desktop" in hooks
+    assert "xray" in hooks
+    assert "GetDirectoryName" in hooks
+    assert "Stop-Process" in hooks
+    assert "CheckIfAppIsRunning" not in template
+    assert "DirectoryPageLeave" in template
+    assert 'instance-name.txt' in template
+    assert 'parser.add_argument("--parent-pid"' in desktop
+    assert "desktop-parent-watchdog" in desktop
+    assert "server.should_exit = True" in desktop
