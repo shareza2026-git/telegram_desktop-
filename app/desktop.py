@@ -3,6 +3,8 @@ import json
 import os
 import shutil
 import sqlite3
+import sys
+import threading
 from pathlib import Path
 
 
@@ -11,9 +13,43 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-root", required=True, help="Writable private client data directory")
     parser.add_argument("--transfer-dir", help="Directory for portable transfer files")
     parser.add_argument("--port", type=int, default=8110, help="Loopback backend port for this instance")
+    parser.add_argument("--parent-pid", type=int, help="Desktop parent process to monitor")
     parser.add_argument("--portable-config", help="Canonical writable portable Telegram bundle")
     parser.add_argument("--portable-mirror", help="Optional external mirror of the portable Telegram bundle")
     return parser.parse_args()
+
+
+def _wait_for_windows_process_exit(pid: int) -> None:
+    if sys.platform != "win32":
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    synchronize = 0x00100000
+    infinite = 0xFFFFFFFF
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    open_process = kernel32.OpenProcess
+    open_process.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    open_process.restype = wintypes.HANDLE
+    wait_for_single_object = kernel32.WaitForSingleObject
+    wait_for_single_object.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    wait_for_single_object.restype = wintypes.DWORD
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = [wintypes.HANDLE]
+    close_handle.restype = wintypes.BOOL
+
+    handle = open_process(synchronize, False, int(pid))
+    if not handle:
+        return
+    try:
+        wait_for_single_object(handle, infinite)
+    finally:
+        close_handle(handle)
+
+
+def _watch_parent(parent_pid: int, server) -> None:
+    _wait_for_windows_process_exit(parent_pid)
+    server.should_exit = True
 
 
 def _session_has_auth_key(path: Path) -> bool:
@@ -125,7 +161,22 @@ def main() -> None:
     import uvicorn
     from app.main import app
 
-    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning", access_log=False)
+    config = uvicorn.Config(
+        app,
+        host="127.0.0.1",
+        port=args.port,
+        log_level="warning",
+        access_log=False,
+    )
+    server = uvicorn.Server(config)
+    if args.parent_pid:
+        threading.Thread(
+            target=_watch_parent,
+            args=(args.parent_pid, server),
+            name="desktop-parent-watchdog",
+            daemon=True,
+        ).start()
+    server.run()
 
 
 if __name__ == "__main__":
