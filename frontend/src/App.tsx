@@ -516,6 +516,9 @@ function App() {
   const [selectedChatAction, setSelectedChatAction] = useState<ChatAction | null>(null)
   const typingTimerRef = useRef<number | null>(null)
   const typingSentRef = useRef<{ chatId: number; active: boolean; at: number } | null>(null)
+  const chatActionTimerRef = useRef<number | null>(null)
+  const focusTimerRef = useRef<number | null>(null)
+  const searchJumpTimerRef = useRef<number | null>(null)
   const [messageSearchOpen, setMessageSearchOpen] = useState(false)
   const [messageQuery, setMessageQuery] = useState('')
   const [searchResults, setSearchResults] = useState<Message[]>([])
@@ -714,7 +717,22 @@ function App() {
   useEffect(() => {
     selectedChatIdRef.current = selected?.chat_id || null
     setChatMenuOpen(false)
+    if (chatActionTimerRef.current !== null) {
+      window.clearTimeout(chatActionTimerRef.current)
+      chatActionTimerRef.current = null
+    }
+    setSelectedChatAction(null)
   }, [selected?.chat_id])
+
+  useEffect(() => {
+    return () => {
+      if (typingTimerRef.current !== null) window.clearTimeout(typingTimerRef.current)
+      if (chatActionTimerRef.current !== null) window.clearTimeout(chatActionTimerRef.current)
+      if (focusTimerRef.current !== null) window.clearTimeout(focusTimerRef.current)
+      if (searchJumpTimerRef.current !== null) window.clearTimeout(searchJumpTimerRef.current)
+      document.body.classList.remove('sidebar-resizing')
+    }
+  }, [])
 
   useEffect(() => {
     dialogsRef.current = dialogs
@@ -971,15 +989,20 @@ function App() {
       if (packet.type === 'CHAT_ACTION') {
         const action = packet.data as ChatAction
         if (selectedChatIdRef.current === action.chat_id) {
+          if (chatActionTimerRef.current !== null) {
+            window.clearTimeout(chatActionTimerRef.current)
+            chatActionTimerRef.current = null
+          }
           if (!action.active || action.action === 'cancel') {
             setSelectedChatAction(null)
           } else {
             const expiresAt = Date.now() + 6000
             setSelectedChatAction({ ...action, expires_at: expiresAt })
-            window.setTimeout(() => {
+            chatActionTimerRef.current = window.setTimeout(() => {
               setSelectedChatAction(current => (
                 current && current.expires_at === expiresAt ? null : current
               ))
+              chatActionTimerRef.current = null
             }, 6100)
           }
         }
@@ -2060,7 +2083,11 @@ function App() {
         ? current
         : upsertSortedMessage(current, message)
     ))
-    window.setTimeout(() => jumpToMessage(message.message_id), 0)
+    if (searchJumpTimerRef.current !== null) window.clearTimeout(searchJumpTimerRef.current)
+    searchJumpTimerRef.current = window.setTimeout(() => {
+      jumpToMessage(message.message_id)
+      searchJumpTimerRef.current = null
+    }, 0)
   }
 
   function messageSnippet(message: Message | null) {
@@ -2141,7 +2168,11 @@ function App() {
     if (!element) return
     element.scrollIntoView({ behavior: 'smooth', block: 'center' })
     element.classList.add('message-focus')
-    window.setTimeout(() => element.classList.remove('message-focus'), 1400)
+    if (focusTimerRef.current !== null) window.clearTimeout(focusTimerRef.current)
+    focusTimerRef.current = window.setTimeout(() => {
+      element.classList.remove('message-focus')
+      focusTimerRef.current = null
+    }, 1400)
   }
 
   function openPinnedMessage() {
