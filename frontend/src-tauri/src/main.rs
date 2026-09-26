@@ -62,8 +62,7 @@ fn runtime_instance_id(state: tauri::State<RuntimeState>) -> String {
 }
 
 #[cfg(not(debug_assertions))]
-#[tauri::command]
-fn shutdown_instance_backend(state: tauri::State<BackendProcess>) {
+fn stop_instance_backend(state: &BackendProcess) {
     if let Ok(mut slot) = state.0.lock() {
         if let Some(child) = slot.take() {
             let _ = child.kill();
@@ -71,9 +70,24 @@ fn shutdown_instance_backend(state: tauri::State<BackendProcess>) {
     }
 }
 
+#[cfg(not(debug_assertions))]
+#[tauri::command]
+fn close_current_window(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    state: tauri::State<BackendProcess>,
+) -> Result<(), String> {
+    if app.webview_windows().len() <= 1 {
+        stop_instance_backend(&state);
+    }
+    window.close().map_err(|error| error.to_string())
+}
+
 #[cfg(debug_assertions)]
 #[tauri::command]
-fn shutdown_instance_backend() {}
+fn close_current_window(window: tauri::WebviewWindow) -> Result<(), String> {
+    window.close().map_err(|error| error.to_string())
+}
 
 #[cfg(debug_assertions)]
 #[tauri::command]
@@ -121,7 +135,7 @@ fn main() {
             open_chat_window,
             runtime_backend_port,
             runtime_instance_id,
-            shutdown_instance_backend
+            close_current_window
         ]);
 
     #[cfg(not(debug_assertions))]
@@ -176,6 +190,7 @@ fn main() {
         let data_root_arg = data_root.to_string_lossy().into_owned();
         let transfer_dir_arg = executable_dir.to_string_lossy().into_owned();
         let backend_port_arg = backend_port.to_string();
+        let parent_pid_arg = std::process::id().to_string();
 
         let sidecar = app
             .shell()
@@ -187,8 +202,12 @@ fn main() {
                 transfer_dir_arg.as_str(),
                 "--port",
                 backend_port_arg.as_str(),
+                "--parent-pid",
+                parent_pid_arg.as_str(),
             ]);
         let (mut events, child) = sidecar.spawn()?;
+        std::fs::write(executable_dir.join("app.pid"), std::process::id().to_string())?;
+        std::fs::write(executable_dir.join("backend.pid"), child.pid().to_string())?;
         tauri::async_runtime::spawn(async move {
             while events.recv().await.is_some() {}
         });
@@ -204,11 +223,13 @@ fn main() {
         #[cfg(not(debug_assertions))]
         if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
             let state = app_handle.state::<BackendProcess>();
-            if let Ok(mut slot) = state.0.lock() {
-                if let Some(child) = slot.take() {
-                    let _ = child.kill();
+            stop_instance_backend(&state);
+            if let Ok(executable) = std::env::current_exe() {
+                if let Some(directory) = executable.parent() {
+                    let _ = std::fs::remove_file(directory.join("app.pid"));
+                    let _ = std::fs::remove_file(directory.join("backend.pid"));
                 }
-            };
+            }
         }
     });
 }
