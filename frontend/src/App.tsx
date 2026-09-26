@@ -2459,6 +2459,15 @@ function App() {
     }
   }
 
+  async function closeApplication() {
+    try {
+      await invoke('shutdown_instance_backend')
+    } catch {
+      // Backend may already be stopped; closing the window must still continue.
+    }
+    await appWindow.close()
+  }
+
   async function sendMessage(event: FormEvent) {
     event.preventDefault()
     const text = draft.trim()
@@ -2758,7 +2767,7 @@ function App() {
         <div className="window-controls">
           <button aria-label="کمینه" onClick={() => void appWindow.minimize()}>—</button>
           <button aria-label="بیشینه" onClick={() => void appWindow.toggleMaximize()}>□</button>
-          <button className="window-close" aria-label="بستن" onClick={() => void appWindow.close()}>×</button>
+          <button className="window-close" aria-label="بستن" onClick={() => void closeApplication()}>×</button>
         </div>
       </header>
       {mainMenuOpen && (
