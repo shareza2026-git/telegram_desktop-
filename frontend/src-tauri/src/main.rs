@@ -2,6 +2,12 @@
 
 #[cfg(not(debug_assertions))]
 use std::sync::Mutex;
+#[cfg(not(debug_assertions))]
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+    net::TcpListener,
+};
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 #[cfg(not(debug_assertions))]
 use tauri::RunEvent;
@@ -10,6 +16,65 @@ use tauri_plugin_shell::{process::CommandChild, ShellExt};
 
 #[cfg(not(debug_assertions))]
 struct BackendProcess(Mutex<Option<CommandChild>>);
+
+#[cfg(not(debug_assertions))]
+#[derive(Clone)]
+struct RuntimeState {
+    backend_port: u16,
+    instance_id: String,
+}
+
+#[cfg(not(debug_assertions))]
+fn instance_identity(executable_dir: &std::path::Path) -> (String, u64) {
+    let canonical = executable_dir
+        .canonicalize()
+        .unwrap_or_else(|_| executable_dir.to_path_buf());
+    let normalized = canonical.to_string_lossy().to_lowercase();
+    let mut hasher = DefaultHasher::new();
+    normalized.hash(&mut hasher);
+    let hash = hasher.finish();
+    (format!("{:016x}", hash), hash)
+}
+
+#[cfg(not(debug_assertions))]
+fn choose_backend_port(hash: u64) -> std::io::Result<u16> {
+    let base = 20000 + (hash % 30000) as u16;
+    for offset in 0..256u16 {
+        let port = 20000 + ((base - 20000 + offset) % 30000);
+        if let Ok(listener) = TcpListener::bind(("127.0.0.1", port)) {
+            drop(listener);
+            return Ok(port);
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AddrNotAvailable,
+        "no free backend port found",
+    ))
+}
+
+#[cfg(not(debug_assertions))]
+#[tauri::command]
+fn runtime_backend_port(state: tauri::State<RuntimeState>) -> u16 {
+    state.backend_port
+}
+
+#[cfg(debug_assertions)]
+#[tauri::command]
+fn runtime_backend_port() -> u16 {
+    8110
+}
+
+#[cfg(not(debug_assertions))]
+#[tauri::command]
+fn runtime_instance_id(state: tauri::State<RuntimeState>) -> String {
+    state.instance_id.clone()
+}
+
+#[cfg(debug_assertions)]
+#[tauri::command]
+fn runtime_instance_id() -> String {
+    "development".to_string()
+}
 
 #[tauri::command]
 async fn open_chat_window(
@@ -47,18 +112,32 @@ async fn open_chat_window(
 fn main() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![open_chat_window]);
+        .invoke_handler(tauri::generate_handler![
+            open_chat_window,
+            runtime_backend_port,
+            runtime_instance_id
+        ]);
 
     #[cfg(not(debug_assertions))]
     let builder = builder.setup(|app| {
-        let data_root = app.path().app_data_dir()?;
-        std::fs::create_dir_all(&data_root)?;
-
         let executable = std::env::current_exe()?;
         let executable_dir = executable
             .parent()
             .unwrap_or_else(|| std::path::Path::new("."))
             .to_path_buf();
+
+        // Each executable folder is a fully isolated Telegram instance.
+        // Different copies on the same Windows account get different AppData,
+        // database/session state, WebSocket backend ports and frontend storage.
+        let (instance_id, instance_hash) = instance_identity(&executable_dir);
+        let backend_port = choose_backend_port(instance_hash)?;
+        let shared_root = app.path().app_data_dir()?;
+        let data_root = shared_root.join("instances").join(&instance_id);
+        std::fs::create_dir_all(&data_root)?;
+        app.manage(RuntimeState {
+            backend_port,
+            instance_id: instance_id.clone(),
+        });
 
         // Portable state is deliberately tied to the actual executable folder.
         // Do not inspect the working directory, Desktop, Downloads, or shortcut
@@ -89,6 +168,7 @@ fn main() {
 
         let data_root_arg = data_root.to_string_lossy().into_owned();
         let transfer_dir_arg = executable_dir.to_string_lossy().into_owned();
+        let backend_port_arg = backend_port.to_string();
 
         let sidecar = app
             .shell()
@@ -98,6 +178,8 @@ fn main() {
                 data_root_arg.as_str(),
                 "--transfer-dir",
                 transfer_dir_arg.as_str(),
+                "--port",
+                backend_port_arg.as_str(),
             ]);
         let (mut events, child) = sidecar.spawn()?;
         tauri::async_runtime::spawn(async move {
