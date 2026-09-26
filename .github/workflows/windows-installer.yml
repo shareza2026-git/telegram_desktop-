@@ -84,6 +84,23 @@ jobs:
           New-Item -ItemType Directory -Force frontend/src-tauri/binaries | Out-Null
           Copy-Item dist/telegram-desktop-backend.exe frontend/src-tauri/binaries/telegram-desktop-backend-x86_64-pc-windows-msvc.exe
 
+      - name: Stage Xray core for VLESS
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP "Xray-windows-64.zip"
+          $out = Join-Path $env:RUNNER_TEMP "xray-core"
+          Invoke-WebRequest -Uri "https://github.com/XTLS/Xray-core/releases/download/v26.9.9/Xray-windows-64.zip" -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath $out -Force
+          $xray = Join-Path $out "xray.exe"
+          if (-not (Test-Path $xray)) {
+            throw "xray.exe was not found in the pinned Xray release"
+          }
+          & $xray version
+          if ($LASTEXITCODE -ne 0) {
+            throw "xray.exe failed its version smoke test"
+          }
+          Copy-Item $xray frontend/src-tauri/binaries/xray-x86_64-pc-windows-msvc.exe -Force
+
       - name: Build NSIS installer
         working-directory: frontend
         run: npm run tauri build -- --config src-tauri/tauri.windows.conf.json
