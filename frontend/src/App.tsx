@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type FormEvent, type MouseEvent as ReactMouseEvent } from 'react'
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type FormEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 
@@ -430,6 +430,37 @@ function ChatAvatar({ chatId, title, className = '' }: { chatId: number; title: 
   )
 }
 
+const DialogRow = memo(function DialogRow({
+  dialog,
+  selected,
+  onOpen,
+  onContextMenu
+}: {
+  dialog: Dialog
+  selected: boolean
+  onOpen: (dialog: Dialog) => void
+  onContextMenu: (event: ReactMouseEvent, dialog: Dialog) => void
+}) {
+  return (
+    <button
+      className={'dialog-row ' + (selected ? 'selected' : '')}
+      onClick={() => onOpen(dialog)}
+      onContextMenu={event => onContextMenu(event, dialog)}
+    >
+      <ChatAvatar chatId={dialog.chat_id} title={dialog.title} />
+      <span className="dialog-copy">
+        <span className="dialog-title-line"><strong>{dialog.title}</strong>{dialog.muted && <i>⌕</i>}</span>
+        <small>{dialog.last_message_preview || dialog.username || dialogTypeLabel(dialog.dialog_type)}</small>
+      </span>
+      <span className="dialog-meta">
+        <time>{formatDialogTime(dialog.last_message_at)}</time>
+        {dialog.pinned && <i>◆</i>}
+        {dialog.unread_count > 0 && <span className="unread">{dialog.unread_count}</span>}
+      </span>
+    </button>
+  )
+})
+
 function App() {
   const [status, setStatus] = useState<Status | null>(null)
   const [dialogs, setDialogs] = useState<Dialog[]>([])
@@ -522,7 +553,12 @@ function App() {
   const draftsRef = useRef(parseDraftMap(window.localStorage.getItem(DRAFT_STORAGE_KEY)))
   const draftSwitchRef = useRef<number | null>(null)
   const draftBeforeEditRef = useRef('')
+  const liveDraftRef = useRef(draft)
+  const editingRef = useRef<Message | null>(editing)
   const pendingAttachmentsRef = useRef<PendingAttachment[]>([])
+
+  liveDraftRef.current = draft
+  editingRef.current = editing
 
   const visibleDialogs = useMemo(() => {
     let values = dialogs
@@ -1302,16 +1338,22 @@ function App() {
     }
   }
 
-  function openDialog(dialog: Dialog) {
+  const openDialog = useCallback((dialog: Dialog) => {
     const currentChatId = selectedChatIdRef.current
     if (currentChatId === dialog.chat_id) return
-    if (currentChatId !== null && !editing) {
-      draftsRef.current = updateDraftMap(draftsRef.current, currentChatId, draft)
+    if (currentChatId !== null && !editingRef.current) {
+      draftsRef.current = updateDraftMap(draftsRef.current, currentChatId, liveDraftRef.current)
       window.localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draftsRef.current))
     }
     draftSwitchRef.current = dialog.chat_id
     setSelected(dialog)
-  }
+  }, [])
+
+  const openDialogContextMenu = useCallback((event: ReactMouseEvent, dialog: Dialog) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setDialogContextMenu({ dialog, x: event.clientX, y: event.clientY })
+  }, [])
 
   function openMessageContextMenu(event: ReactMouseEvent, message: Message) {
     event.preventDefault()
@@ -2578,27 +2620,13 @@ function App() {
         </div>
         <div className="dialog-list">
           {visibleDialogs.map(dialog => (
-            <button
-              className={'dialog-row ' + (selected?.chat_id === dialog.chat_id ? 'selected' : '')}
+            <DialogRow
               key={dialog.chat_id}
-              onClick={() => openDialog(dialog)}
-              onContextMenu={event => {
-                event.preventDefault()
-                event.stopPropagation()
-                setDialogContextMenu({ dialog, x: event.clientX, y: event.clientY })
-              }}
-            >
-              <ChatAvatar chatId={dialog.chat_id} title={dialog.title} />
-              <span className="dialog-copy">
-                <span className="dialog-title-line"><strong>{dialog.title}</strong>{dialog.muted && <i>⌕</i>}</span>
-                <small>{dialog.last_message_preview || dialog.username || dialogTypeLabel(dialog.dialog_type)}</small>
-              </span>
-              <span className="dialog-meta">
-                <time>{formatDialogTime(dialog.last_message_at)}</time>
-                {dialog.pinned && <i>◆</i>}
-                {dialog.unread_count > 0 && <span className="unread">{dialog.unread_count}</span>}
-              </span>
-            </button>
+              dialog={dialog}
+              selected={selected?.chat_id === dialog.chat_id}
+              onOpen={openDialog}
+              onContextMenu={openDialogContextMenu}
+            />
           ))}
           {!visibleDialogs.length && <div className="empty-list">گفت‌وگویی پیدا نشد</div>}
         </div>
