@@ -566,6 +566,111 @@ function App() {
     [messages]
   )
 
+  const messageNodes = useMemo(() => (
+    visibleMessages.map((message, index) => (
+      <Fragment key={message.message_id}>
+        {index === 0 || messageDayKey(visibleMessages[index - 1].date) !== messageDayKey(message.date) ? (
+          <div className="date-separator"><span>{formatMessageDate(message.date)}</span></div>
+        ) : null}
+        {unreadBoundaryId === message.message_id && (
+          <div className="unread-divider"><span>پیام‌های خوانده‌نشده</span></div>
+        )}
+        <article
+          id={'message-' + message.chat_id + '-' + message.message_id}
+          className={
+            'message '
+            + (message.outgoing ? 'outgoing' : '')
+            + (message.deleted ? ' deleted' : '')
+            + (selectedMessageIds.has(message.message_id) ? ' selected-message' : '')
+          }
+          onContextMenu={event => openMessageContextMenu(event, message)}
+          onClick={event => {
+            if (
+              selectedMessageIds.size > 0
+              && !(event.target as HTMLElement).closest('button')
+            ) toggleMessageSelection(message.message_id)
+          }}
+        >
+          {!message.outgoing && (
+            <ChatAvatar
+              chatId={message.sender_id || message.chat_id}
+              title={message.sender_name || selected?.title || ''}
+              className="message-avatar"
+            />
+          )}
+          {selectedMessageIds.size > 0 && (
+            <span className="message-selector" aria-hidden="true">
+              {selectedMessageIds.has(message.message_id) ? '✓' : ''}
+            </span>
+          )}
+          {!message.outgoing && message.sender_name && <strong className="sender-name">{message.sender_name}</strong>}
+          {renderReplyReference(message)}
+          {message.media && renderMedia(message)}
+          {message.deleted
+            ? <span className="message-text">پیام حذف شده است</span>
+            : message.text.trim() && <span className="message-text">{renderMessageText(message.text.trim())}</span>}
+          {!message.deleted && Boolean(message.reactions?.length) && (
+            <div className="message-reactions">
+              {message.reactions.map(reaction => (
+                <button
+                  type="button"
+                  className={reaction.chosen ? 'chosen' : ''}
+                  key={reaction.emoji}
+                  onClick={() => setReaction(message, reaction.chosen ? null : reaction.emoji)}
+                  disabled={reactionBusy !== null}
+                >
+                  <span>{reaction.emoji}</span>
+                  <small>{new Intl.NumberFormat('fa-IR').format(reaction.count)}</small>
+                </button>
+              ))}
+            </div>
+          )}
+          {reactionPickerFor === message.message_id && !message.deleted && selectedMessageIds.size === 0 && (
+            <div className="reaction-picker" role="group" aria-label="انتخاب واکنش">
+              {QUICK_REACTIONS.map(emoji => {
+                const chosen = message.reactions?.some(item => item.emoji === emoji && item.chosen) || false
+                const key = mediaKey(message) + ':' + (chosen ? 'remove' : emoji)
+                return (
+                  <button
+                    type="button"
+                    className={chosen ? 'chosen' : ''}
+                    key={emoji}
+                    onClick={() => setReaction(message, chosen ? null : emoji)}
+                    disabled={reactionBusy !== null}
+                  >
+                    {reactionBusy === key ? '…' : emoji}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+          <small className="message-meta">
+            <span>{formatTime(message.date)}{message.edited ? ' · ویرایش‌شده' : ''}</span>
+            {message.outgoing && (
+              <span
+                className={'read-receipt ' + (message.read ? 'read' : 'sent')}
+                aria-label={message.read ? 'خوانده شده' : 'ارسال شده'}
+                title={message.read ? 'خوانده شده' : 'ارسال شده'}
+              >
+                {message.read ? '✓✓' : '✓'}
+              </span>
+            )}
+          </small>
+        </article>
+      </Fragment>
+    ))
+  ), [
+    visibleMessages,
+    unreadBoundaryId,
+    selectedMessageIds,
+    selected?.title,
+    reactionPickerFor,
+    reactionBusy,
+    mediaStates,
+    preferences.autoLoadPhotos,
+    revealedPhotos
+  ])
+
   useEffect(() => {
     selectedChatIdRef.current = selected?.chat_id || null
     setChatMenuOpen(false)
@@ -2646,98 +2751,7 @@ function App() {
                   {loadingOlder ? 'در حال دریافت…' : 'پیام‌های قدیمی‌تر'}
                 </button>
               )}
-              {visibleMessages.map((message, index) => (
-                <Fragment key={message.message_id}>
-                  {index === 0 || messageDayKey(visibleMessages[index - 1].date) !== messageDayKey(message.date) ? (
-                    <div className="date-separator"><span>{formatMessageDate(message.date)}</span></div>
-                  ) : null}
-                  {unreadBoundaryId === message.message_id && (
-                    <div className="unread-divider"><span>پیام‌های خوانده‌نشده</span></div>
-                  )}
-                <article
-                  id={'message-' + message.chat_id + '-' + message.message_id}
-                  className={
-                    'message '
-                    + (message.outgoing ? 'outgoing' : '')
-                    + (message.deleted ? ' deleted' : '')
-                    + (selectedMessageIds.has(message.message_id) ? ' selected-message' : '')
-                  }
-                  onContextMenu={event => openMessageContextMenu(event, message)}
-                  onClick={event => {
-                    if (
-                      selectedMessageIds.size > 0
-                      && !(event.target as HTMLElement).closest('button')
-                    ) toggleMessageSelection(message.message_id)
-                  }}
-                >
-                  {!message.outgoing && (
-                    <ChatAvatar
-                      chatId={message.sender_id || message.chat_id}
-                      title={message.sender_name || selected.title}
-                      className="message-avatar"
-                    />
-                  )}
-                  {selectedMessageIds.size > 0 && (
-                    <span className="message-selector" aria-hidden="true">
-                      {selectedMessageIds.has(message.message_id) ? '✓' : ''}
-                    </span>
-                  )}
-                  {!message.outgoing && message.sender_name && <strong className="sender-name">{message.sender_name}</strong>}
-                  {renderReplyReference(message)}
-                  {message.media && renderMedia(message)}
-                  {message.deleted
-                    ? <span className="message-text">پیام حذف شده است</span>
-                    : message.text.trim() && <span className="message-text">{renderMessageText(message.text.trim())}</span>}
-                  {!message.deleted && Boolean(message.reactions?.length) && (
-                    <div className="message-reactions">
-                      {message.reactions.map(reaction => (
-                        <button
-                          type="button"
-                          className={reaction.chosen ? 'chosen' : ''}
-                          key={reaction.emoji}
-                          onClick={() => setReaction(message, reaction.chosen ? null : reaction.emoji)}
-                          disabled={reactionBusy !== null}
-                        >
-                          <span>{reaction.emoji}</span>
-                          <small>{new Intl.NumberFormat('fa-IR').format(reaction.count)}</small>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  {reactionPickerFor === message.message_id && !message.deleted && selectedMessageIds.size === 0 && (
-                    <div className="reaction-picker" role="group" aria-label="انتخاب واکنش">
-                      {QUICK_REACTIONS.map(emoji => {
-                        const chosen = message.reactions?.some(item => item.emoji === emoji && item.chosen) || false
-                        const key = mediaKey(message) + ':' + (chosen ? 'remove' : emoji)
-                        return (
-                          <button
-                            type="button"
-                            className={chosen ? 'chosen' : ''}
-                            key={emoji}
-                            onClick={() => setReaction(message, chosen ? null : emoji)}
-                            disabled={reactionBusy !== null}
-                          >
-                            {reactionBusy === key ? '…' : emoji}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  )}
-                  <small className="message-meta">
-                    <span>{formatTime(message.date)}{message.edited ? ' · ویرایش‌شده' : ''}</span>
-                    {message.outgoing && (
-                      <span
-                        className={'read-receipt ' + (message.read ? 'read' : 'sent')}
-                        aria-label={message.read ? 'خوانده شده' : 'ارسال شده'}
-                        title={message.read ? 'خوانده شده' : 'ارسال شده'}
-                      >
-                        {message.read ? '✓✓' : '✓'}
-                      </span>
-                    )}
-                  </small>
-                </article>
-                </Fragment>
-              ))}
+              {messageNodes}
               {showJumpToBottom && (
                 <button className="jump-bottom" type="button" onClick={() => scrollToBottom('smooth')} aria-label="رفتن به آخر گفتگو">
                   <span>↓</span>
