@@ -214,7 +214,18 @@ FunctionEnd
 
 ; 5. Choose install directory page
 !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
+!define MUI_PAGE_CUSTOMFUNCTION_LEAVE DirectoryPageLeave
 !insertmacro MUI_PAGE_DIRECTORY
+
+Function DirectoryPageLeave
+  ; Updating an existing instance must keep its original shortcut/name even when
+  ; the setup initially suggested a new instance number.
+  IfFileExists "$INSTDIR\instance-name.txt" 0 directory_leave_done
+  FileOpen $0 "$INSTDIR\instance-name.txt" r
+  FileRead $0 $InstanceName
+  FileClose $0
+directory_leave_done:
+FunctionEnd
 
 ; 6. Start menu shortcut page
 Var AppStartMenuFolder
@@ -409,8 +420,6 @@ Section Install
     !insertmacro NSIS_HOOK_PREINSTALL
   !endif
 
-  !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
-
   ; Copy main executable
   File "${MAINBINARYSRCPATH}"
 
@@ -524,8 +533,6 @@ Section Uninstall
   !ifmacrodef NSIS_HOOK_PREUNINSTALL
     !insertmacro NSIS_HOOK_PREUNINSTALL
   !endif
-
-  !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
 
   ; Delete the app directory and its content from disk
   ; Copy main executable
