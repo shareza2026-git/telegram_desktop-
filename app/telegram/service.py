@@ -48,22 +48,32 @@ logger = logging.getLogger(__name__)
 
 class EventBroker:
     def __init__(self) -> None:
-        self._subscribers: set[asyncio.Queue] = set()
+        self._subscribers: dict[asyncio.Queue, int | None] = {}
 
-    def subscribe(self) -> asyncio.Queue:
+    def subscribe(self, chat_id: int | None = None) -> asyncio.Queue:
         queue: asyncio.Queue = asyncio.Queue(maxsize=2000)
-        self._subscribers.add(queue)
+        self._subscribers[queue] = chat_id
         return queue
 
     def unsubscribe(self, queue: asyncio.Queue) -> None:
-        self._subscribers.discard(queue)
+        self._subscribers.pop(queue, None)
+
+    @staticmethod
+    def _packet_chat_id(packet: dict) -> int | None:
+        data = packet.get("data")
+        if not isinstance(data, dict):
+            return None
+        value = data.get("chat_id")
+        return int(value) if isinstance(value, int) else None
 
     async def publish(self, packet: dict) -> None:
-        for queue in tuple(self._subscribers):
+        packet_chat_id = self._packet_chat_id(packet)
+        for queue, chat_id in tuple(self._subscribers.items()):
+            if chat_id is not None and packet_chat_id is not None and packet_chat_id != chat_id:
+                continue
             try:
                 queue.put_nowait(packet)
             except asyncio.QueueFull:
-                self._subscribers.discard(queue)
                 while not queue.empty():
                     queue.get_nowait()
                 queue.put_nowait({"type": "RESYNC", "data": {}})
