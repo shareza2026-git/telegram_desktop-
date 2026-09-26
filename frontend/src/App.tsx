@@ -800,21 +800,17 @@ function App() {
     let disposed = false
     const refresh = async () => {
       try {
-        const [transport, probes] = await Promise.all([
-          api<TransportStatus>('/api/telegram/transport'),
-          api<ProxyProbe[]>('/api/telegram/transport/probe')
-        ])
-        if (!disposed) {
-          setTransportStatus(transport)
-          setProxyProbes(probes)
-        }
+        const transport = await api<TransportStatus>('/api/telegram/transport')
+        if (!disposed) setTransportStatus(transport)
+        const probes = await api<ProxyProbe[]>('/api/telegram/transport/probe')
+        if (!disposed) setProxyProbes(probes)
       } catch {
         // Keep the recovery screen usable; the next polling cycle retries.
       }
     }
 
     void refresh()
-    const timer = window.setInterval(() => void refresh(), 5000)
+    const timer = window.setInterval(() => void refresh(), 20000)
     return () => {
       disposed = true
       window.clearInterval(timer)
@@ -940,6 +936,13 @@ function App() {
           void refreshSnapshot(true).then(() => resyncActiveChat())
         }
       }
+      if (packet.type === 'DIALOGS_REFRESHED' && !isPopoutWindow) {
+        if (snapshotPromise) {
+          void snapshotPromise.then(() => refreshSnapshot(true))
+        } else {
+          void refreshSnapshot(true)
+        }
+      }
       if (packet.type === 'MESSAGE_NEW' || packet.type === 'MESSAGE_EDITED') {
         const message = packet.data as Message
         if (isPopoutWindow && selectedChatIdRef.current !== message.chat_id) return
@@ -1032,7 +1035,7 @@ function App() {
       }
       socket.onclose = () => {
         if (disposed) return
-        setStatus(current => current ? { ...current, connected: false, state: 'CONNECTING' } : current)
+        void refreshStatus()
         const delay = Math.min(1000 * 2 ** retryCount, 10000)
         retryCount += 1
         retryTimer = window.setTimeout(connectSocket, delay)
@@ -1636,10 +1639,10 @@ function App() {
     const nextStatus = await api<Status>('/api/telegram/status')
     setStatus(nextStatus)
     if (nextStatus.authorized && !isPopoutWindow) {
-      const nextDialogs = await api<Dialog[]>('/api/telegram/dialogs')
-      setDialogs(nextDialogs)
-      const nextFolders = await api<DialogFolder[]>('/api/telegram/dialog-folders')
-      setTelegramFolders(nextFolders)
+      void Promise.allSettled([
+        api<Dialog[]>('/api/telegram/dialogs').then(setDialogs),
+        api<DialogFolder[]>('/api/telegram/dialog-folders').then(setTelegramFolders)
+      ])
     }
   }
 
@@ -1718,10 +1721,15 @@ function App() {
     setProxyBusy(true)
     setError('')
     try {
-      await api<{ index: number }>('/api/telegram/transport/add-link', {
+      const added = await api<{ index: number }>('/api/telegram/transport/add-link', {
         method: 'POST',
         body: JSON.stringify({ link })
       })
+      await api('/api/telegram/transport/select', {
+        method: 'POST',
+        body: JSON.stringify({ index: added.index })
+      })
+      setStatus(await api<Status>('/api/telegram/status'))
       setProxyLinkDraft('')
       setShowProxyAdd(false)
       await refreshProxySettings()
@@ -1816,11 +1824,9 @@ function App() {
   }
 
   async function refreshProxySettings() {
-    const [transport, probes] = await Promise.all([
-      api<TransportStatus>('/api/telegram/transport'),
-      api<ProxyProbe[]>('/api/telegram/transport/probe')
-    ])
+    const transport = await api<TransportStatus>('/api/telegram/transport')
     setTransportStatus(transport)
+    const probes = await api<ProxyProbe[]>('/api/telegram/transport/probe')
     setProxyProbes(probes)
   }
 
@@ -1863,10 +1869,15 @@ function App() {
     setProxyBusy(true)
     setError('')
     try {
-      await api<{ index: number }>('/api/telegram/transport/add-link', {
+      const added = await api<{ index: number }>('/api/telegram/transport/add-link', {
         method: 'POST',
         body: JSON.stringify({ link: value })
       })
+      await api('/api/telegram/transport/select', {
+        method: 'POST',
+        body: JSON.stringify({ index: added.index })
+      })
+      setStatus(await api<Status>('/api/telegram/status'))
       setProxySettingsOpen(true)
       setShowProxyAdd(false)
       setProxyLinkDraft('')
@@ -1879,10 +1890,10 @@ function App() {
   }
 
   function renderMessageText(value: string) {
-    const pattern = /(tg:\/\/(?:proxy|socks)\?[^\s]+|https?:\/\/(?:t\.me|telegram\.me)\/(?:proxy|socks)\?[^\s]+|vless:\/\/[^\s]+)/gi
+    const pattern = /(tg:\/\/(?:proxy|socks)\?[^\s]+|https?:\/\/(?:t\.me|telegram\.me|telegram\.dog)\/(?:proxy|socks)\?[^\s]+|(?:vless|vmess|trojan|ss|socks5|socks4):\/\/[^\s]+)/gi
     const parts = value.split(pattern)
     return parts.map((part, index) => (
-      /^(?:tg:\/\/(?:proxy|socks)\?|https?:\/\/(?:t\.me|telegram\.me)\/(?:proxy|socks)\?|vless:\/\/)/i.test(part)
+      /^(?:tg:\/\/(?:proxy|socks)\?|https?:\/\/(?:t\.me|telegram\.me|telegram\.dog)\/(?:proxy|socks)\?|(?:vless|vmess|trojan|ss|socks5|socks4):\/\/)/i.test(part)
         ? <button className="proxy-link" type="button" key={index} onClick={() => void addProxyLink(part)}>{part}</button>
         : <Fragment key={index}>{part}</Fragment>
     ))

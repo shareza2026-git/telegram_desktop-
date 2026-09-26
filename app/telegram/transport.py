@@ -3,16 +3,18 @@ import base64
 import hashlib
 import json
 import logging
+import re
+import shutil
 import sys
 from pathlib import Path
 from typing import Literal
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, SecretStr
 from telethon import connection
 
 from app.telegram.dashboard_transport import dashboard_proxy_records
-from app.telegram.xray import XrayRuntime, parse_vless_uri
+from app.telegram.xray import VlessProfileError, XrayRuntime, parse_xray_uri
 
 
 class ProxyRoute(BaseModel):
@@ -42,12 +44,12 @@ class ProxyRoute(BaseModel):
         if self.type == "mtproto":
             value = self.secret.get_secret_value() if self.secret else ""
             try:
-                raw = bytes.fromhex(value) if len(value) == 32 else base64.b64decode(
+                raw = bytes.fromhex(value) if len(value) % 2 == 0 and all(c in '0123456789abcdefABCDEF' for c in value) else base64.b64decode(
                     value + "=" * (-len(value) % 4),
                     altchars=b"-_",
                     validate=True,
                 )
-                if len(raw) != 16:
+                if len(raw) not in {16, 17} or (len(raw) == 17 and raw[0] != 0xdd):
                     raise ValueError
             except Exception:
                 raise ValueError("Invalid MTProto secret") from None
@@ -73,7 +75,7 @@ class ProxyRoute(BaseModel):
             return self.options()
         if self.vless_uri is None or self.xray_core_path is None or self.runtime_directory is None:
             raise RuntimeError("Managed V2Ray route is incomplete")
-        profile = parse_vless_uri(self.vless_uri.get_secret_value())
+        profile = parse_xray_uri(self.vless_uri.get_secret_value())
         self._runtime = XrayRuntime(profile, self.xray_core_path, self.runtime_directory)
         return await self._runtime.start()
 
@@ -137,25 +139,38 @@ class TransportCatalog:
         path.write_text(json.dumps({"selected_index": index}, indent=2), encoding="utf-8")
 
     def _xray_core_path(self) -> Path:
-        return Path(sys.executable).resolve().parent / "xray.exe"
+        bundled = Path(sys.executable).resolve().parent / "xray.exe"
+        return bundled if bundled.is_file() else Path(shutil.which("xray") or bundled)
 
     def _xray_runtime_directory(self) -> Path:
         return self.path.parent / "runtime" / "xray"
 
     def add_proxy_link(self, link: str) -> dict:
-        raw = link.strip()
+        match = re.search(
+            r"(?i)(?:tg://(?:proxy|socks)\?|https?://(?:t\.me|telegram\.me|telegram\.dog)/(?:proxy|socks)\?|"
+            r"(?:vless|vmess|trojan|ss|socks5|socks4|http)://)[^\s<>]+",
+            link,
+        )
+        raw = match.group(0).rstrip(".,،؛)>]") if match else link.strip()
+        if not raw or len(raw) > 16384:
+            raise ValueError("Proxy link is empty or too long")
         parsed = urlparse(raw)
 
-        if parsed.scheme.casefold() == "vless":
-            profile = parse_vless_uri(raw)
+        if parsed.scheme.casefold() in {"vless", "vmess", "trojan", "ss"}:
+            try:
+                profile = parse_xray_uri(raw)
+            except VlessProfileError as error:
+                if str(error) == "PROFILE_UNSUPPORTED":
+                    raise ValueError("این پروتکل یا تنظیمات لینک با هستهٔ Xray فعلی پشتیبانی نمی‌شود.") from None
+                raise ValueError("ساختار لینک V2Ray معتبر نیست.") from None
             fingerprint = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
             record = {
                 "type": "socks5",
                 "host": "127.0.0.1",
                 "port": 1080,
                 "managed_v2ray": True,
-                "v2ray_name": profile.display_name or f"VLESS {profile.host}",
-                "route_id": f"user-vless-{fingerprint}",
+                "v2ray_name": profile.display_name or f"{parsed.scheme.upper()} {profile.host}",
+                "route_id": f"user-xray-{fingerprint}",
                 "vless_uri": raw,
                 "xray_core_path": str(self._xray_core_path()),
                 "runtime_directory": str(self._xray_runtime_directory()),
@@ -182,22 +197,31 @@ class TransportCatalog:
                     return {
                         "index": index,
                         "name": route.display_name,
-                        "type": "vless",
+                        "type": parsed.scheme.casefold(),
                         "host": profile.host,
                         "port": profile.port,
                     }
-            raise ValueError("VLESS proxy could not be added")
+            raise ValueError("V2Ray proxy could not be added")
 
         host = parsed.netloc.casefold()
         path = parsed.path.casefold()
         kind = None
         if parsed.scheme.casefold() == "tg" and parsed.netloc.casefold() in {"proxy", "socks"}:
             kind = parsed.netloc.casefold()
-        elif parsed.scheme.casefold() in {"http", "https"} and host in {"t.me", "telegram.me"}:
+        elif parsed.scheme.casefold() in {"http", "https"} and host in {"t.me", "telegram.me", "telegram.dog"}:
             if path in {"/proxy", "/socks"}:
                 kind = path.lstrip("/")
+        if kind is None and parsed.scheme.casefold() in {"socks5", "socks4", "http"}:
+            if not parsed.hostname or not parsed.port:
+                raise ValueError("Proxy link is missing server or port")
+            record = {
+                "type": parsed.scheme.casefold(), "host": parsed.hostname, "port": parsed.port,
+                "username": unquote(parsed.username) if parsed.username else None,
+                "password": unquote(parsed.password) if parsed.password else None,
+            }
+            return self._store_proxy_record(record)
         if kind not in {"proxy", "socks"}:
-            raise ValueError("Unsupported proxy link")
+            raise ValueError("Unsupported proxy link; use Telegram, SOCKS, HTTP, VLESS, VMess, Trojan or Shadowsocks")
 
         values = parse_qs(parsed.query)
         server = (values.get("server") or [""])[0].strip()
@@ -213,6 +237,11 @@ class TransportCatalog:
             if not secret:
                 raise ValueError("MTProto proxy link is missing secret")
             record = {"type": "mtproto", "host": server, "port": port, "secret": secret}
+            # Telethon supports ordinary and dd MTProto secrets, but cannot
+            # perform the Fake-TLS handshake required by ee secrets.
+            if secret.lower().startswith("ee") and len(secret) > 34:
+                raise ValueError("Fake-TLS MTProto (ee) is not supported by this Telegram client")
+            ProxyRoute.model_validate(record).options()
         else:
             record = {
                 "type": "socks5",
@@ -222,6 +251,9 @@ class TransportCatalog:
                 "password": ((values.get("pass") or [""])[0].strip() or None),
             }
 
+        return self._store_proxy_record(record)
+
+    def _store_proxy_record(self, record: dict) -> dict:
         records = self._load_user_records()
         fingerprint = (record["type"], record["host"].casefold(), record["port"])
         for existing in records:
@@ -234,7 +266,8 @@ class TransportCatalog:
         self._save_user_records(records)
 
         routes = self.load()
-        for index, route in enumerate(routes, 1):
+        for index in range(len(routes), 0, -1):
+            route = routes[index - 1]
             if route.type == record["type"] and route.host.get_secret_value().casefold() == record["host"].casefold() and route.port == record["port"]:
                 return {"index": index, "name": route.display_name, "type": route.type, "host": record["host"], "port": route.port}
         raise ValueError("Proxy could not be added")
@@ -316,7 +349,7 @@ class TransportCatalog:
             result.append(
                 {
                     "index": index,
-                    "type": "vless" if route.managed_v2ray else route.type,
+                    "type": route.vless_uri.get_secret_value().split(":", 1)[0].lower() if route.managed_v2ray and route.vless_uri else route.type,
                     "host": _safe_host(route.host.get_secret_value()),
                     "port": route.port,
                     "managed_v2ray": route.managed_v2ray,
