@@ -37,6 +37,22 @@ async def status(request: Request):
     return service(request).status
 
 
+@router.get("/api/cache/dialogs")
+async def cached_dialogs(request: Request):
+    return await request.app.state.chat_store.list_dialogs()
+
+
+@router.get("/api/cache/chats/{chat_id}/messages")
+async def cached_messages(
+    chat_id: int,
+    request: Request,
+    limit: int = 80,
+):
+    if limit < 1 or limit > 200:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 200")
+    return await request.app.state.chat_store.history(chat_id, limit)
+
+
 @router.post("/api/telegram/runtime-config")
 async def runtime_config(values: ApiConfigRequest, request: Request):
     try:
