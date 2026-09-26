@@ -1217,7 +1217,11 @@ class TelegramDesktopService:
 
         if offset_id == 0:
             dialog = next(
-                (item for item in self._dialog_snapshot if item.chat_id == chat_id),
+                (
+                    item
+                    for item in getattr(self, "_dialog_snapshot", [])
+                    if item.chat_id == chat_id
+                ),
                 None,
             )
             if dialog is not None and dialog.last_message_id is not None:
