@@ -209,7 +209,10 @@ async def media(
     return FileResponse(
         path=item.path,
         media_type=item.mime_type or "application/octet-stream",
-        headers={"Content-Disposition": f'{disposition}; filename="{item.filename}"'},
+        headers={
+            "Content-Disposition": f'{disposition}; filename="{item.filename}"',
+            "Cache-Control": "private, max-age=3600",
+        },
     )
 
 
