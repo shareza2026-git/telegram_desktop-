@@ -179,8 +179,20 @@ const COMPOSER_EMOJIS = [
   '👍', '👎', '👏', '🙏', '🤝', '💪', '❤️', '💔', '🔥', '✨',
   '🎉', '✅', '❌', '⚡', '💯', '👀', '📌', '📎', '🚀', '🌹'
 ]
-const backendBase = (import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8110').replace(/\/$/, '')
-const socketBase = backendBase.replace(/^http/, 'ws')
+let backendBase = (import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8110').replace(/\/$/, '')
+let socketBase = backendBase.replace(/^http/, 'ws')
+let runtimeStoragePrefix = 'telegram-instance-development'
+
+export function configureRuntime(port: number, instanceId: string) {
+  backendBase = 'http://127.0.0.1:' + port
+  socketBase = 'ws://127.0.0.1:' + port
+  runtimeStoragePrefix = 'telegram-instance-' + instanceId
+}
+
+function instanceStorageKey(key: string) {
+  return runtimeStoragePrefix + ':' + key
+}
+
 const appWindow = getCurrentWindow()
 const startupParams = new URLSearchParams(window.location.search)
 const popoutChatId = startupParams.get('popout') === '1'
@@ -460,7 +472,7 @@ function App() {
   const [runtimeConfigBusy, setRuntimeConfigBusy] = useState(false)
   const [activeFolder, setActiveFolder] = useState<FolderKey>('all')
   const [telegramFolders, setTelegramFolders] = useState<DialogFolder[]>([])
-  const [sidebarWidth, setSidebarWidth] = useState(() => Number(window.localStorage.getItem('telegram-sidebar-width')) || 312)
+  const [sidebarWidth, setSidebarWidth] = useState(() => Number(window.localStorage.getItem(instanceStorageKey('telegram-sidebar-width'))) || 312)
   const sidebarResizeRef = useRef<{ startX: number; startWidth: number } | null>(null)
   const sidebarResizeCleanupRef = useRef<(() => void) | null>(null)
   const [loadingOlder, setLoadingOlder] = useState(false)
@@ -504,7 +516,7 @@ function App() {
   const [notificationsEnabled, setNotificationsEnabled] = useState(() => (
     typeof Notification !== 'undefined'
     && Notification.permission === 'granted'
-    && window.localStorage.getItem('telegram-notifications') === '1'
+    && window.localStorage.getItem(instanceStorageKey('telegram-notifications')) === '1'
   ))
   const [chatMenuOpen, setChatMenuOpen] = useState(false)
   const [dialogActionBusy, setDialogActionBusy] = useState<string | null>(null)
@@ -524,12 +536,12 @@ function App() {
   const [settingsBusy, setSettingsBusy] = useState(false)
   const [logoutBusy, setLogoutBusy] = useState(false)
   const [preferences, setPreferences] = useState<ClientPreferences>(() => (
-    parsePreferences(window.localStorage.getItem(PREFERENCES_STORAGE_KEY))
+    parsePreferences(window.localStorage.getItem(instanceStorageKey(PREFERENCES_STORAGE_KEY)))
   ))
   const [revealedPhotos, setRevealedPhotos] = useState<Set<string>>(() => new Set())
   const dialogsRef = useRef<Dialog[]>([])
   const notificationsEnabledRef = useRef(notificationsEnabled)
-  const draftsRef = useRef(parseDraftMap(window.localStorage.getItem(DRAFT_STORAGE_KEY)))
+  const draftsRef = useRef(parseDraftMap(window.localStorage.getItem(instanceStorageKey(DRAFT_STORAGE_KEY))))
   const draftSwitchRef = useRef<number | null>(null)
   const draftBeforeEditRef = useRef('')
   const liveDraftRef = useRef(draft)
@@ -748,7 +760,7 @@ function App() {
   }, [notificationsEnabled])
 
   useEffect(() => {
-    window.localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify(preferences))
+    window.localStorage.setItem(instanceStorageKey(PREFERENCES_STORAGE_KEY), JSON.stringify(preferences))
     const media = window.matchMedia('(prefers-color-scheme: light)')
     const applyTheme = () => {
       document.documentElement.dataset.theme = resolvedTheme(preferences.theme, media.matches)
@@ -1179,7 +1191,7 @@ function App() {
       return
     }
     draftsRef.current = updateDraftMap(draftsRef.current, selected.chat_id, draft)
-    window.localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draftsRef.current))
+    window.localStorage.setItem(instanceStorageKey(DRAFT_STORAGE_KEY), JSON.stringify(draftsRef.current))
   }, [draft, selected?.chat_id, editing])
 
   useEffect(() => {
@@ -1331,7 +1343,7 @@ function App() {
     }
 
     const handleUp = () => {
-      window.localStorage.setItem('telegram-sidebar-width', String(latestWidth))
+      window.localStorage.setItem(instanceStorageKey('telegram-sidebar-width'), String(latestWidth))
       cleanup()
     }
 
@@ -1408,7 +1420,7 @@ function App() {
 
   async function toggleNotifications() {
     if (notificationsEnabled) {
-      window.localStorage.setItem('telegram-notifications', '0')
+      window.localStorage.setItem(instanceStorageKey('telegram-notifications'), '0')
       setNotificationsEnabled(false)
       return
     }
@@ -1419,7 +1431,7 @@ function App() {
     try {
       const permission = await Notification.requestPermission()
       const enabled = permission === 'granted'
-      window.localStorage.setItem('telegram-notifications', enabled ? '1' : '0')
+      window.localStorage.setItem(instanceStorageKey('telegram-notifications'), enabled ? '1' : '0')
       setNotificationsEnabled(enabled)
       if (!enabled) setError('مجوز اعلان دسکتاپ صادر نشد.')
     } catch {
@@ -1468,7 +1480,7 @@ function App() {
     if (currentChatId === dialog.chat_id) return
     if (currentChatId !== null && !editingRef.current) {
       draftsRef.current = updateDraftMap(draftsRef.current, currentChatId, liveDraftRef.current)
-      window.localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draftsRef.current))
+      window.localStorage.setItem(instanceStorageKey(DRAFT_STORAGE_KEY), JSON.stringify(draftsRef.current))
     }
     draftSwitchRef.current = dialog.chat_id
     setSelected(dialog)
