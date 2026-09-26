@@ -1516,7 +1516,7 @@ function App() {
 
   async function refreshDialogs() {
     try {
-      const nextDialogs = await api<Dialog[]>('/api/telegram/dialogs')
+      const nextDialogs = await api<Dialog[]>('/api/telegram/dialogs?force=true')
       setDialogs(nextDialogs)
       const nextFolders = await api<DialogFolder[]>('/api/telegram/dialog-folders')
       setTelegramFolders(nextFolders)
