@@ -1731,10 +1731,11 @@ class TelegramDesktopService:
         )
 
     async def close(self) -> None:
-        if self._initial_connect_task is not None:
-            self._initial_connect_task.cancel()
+        initial_connect_task = getattr(self, "_initial_connect_task", None)
+        if initial_connect_task is not None:
+            initial_connect_task.cancel()
             with suppress(asyncio.CancelledError):
-                await self._initial_connect_task
+                await initial_connect_task
             self._initial_connect_task = None
 
         if self._connection_monitor is not None:
