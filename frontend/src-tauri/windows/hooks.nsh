@@ -3,6 +3,8 @@
   ; Remove only the legacy single-install registration left by <= 0.1.22 so it
   ; cannot trigger Windows maintenance behavior again. Existing files remain.
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Telegram Desktop"
+  Delete "$DESKTOP\Telegram Desktop.lnk"
+  Delete "$SMPROGRAMS\Telegram Desktop.lnk"
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
