@@ -113,6 +113,8 @@ class TelegramDesktopService:
         self._message_persist_queue: asyncio.Queue[Message] = asyncio.Queue(maxsize=5000)
         self._message_persist_worker: asyncio.Task | None = None
         self._connection_monitor: asyncio.Task | None = None
+        self._initial_connect_task: asyncio.Task | None = None
+        self._recent_message_chat: dict[int, int] = {}
         self._session_metadata: dict = {}
         info = self.sessions.info()
         self.status = ClientStatus(
@@ -126,6 +128,14 @@ class TelegramDesktopService:
             self._message_persist_worker = asyncio.create_task(self._message_persist_loop())
         if self._connection_monitor is None or self._connection_monitor.done():
             self._connection_monitor = asyncio.create_task(self._monitor_connection())
+
+        # Hydrate the last known dialog list before any network connection so the
+        # desktop can render immediately after the sidecar starts.
+        try:
+            self._dialog_snapshot = await self.store.list_dialogs()
+        except Exception:
+            logger.warning("Cached dialogs could not be loaded during startup", exc_info=True)
+
         self.sessions.ensure_client_path()
         info = self.sessions.info()
         self.status = self.status.model_copy(
@@ -154,7 +164,24 @@ class TelegramDesktopService:
                     }
                 )
             return
-        await self._connect()
+
+        self.status = self.status.model_copy(
+            update={"state": "CONNECTING", "connected": False, "last_error": None}
+        )
+        if self._initial_connect_task is None or self._initial_connect_task.done():
+            self._initial_connect_task = asyncio.create_task(self._initial_connect())
+
+    async def _initial_connect(self) -> None:
+        try:
+            async with self._lifecycle_lock:
+                await self._connect()
+            await self.events.publish(
+                {"type": "READY", "data": self.status.model_dump(mode="json")}
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("Initial Telegram connection failed", exc_info=True)
 
     def _reset_connection_caches(self) -> None:
         self._dialog_snapshot = []
@@ -656,6 +683,16 @@ class TelegramDesktopService:
     def _is_priority_chat(self, chat_id: int) -> bool:
         return chat_id in self._priority_chat_ids
 
+    def _remember_message_chat(self, message_id: int, chat_id: int) -> None:
+        recent = getattr(self, "_recent_message_chat", None)
+        if recent is None:
+            recent = {}
+            self._recent_message_chat = recent
+        recent[int(message_id)] = int(chat_id)
+        if len(recent) > 10000:
+            for key in list(recent)[:1000]:
+                recent.pop(key, None)
+
     def _update_dialog_snapshot_from_message(self, message: Message) -> None:
         for index, dialog in enumerate(self._dialog_snapshot):
             if dialog.chat_id != message.chat_id:
@@ -674,6 +711,7 @@ class TelegramDesktopService:
             return
         chat_id = int(event.chat_id)
         message = self._message_model(event.message, chat_id)
+        self._remember_message_chat(message.message_id, chat_id)
         self._update_dialog_snapshot_from_message(message)
         packet = {
             "type": "MESSAGE_NEW",
@@ -693,6 +731,7 @@ class TelegramDesktopService:
             return
         chat_id = int(event.chat_id)
         message = self._message_model(event.message, chat_id, edited=True)
+        self._remember_message_chat(message.message_id, chat_id)
         self._update_dialog_snapshot_from_message(message)
         packet = {
             "type": "MESSAGE_EDITED",
@@ -769,15 +808,24 @@ class TelegramDesktopService:
         )
 
     async def _on_delete(self, event: Any) -> None:
-        if event.chat_id is None:
-            return
-        for message_id in event.deleted_ids:
-            chat_id = int(event.chat_id)
-            await self.store.mark_deleted(chat_id, int(message_id))
+        event_chat_id = int(event.chat_id) if event.chat_id is not None else None
+        recent = getattr(self, "_recent_message_chat", {})
+        for raw_message_id in event.deleted_ids:
+            message_id = int(raw_message_id)
+            chat_id = event_chat_id or recent.get(message_id)
+            if chat_id is None:
+                finder = getattr(self.store, "find_unique_message_chat", None)
+                if finder is not None:
+                    chat_id = await finder(message_id)
+            if chat_id is None:
+                logger.debug("Delete update %s could not be mapped to a chat", message_id)
+                continue
+            await self.store.mark_deleted(int(chat_id), message_id)
+            recent.pop(message_id, None)
             await self.events.publish(
                 {
                     "type": "MESSAGE_DELETED",
-                    "data": {"chat_id": chat_id, "message_id": int(message_id)},
+                    "data": {"chat_id": int(chat_id), "message_id": message_id},
                 }
             )
 
@@ -844,6 +892,31 @@ class TelegramDesktopService:
         async def probe_one(index: int, route: ProxyRoute) -> dict:
             started = asyncio.get_running_loop().time()
             client: TelegramClient | None = None
+
+            active_route = self.route
+            active_client = self.client
+            same_active_route = bool(
+                self.status.connected
+                and active_route is not None
+                and active_client is not None
+                and active_client.is_connected()
+                and active_route.type == route.type
+                and active_route.host.get_secret_value() == route.host.get_secret_value()
+                and active_route.port == route.port
+                and (
+                    (active_route.secret.get_secret_value() if active_route.secret else None)
+                    == (route.secret.get_secret_value() if route.secret else None)
+                )
+            )
+            if same_active_route:
+                return {
+                    "index": index,
+                    "available": True,
+                    "latency_ms": None,
+                    "detail": "Active Telegram connection",
+                    "active": True,
+                }
+
             try:
                 options = await route.activate()
                 api_hash = (
@@ -1247,35 +1320,41 @@ class TelegramDesktopService:
     async def history(self, chat_id: int, limit: int = 50, offset_id: int = 0) -> list[Message]:
         if limit < 1 or limit > 200:
             raise ValueError("limit must be between 1 and 200")
-        self._require_authorized()
-
-        if offset_id == 0:
-            dialog = next(
-                (
-                    item
-                    for item in getattr(self, "_dialog_snapshot", [])
-                    if item.chat_id == chat_id
-                ),
-                None,
-            )
-            if dialog is not None and dialog.last_message_id is not None:
-                cached = await self.store.history(chat_id, limit)
-                if (
-                    cached
-                    and cached[-1].message_id == dialog.last_message_id
-                    and len(cached) >= min(limit, 1)
-                ):
-                    return cached
-
         client = self._require_authorized()
+
+        cached = await self.store.history(chat_id, limit, offset_id) if offset_id == 0 else []
         values = []
         async for item in client.iter_messages(
             chat_id,
             limit=limit,
             offset_id=offset_id or 0,
         ):
-            values.append(self._message_model(item, chat_id))
+            message = self._message_model(item, chat_id)
+            self._remember_message_chat(message.message_id, chat_id)
+            values.append(message)
+
         await self.store.upsert_messages(values)
+
+        # Telegram does not return deleted messages in history. Reconcile the
+        # cached latest window so bot-cleaned commands such as "ن" disappear
+        # even if the live delete update was missed by an older build.
+        if offset_id == 0 and cached:
+            remote_ids = {message.message_id for message in values}
+            if values:
+                oldest_remote_id = min(remote_ids)
+                newest_remote_id = max(remote_ids)
+                stale_ids = [
+                    message.message_id
+                    for message in cached
+                    if oldest_remote_id <= message.message_id <= newest_remote_id
+                    and message.message_id not in remote_ids
+                ]
+            else:
+                stale_ids = [message.message_id for message in cached]
+            marker = getattr(self.store, "mark_deleted_many", None)
+            if marker is not None and stale_ids:
+                await marker(chat_id, stale_ids)
+
         return list(reversed(values))
 
     async def _own_message(self, chat_id: int, message_id: int) -> tuple[TelegramClient, Any]:
@@ -1652,6 +1731,12 @@ class TelegramDesktopService:
         )
 
     async def close(self) -> None:
+        if self._initial_connect_task is not None:
+            self._initial_connect_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._initial_connect_task
+            self._initial_connect_task = None
+
         if self._connection_monitor is not None:
             self._connection_monitor.cancel()
             with suppress(asyncio.CancelledError):
