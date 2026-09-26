@@ -132,6 +132,7 @@ fn main() {
         // database/session state, WebSocket backend ports and frontend storage.
         let (instance_id, instance_hash) = instance_identity(&executable_dir);
         let backend_port = choose_backend_port(instance_hash)?;
+        std::fs::write(executable_dir.join("instance-id.txt"), &instance_id)?;
         let shared_root = app.path().app_data_dir()?;
         let data_root = shared_root.join("instances").join(&instance_id);
         std::fs::create_dir_all(&data_root)?;
