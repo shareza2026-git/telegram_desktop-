@@ -45,12 +45,14 @@ def test_each_executable_folder_gets_isolated_runtime_state():
     tauri_config = (ROOT / "frontend" / "src-tauri" / "tauri.conf.json").read_text(encoding="utf-8")
 
     assert 'shared_root.join("instances").join(&instance_id)' in main_rs
-    assert 'choose_backend_port(instance_hash)' in main_rs
+    assert 'backend_port_for_instance(instance_hash)' in main_rs
+    assert 'RunEvent::ExitRequested { .. } | RunEvent::Exit' in main_rs
     assert '"--port"' in main_rs
     assert 'parser.add_argument("--port"' in desktop
     assert 'port=args.port' in desktop
     assert "runtime_backend_port" in frontend_main
     assert "runtime_instance_id" in frontend_main
+    assert "shutdown_instance_backend" in app_tsx
     assert "instanceStorageKey" in app_tsx
     assert "http://127.0.0.1:*" in tauri_config
     assert "ws://127.0.0.1:*" in tauri_config
