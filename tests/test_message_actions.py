@@ -39,6 +39,7 @@ class FakeClient:
         self.files = []
         self.reaction_requests = []
         self.typing_requests = []
+        self.read_acknowledgements = []
         self.pinned_requests = []
         self.connected = True
         self.disconnects = 0
@@ -49,6 +50,9 @@ class FakeClient:
     async def disconnect(self):
         self.connected = False
         self.disconnects += 1
+
+    async def send_read_acknowledge(self, chat_id: int):
+        self.read_acknowledgements.append(chat_id)
 
     async def get_messages(
         self,
@@ -134,6 +138,7 @@ class FakeStore:
         self.messages = []
         self.deleted = []
         self.read_ranges = []
+        self.dialog_reads = []
 
     async def upsert_message(self, message) -> None:
         self.messages.append(message)
@@ -143,6 +148,9 @@ class FakeStore:
 
     async def mark_deleted(self, chat_id: int, message_id: int) -> None:
         self.deleted.append((chat_id, message_id))
+
+    async def mark_dialog_read(self, chat_id: int) -> None:
+        self.dialog_reads.append(chat_id)
 
 
 class FakeEvents:
@@ -351,6 +359,36 @@ async def test_send_typing_and_cancel_use_telegram_actions():
     assert type(client.typing_requests[1].action).__name__ == "SendMessageCancelAction"
     assert active == {"chat_id": 7, "typing": True}
     assert cancelled == {"chat_id": 7, "typing": False}
+
+
+@pytest.mark.asyncio
+async def test_repeated_typing_state_is_deduped_but_cancel_is_sent():
+    client = FakeClient()
+    service = build_service(client)
+
+    await service.send_typing(7, True)
+    await service.send_typing(7, True)
+    await service.send_typing(7, False)
+    await service.send_typing(7, False)
+
+    assert [type(request.action).__name__ for request in client.typing_requests] == [
+        "SendMessageTypingAction",
+        "SendMessageCancelAction",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_repeated_mark_read_acknowledgement_is_deduped():
+    client = FakeClient()
+    service = build_service(client)
+
+    first = await service.mark_read(7)
+    second = await service.mark_read(7)
+
+    assert first == {"chat_id": 7, "read": True}
+    assert second == {"chat_id": 7, "read": True}
+    assert client.read_acknowledgements == [7]
+    assert service.store.dialog_reads == [7, 7]
 
 
 @pytest.mark.asyncio
