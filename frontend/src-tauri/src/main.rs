@@ -3,7 +3,6 @@
 #[cfg(not(debug_assertions))]
 use std::sync::Mutex;
 #[cfg(not(debug_assertions))]
-use std::net::TcpListener;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 #[cfg(not(debug_assertions))]
 use tauri::RunEvent;
@@ -38,19 +37,10 @@ fn instance_identity(executable_dir: &std::path::Path) -> (String, u64) {
 }
 
 #[cfg(not(debug_assertions))]
-fn choose_backend_port(hash: u64) -> std::io::Result<u16> {
-    let base = 20000 + (hash % 30000) as u16;
-    for offset in 0..256u16 {
-        let port = 20000 + ((base - 20000 + offset) % 30000);
-        if let Ok(listener) = TcpListener::bind(("127.0.0.1", port)) {
-            drop(listener);
-            return Ok(port);
-        }
-    }
-    Err(std::io::Error::new(
-        std::io::ErrorKind::AddrNotAvailable,
-        "no free backend port found",
-    ))
+fn backend_port_for_instance(hash: u64) -> u16 {
+    // Stable port per executable folder. Reopening the same instance must never
+    // create a second backend against the same Telegram session/database.
+    20000 + (hash % 30000) as u16
 }
 
 #[cfg(not(debug_assertions))]
@@ -70,6 +60,20 @@ fn runtime_backend_port() -> u16 {
 fn runtime_instance_id(state: tauri::State<RuntimeState>) -> String {
     state.instance_id.clone()
 }
+
+#[cfg(not(debug_assertions))]
+#[tauri::command]
+fn shutdown_instance_backend(state: tauri::State<BackendProcess>) {
+    if let Ok(mut slot) = state.0.lock() {
+        if let Some(child) = slot.take() {
+            let _ = child.kill();
+        }
+    }
+}
+
+#[cfg(debug_assertions)]
+#[tauri::command]
+fn shutdown_instance_backend() {}
 
 #[cfg(debug_assertions)]
 #[tauri::command]
@@ -116,7 +120,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             open_chat_window,
             runtime_backend_port,
-            runtime_instance_id
+            runtime_instance_id,
+            shutdown_instance_backend
         ]);
 
     #[cfg(not(debug_assertions))]
@@ -131,7 +136,7 @@ fn main() {
         // Different copies on the same Windows account get different AppData,
         // database/session state, WebSocket backend ports and frontend storage.
         let (instance_id, instance_hash) = instance_identity(&executable_dir);
-        let backend_port = choose_backend_port(instance_hash)?;
+        let backend_port = backend_port_for_instance(instance_hash);
         std::fs::write(executable_dir.join("instance-id.txt"), &instance_id)?;
         let shared_root = app.path().app_data_dir()?;
         let data_root = shared_root.join("instances").join(&instance_id);
@@ -197,7 +202,7 @@ fn main() {
 
     app.run(|app_handle, event| {
         #[cfg(not(debug_assertions))]
-        if let RunEvent::Exit = event {
+        if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
             let state = app_handle.state::<BackendProcess>();
             if let Ok(mut slot) = state.0.lock() {
                 if let Some(child) = slot.take() {
