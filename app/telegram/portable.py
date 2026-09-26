@@ -24,9 +24,9 @@ def _candidate_paths(settings: Settings) -> list[Path]:
     explicit = str(os.environ.get("TELEGRAM_PORTABLE_CONFIG") or "").strip()
     if explicit:
         values.append(Path(explicit))
+    # Default packaged behavior is intentionally executable-folder-only.
+    # Do not inspect cwd, Desktop, Downloads, or the shortcut location.
     values.append(Path(sys.executable).resolve().parent / PORTABLE_FILE_NAME)
-    values.append(Path.cwd() / PORTABLE_FILE_NAME)
-    values.append(settings.project_root / PORTABLE_FILE_NAME)
     unique: list[Path] = []
     seen: set[Path] = set()
     for value in values:
