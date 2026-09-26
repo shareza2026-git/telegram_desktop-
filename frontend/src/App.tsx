@@ -1991,6 +1991,7 @@ function App() {
   async function searchMessages(event: FormEvent) {
     event.preventDefault()
     if (!selected || searchBusy) return
+    const chatId = selected.chat_id
     const value = messageQuery.trim()
     if (value.length < 2) {
       setError('برای جست‌وجو حداقل دو حرف وارد کنید.')
@@ -2001,14 +2002,17 @@ function App() {
     setSearchPerformed(false)
     try {
       const results = await api<Message[]>(
-        '/api/telegram/chats/' + selected.chat_id + '/search?q=' + encodeURIComponent(value) + '&limit=50'
+        '/api/telegram/chats/' + chatId + '/search?q=' + encodeURIComponent(value) + '&limit=50'
       )
+      if (selectedChatIdRef.current !== chatId) return
       setSearchResults(results)
       setSearchPerformed(true)
     } catch (caught) {
-      setError(errorMessage(caught, 'جست‌وجوی پیام انجام نشد.'))
+      if (selectedChatIdRef.current === chatId) {
+        setError(errorMessage(caught, 'جست‌وجوی پیام انجام نشد.'))
+      }
     } finally {
-      setSearchBusy(false)
+      if (selectedChatIdRef.current === chatId) setSearchBusy(false)
     }
   }
 
