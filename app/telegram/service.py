@@ -106,6 +106,8 @@ class TelegramDesktopService:
         self._dialog_scan_task: asyncio.Task[list[Dialog]] | None = None
         self._chat_photo_tasks: dict[int, asyncio.Task[DownloadedMedia]] = {}
         self._media_download_tasks: dict[tuple[int, int], asyncio.Task[DownloadedMedia]] = {}
+        self._chat_info_cache: dict[int, tuple[float, ChatInfo]] = {}
+        self._pinned_cache: dict[int, tuple[float, Message | None]] = {}
         self._message_persist_queue: asyncio.Queue[Message] = asyncio.Queue(maxsize=5000)
         self._message_persist_worker: asyncio.Task | None = None
         self._connection_monitor: asyncio.Task | None = None
@@ -871,9 +873,19 @@ class TelegramDesktopService:
         ]
 
     async def chat_info(self, chat_id: int) -> ChatInfo:
+        self._require_authorized()
+        cache = getattr(self, "_chat_info_cache", None)
+        if cache is None:
+            cache = {}
+            self._chat_info_cache = cache
+        now = asyncio.get_running_loop().time()
+        cached = cache.get(chat_id)
+        if cached is not None and now - cached[0] < 30.0:
+            return cached[1]
+
         client = self._require_authorized()
         entity = await client.get_entity(chat_id)
-        return ChatInfo(
+        value = ChatInfo(
             chat_id=chat_id,
             title=self._entity_title(entity, chat_id),
             dialog_type=self._entity_dialog_type(entity),
@@ -886,6 +898,8 @@ class TelegramDesktopService:
             fake=bool(getattr(entity, "fake", False)),
             photo_available=bool(getattr(entity, "photo", None)),
         )
+        cache[chat_id] = (now, value)
+        return value
 
     async def _download_chat_photo_once(self, chat_id: int) -> DownloadedMedia:
         client = self._require_authorized()
@@ -1172,6 +1186,16 @@ class TelegramDesktopService:
         return await self._publish_dialog_update(chat_id, muted=muted)
 
     async def pinned_message(self, chat_id: int) -> Message | None:
+        self._require_authorized()
+        cache = getattr(self, "_pinned_cache", None)
+        if cache is None:
+            cache = {}
+            self._pinned_cache = cache
+        now = asyncio.get_running_loop().time()
+        cached = cache.get(chat_id)
+        if cached is not None and now - cached[0] < 30.0:
+            return cached[1]
+
         client = self._require_authorized()
         values = await client.get_messages(
             chat_id,
@@ -1179,14 +1203,32 @@ class TelegramDesktopService:
             filter=types.InputMessagesFilterPinned(),
         )
         if not values:
+            cache[chat_id] = (now, None)
             return None
         message = self._message_model(values[0], chat_id)
         await self.store.upsert_message(message)
+        cache[chat_id] = (now, message)
         return message
 
     async def history(self, chat_id: int, limit: int = 50, offset_id: int = 0) -> list[Message]:
         if limit < 1 or limit > 200:
             raise ValueError("limit must be between 1 and 200")
+        self._require_authorized()
+
+        if offset_id == 0:
+            dialog = next(
+                (item for item in self._dialog_snapshot if item.chat_id == chat_id),
+                None,
+            )
+            if dialog is not None and dialog.last_message_id is not None:
+                cached = await self.store.history(chat_id, limit)
+                if (
+                    cached
+                    and cached[-1].message_id == dialog.last_message_id
+                    and len(cached) >= min(limit, 1)
+                ):
+                    return cached
+
         client = self._require_authorized()
         values = []
         async for item in client.iter_messages(
