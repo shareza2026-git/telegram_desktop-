@@ -33,3 +33,22 @@ def test_windows_install_keeps_three_portable_files_beside_installed_exe():
     assert '"binaries/xray"' in windows_config
     assert '"identifier": "local.telegram.desktop"' in tauri_config
     assert '"version": "0.1.21"' in tauri_config
+
+
+def test_each_executable_folder_gets_isolated_runtime_state():
+    main_rs = (ROOT / "frontend" / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
+    desktop = (ROOT / "app" / "desktop.py").read_text(encoding="utf-8")
+    frontend_main = (ROOT / "frontend" / "src" / "main.tsx").read_text(encoding="utf-8")
+    app_tsx = (ROOT / "frontend" / "src" / "App.tsx").read_text(encoding="utf-8")
+    tauri_config = (ROOT / "frontend" / "src-tauri" / "tauri.conf.json").read_text(encoding="utf-8")
+
+    assert 'shared_root.join("instances").join(&instance_id)' in main_rs
+    assert 'choose_backend_port(instance_hash)' in main_rs
+    assert '"--port"' in main_rs
+    assert 'parser.add_argument("--port"' in desktop
+    assert 'port=args.port' in desktop
+    assert "runtime_backend_port" in frontend_main
+    assert "runtime_instance_id" in frontend_main
+    assert "instanceStorageKey" in app_tsx
+    assert "http://127.0.0.1:*" in tauri_config
+    assert "ws://127.0.0.1:*" in tauri_config
