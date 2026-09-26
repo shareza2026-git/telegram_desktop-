@@ -54,37 +54,9 @@ fn main() {
         let data_root = app.path().app_data_dir()?;
         std::fs::create_dir_all(&data_root)?;
 
-        // Seed the private Telethon session independently from API credentials.
-        // A local telegram-session.session beside the installed executable,
-        // working directory, Downloads or Desktop is copied only when the
-        // per-user client session does not already exist.
-        let session_dir = data_root.join("accounts").join("default");
-        std::fs::create_dir_all(&session_dir)?;
-        let target_session = session_dir.join("client.session");
-
-        if !target_session.is_file() {
-            let executable = std::env::current_exe()?;
-            let executable_dir = executable
-                .parent()
-                .unwrap_or_else(|| std::path::Path::new("."))
-                .to_path_buf();
-
-            let mut candidates = vec![
-                executable_dir.join("telegram-session.session"),
-            ];
-            if let Ok(current_dir) = std::env::current_dir() {
-                candidates.push(current_dir.join("telegram-session.session"));
-            }
-            if let Some(profile) = std::env::var_os("USERPROFILE") {
-                let profile = std::path::PathBuf::from(profile);
-                candidates.push(profile.join("Downloads").join("telegram-session.session"));
-                candidates.push(profile.join("Desktop").join("telegram-session.session"));
-            }
-
-            if let Some(source) = candidates.into_iter().find(|path| path.is_file()) {
-                std::fs::copy(source, &target_session)?;
-            }
-        }
+        // Telegram authorization is intentionally never seeded from the installer,
+        // executable directory, Downloads or Desktop. Existing per-user app data is
+        // preserved by upgrades; a genuinely fresh install must use phone/code/2FA.
 
         // Seed proxy routes from a local release package when available.
         // This keeps proxy credentials out of Git while allowing a locally built
