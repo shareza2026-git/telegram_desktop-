@@ -24,4 +24,4 @@ def test_windows_upgrade_preserves_private_session_and_replaces_old_app():
     assert '$APPDATA\\local.telegram.desktop\\accounts\\default\\client.session' in hooks
     assert 'Delete "$INSTDIR\\telegram-session.session"' in hooks
     assert '"identifier": "local.telegram.desktop"' in tauri_config
-    assert '"version": "0.1.18"' in tauri_config
+    assert '"version": "0.1.19"' in tauri_config
