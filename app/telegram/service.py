@@ -159,10 +159,17 @@ class TelegramDesktopService:
     def _reset_connection_caches(self) -> None:
         self._dialog_snapshot = []
         self._dialog_snapshot_at = 0.0
-        self._chat_info_cache.clear()
-        self._pinned_cache.clear()
-        self._typing_state.clear()
-        self._read_ack_at.clear()
+        for name in (
+            "_chat_info_cache",
+            "_pinned_cache",
+            "_typing_state",
+            "_read_ack_at",
+        ):
+            cache = getattr(self, name, None)
+            if cache is None:
+                setattr(self, name, {})
+            else:
+                cache.clear()
 
     async def _monitor_connection(self) -> None:
         while True:
