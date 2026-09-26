@@ -10,6 +10,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Telegram Desktop local backend")
     parser.add_argument("--data-root", required=True, help="Writable private client data directory")
     parser.add_argument("--transfer-dir", help="Directory for portable transfer files")
+    parser.add_argument("--port", type=int, default=8110, help="Loopback backend port for this instance")
     parser.add_argument("--portable-config", help="Canonical writable portable Telegram bundle")
     parser.add_argument("--portable-mirror", help="Optional external mirror of the portable Telegram bundle")
     return parser.parse_args()
@@ -124,7 +125,7 @@ def main() -> None:
     import uvicorn
     from app.main import app
 
-    uvicorn.run(app, host="127.0.0.1", port=8110, log_level="warning", access_log=False)
+    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning", access_log=False)
 
 
 if __name__ == "__main__":
