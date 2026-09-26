@@ -91,6 +91,7 @@ class TelegramDesktopService:
         self._outbox_read_max: dict[int, int] = {}
         self._recent_media: dict[tuple[str, str], Any] = {}
         self._priority_chat_ids: set[int] = set()
+        self._dialog_snapshot: list[Dialog] = []
         self._connection_monitor: asyncio.Task | None = None
         self._session_metadata: dict = {}
         info = self.sessions.info()
@@ -912,17 +913,21 @@ class TelegramDesktopService:
             else:
                 self._priority_chat_ids.discard(value.chat_id)
             await self.store.upsert_dialog(value)
-        return sorted(
+        ordered = sorted(
             dialogs,
             key=lambda value: (
                 not value.pinned,
                 -(value.last_message_at.timestamp() if value.last_message_at else 0),
             ),
         )
+        self._dialog_snapshot = ordered
+        return ordered
 
     async def list_dialog_folders(self) -> list[DialogFolder]:
         client = self._require_authorized()
-        dialogs = await self.list_dialogs()
+        dialogs = self._dialog_snapshot or await self.store.list_dialogs()
+        if not dialogs:
+            dialogs = await self.list_dialogs()
         by_id = {item.chat_id: item for item in dialogs}
         try:
             result = await client(functions.messages.GetDialogFiltersRequest())
