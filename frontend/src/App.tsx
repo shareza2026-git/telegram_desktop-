@@ -825,13 +825,33 @@ function App() {
     let retryTimer: number | undefined
     let retryCount = 0
     let socket: WebSocket | undefined
+    let snapshotPromise: Promise<void> | null = null
+    let lastFullSnapshotAt = 0
 
-    async function refreshSnapshot() {
+    async function refreshStatus() {
       try {
         const nextStatus = await api<Status>('/api/telegram/status')
-        if (disposed) return
-        setStatus(nextStatus)
-        if (nextStatus.authorized && !isPopoutWindow) {
+        if (!disposed) setStatus(nextStatus)
+        return nextStatus
+      } catch {
+        return null
+      }
+    }
+
+    async function refreshSnapshot(force = false) {
+      if (isPopoutWindow) {
+        await refreshStatus()
+        return
+      }
+      const now = Date.now()
+      if (!force && lastFullSnapshotAt && now - lastFullSnapshotAt < 15000) return
+      if (snapshotPromise) return snapshotPromise
+
+      snapshotPromise = (async () => {
+        try {
+          const nextStatus = await refreshStatus()
+          if (!nextStatus?.authorized || disposed) return
+
           const nextDialogs = await api<Dialog[]>('/api/telegram/dialogs')
           if (disposed) return
           setDialogs(nextDialogs)
@@ -839,21 +859,28 @@ function App() {
           const nextFolders = await api<DialogFolder[]>('/api/telegram/dialog-folders')
           if (disposed) return
           setTelegramFolders(nextFolders)
+          lastFullSnapshotAt = Date.now()
+        } catch {
+          // The packaged backend can need a moment to start. WebSocket retry handles recovery.
+        } finally {
+          snapshotPromise = null
         }
-      } catch {
-        // The packaged backend can need a moment to start. WebSocket retry handles recovery.
-      }
+      })()
+      return snapshotPromise
     }
 
     async function resyncActiveChat() {
-      await refreshSnapshot()
+      await refreshStatus()
       const chatId = selectedChatIdRef.current
       if (!chatId || disposed) return
       try {
         const current = await api<Message[]>('/api/telegram/chats/' + chatId + '/messages?limit=' + HISTORY_PAGE_SIZE)
-        if (!disposed && selectedChatIdRef.current === chatId) setMessages(current.filter(item => !item.deleted))
+        if (!disposed && selectedChatIdRef.current === chatId) {
+          setMessages(current.filter(item => !item.deleted))
+          setHasOlder(current.length === HISTORY_PAGE_SIZE)
+        }
       } catch {
-        // A later reconnect or explicit refresh will retry the snapshot.
+        // A later reconnect or explicit refresh will retry the active chat.
       }
     }
 
@@ -861,7 +888,9 @@ function App() {
       if (disposed) return
       socket = new WebSocket(socketBase + '/ws/telegram')
       socket.onopen = () => {
+        const wasReconnect = retryCount > 0
         retryCount = 0
+        if (wasReconnect) void resyncActiveChat()
       }
       socket.onmessage = event => {
       const packet = JSON.parse(event.data) as {
@@ -871,7 +900,9 @@ function App() {
       if (packet.type === 'READY') {
         const ready = packet.data as Status
         setStatus(ready)
-        if (ready.authorized) void refreshSnapshot()
+        if (ready.authorized && !lastFullSnapshotAt && !isPopoutWindow) {
+          void refreshSnapshot()
+        }
       }
       if (packet.type === 'RESYNC') void resyncActiveChat()
       if (packet.type === 'MESSAGE_NEW' || packet.type === 'MESSAGE_EDITED') {
