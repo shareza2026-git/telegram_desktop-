@@ -15,6 +15,7 @@ $LegacyPortableConfig = Join-Path $RepoRoot "telegram-portable.json"
 $ReleaseRoot = Join-Path $RepoRoot "release"
 $SidecarSource = Join-Path $RepoRoot "dist\telegram-desktop-backend.exe"
 $SidecarTarget = Join-Path $TauriRoot "binaries\telegram-desktop-backend-x86_64-pc-windows-msvc.exe"
+$XraySidecarTarget = Join-Path $TauriRoot "binaries\xray-x86_64-pc-windows-msvc.exe"
 $BuildTemp = Join-Path $RepoRoot ".build-temp"
 $PytestTemp = Join-Path $RepoRoot ".pytest-release"
 $SessionSnapshotScript = Join-Path $RepoRoot "scripts\make-session-snapshot.py"
@@ -65,6 +66,27 @@ try {
 
 New-Item -ItemType Directory -Force (Split-Path -Parent $SidecarTarget) | Out-Null
 Copy-Item $SidecarSource $SidecarTarget -Force
+
+$XrayCandidates = @(
+    (Join-Path $RepoRoot "xray.exe"),
+    (Join-Path $RepoRoot "data\tools\xray\xray.exe")
+)
+$Xray = $XrayCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $Xray) {
+    $XrayZip = Join-Path $BuildTemp "Xray-windows-64.zip"
+    $XrayExtract = Join-Path $BuildTemp "xray-core"
+    Invoke-WebRequest -Uri "https://github.com/XTLS/Xray-core/releases/download/v26.9.9/Xray-windows-64.zip" -OutFile $XrayZip
+    Expand-Archive -Path $XrayZip -DestinationPath $XrayExtract -Force
+    $Xray = Join-Path $XrayExtract "xray.exe"
+}
+if (-not (Test-Path $Xray)) {
+    throw "xray.exe could not be prepared for VLESS support."
+}
+& $Xray version
+if ($LASTEXITCODE -ne 0) {
+    throw "xray.exe failed its version smoke test."
+}
+Copy-Item $Xray $XraySidecarTarget -Force
 
 Push-Location $FrontendRoot
 try {
@@ -155,23 +177,16 @@ if (Test-Path $LegacyPortableConfig) {
     }
 }
 
-$XrayCandidates = @(
-    (Join-Path $RepoRoot "xray.exe"),
-    (Join-Path $RepoRoot "data\tools\xray\xray.exe")
-)
-$Xray = $XrayCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-if ($Xray) {
-    Copy-Item $Xray (Join-Path $ReleaseRoot "xray.exe") -Force
-}
+Copy-Item $Xray (Join-Path $ReleaseRoot "xray.exe") -Force
 
 $Readme = @"
 Telegram Desktop release package
 
-1. Keep telegram-session.session beside Telegram-Desktop-Setup-$Version.exe.
-2. Run Telegram-Desktop-Setup-$Version.exe directly.
-3. The installer seeds the existing Telegram session into AppData before first launch.
-4. telegram-api.env seeds API ID and API Hash automatically before first launch.
-5. xray.exe is copied automatically when present beside the installer.
+1. Run Telegram-Desktop-Setup-$Version.exe.
+2. After installation, telegram-session.session, telegram-api.env and telegram-proxies.json live beside telegram-desktop.exe.
+3. The application only checks beside its own executable for portable state.
+4. Move the whole installed application folder to another Windows machine to carry the same portable state.
+5. xray.exe is bundled for VLESS/V2Ray support.
 
 Security:
 - telegram-session.session and telegram-api.env are private account credentials. Keep them private.
