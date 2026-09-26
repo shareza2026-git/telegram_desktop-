@@ -78,7 +78,7 @@ fn close_current_window(
     state: tauri::State<BackendProcess>,
 ) -> Result<(), String> {
     if app.webview_windows().len() <= 1 {
-        stop_instance_backend(&state);
+        stop_instance_backend(state.inner());
     }
     window.close().map_err(|error| error.to_string())
 }
@@ -206,8 +206,8 @@ fn main() {
                 parent_pid_arg.as_str(),
             ]);
         let (mut events, child) = sidecar.spawn()?;
-        std::fs::write(executable_dir.join("app.pid"), std::process::id().to_string())?;
-        std::fs::write(executable_dir.join("backend.pid"), child.pid().to_string())?;
+        let _ = std::fs::write(executable_dir.join("app.pid"), std::process::id().to_string());
+        let _ = std::fs::write(executable_dir.join("backend.pid"), child.pid().to_string());
         tauri::async_runtime::spawn(async move {
             while events.recv().await.is_some() {}
         });
@@ -223,7 +223,7 @@ fn main() {
         #[cfg(not(debug_assertions))]
         if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
             let state = app_handle.state::<BackendProcess>();
-            stop_instance_backend(&state);
+            stop_instance_backend(state.inner());
             if let Ok(executable) = std::env::current_exe() {
                 if let Some(directory) = executable.parent() {
                     let _ = std::fs::remove_file(directory.join("app.pid"));
