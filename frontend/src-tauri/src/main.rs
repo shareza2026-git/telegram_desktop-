@@ -33,8 +33,8 @@ async fn open_chat_window(
 
     WebviewWindowBuilder::new(&app, label, WebviewUrl::App(path.into()))
         .title(title)
-        .inner_size(760.0, 720.0)
-        .min_inner_size(520.0, 420.0)
+        .inner_size(410.0, 520.0)
+        .min_inner_size(320.0, 360.0)
         .resizable(true)
         .decorations(false)
         .center()
