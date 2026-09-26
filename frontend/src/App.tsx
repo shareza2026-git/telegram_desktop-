@@ -193,6 +193,32 @@ const mediaLabels: Record<MediaInfo['kind'], string> = {
   other: 'رسانه'
 }
 
+function upsertSortedMessage(current: Message[], message: Message): Message[] {
+  const index = current.findIndex(item => item.message_id === message.message_id)
+  if (index >= 0) {
+    if (current[index] === message) return current
+    const next = current.slice()
+    next[index] = message
+    return next
+  }
+
+  if (!current.length || current[current.length - 1].message_id < message.message_id) {
+    return [...current, message]
+  }
+  if (current[0].message_id > message.message_id) {
+    return [message, ...current]
+  }
+
+  let low = 0
+  let high = current.length
+  while (low < high) {
+    const mid = (low + high) >>> 1
+    if (current[mid].message_id < message.message_id) low = mid + 1
+    else high = mid
+  }
+  return [...current.slice(0, low), message, ...current.slice(low)]
+}
+
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(backendBase + path, {
     ...options,
@@ -346,7 +372,7 @@ function BackendImage({
 
     async function load() {
       try {
-        const response = await fetch(src, { cache: 'no-store' })
+        const response = await fetch(src, { cache: 'force-cache' })
         if (!response.ok) throw new Error('HTTP ' + response.status)
         const blob = await response.blob()
         if (!blob.size) throw new Error('Empty image')
@@ -533,6 +559,11 @@ function App() {
   const selectedMessages = useMemo(
     () => messages.filter(message => selectedMessageIds.has(message.message_id)),
     [messages, selectedMessageIds]
+  )
+
+  const visibleMessages = useMemo(
+    () => messages.filter(message => !message.deleted),
+    [messages]
   )
 
   useEffect(() => {
@@ -735,8 +766,7 @@ function App() {
             if (packet.type === 'MESSAGE_NEW' && !message.outgoing && !shouldFollow && !exists) {
               setNewBelowCount(count => count + 1)
             }
-            const without = current.filter(item => item.message_id !== message.message_id)
-            return [...without, message].sort((a, b) => a.message_id - b.message_id)
+            return upsertSortedMessage(current, message)
           })
           if (shouldFollow) {
             window.requestAnimationFrame(() => scrollToBottom(message.outgoing ? 'smooth' : 'auto'))
@@ -1765,10 +1795,11 @@ function App() {
   }
 
   function openSearchResult(message: Message) {
-    setMessages(current => {
-      if (current.some(item => item.message_id === message.message_id)) return current
-      return [...current, message].sort((a, b) => a.message_id - b.message_id)
-    })
+    setMessages(current => (
+      current.some(item => item.message_id === message.message_id)
+        ? current
+        : upsertSortedMessage(current, message)
+    ))
     window.setTimeout(() => jumpToMessage(message.message_id), 0)
   }
 
@@ -1858,7 +1889,7 @@ function App() {
     setMessages(current => (
       current.some(item => item.message_id === pinnedMessage.message_id)
         ? current
-        : [...current, pinnedMessage].sort((a, b) => a.message_id - b.message_id)
+        : upsertSortedMessage(current, pinnedMessage)
     ))
     window.requestAnimationFrame(() => jumpToMessage(pinnedMessage.message_id))
   }
@@ -2615,7 +2646,7 @@ function App() {
                   {loadingOlder ? 'در حال دریافت…' : 'پیام‌های قدیمی‌تر'}
                 </button>
               )}
-              {messages.filter(message => !message.deleted).map((message, index, visibleMessages) => (
+              {visibleMessages.map((message, index) => (
                 <Fragment key={message.message_id}>
                   {index === 0 || messageDayKey(visibleMessages[index - 1].date) !== messageDayKey(message.date) ? (
                     <div className="date-separator"><span>{formatMessageDate(message.date)}</span></div>
