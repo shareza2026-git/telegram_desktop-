@@ -3,11 +3,7 @@
 #[cfg(not(debug_assertions))]
 use std::sync::Mutex;
 #[cfg(not(debug_assertions))]
-use std::{
-    collections::hash_map::DefaultHasher,
-    hash::{Hash, Hasher},
-    net::TcpListener,
-};
+use std::net::TcpListener;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 #[cfg(not(debug_assertions))]
 use tauri::RunEvent;
@@ -30,9 +26,14 @@ fn instance_identity(executable_dir: &std::path::Path) -> (String, u64) {
         .canonicalize()
         .unwrap_or_else(|_| executable_dir.to_path_buf());
     let normalized = canonical.to_string_lossy().to_lowercase();
-    let mut hasher = DefaultHasher::new();
-    normalized.hash(&mut hasher);
-    let hash = hasher.finish();
+
+    // Stable FNV-1a: the same folder keeps the same instance identity across
+    // application/Rust upgrades.
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in normalized.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
     (format!("{:016x}", hash), hash)
 }
 
