@@ -104,6 +104,8 @@ class TelegramDesktopService:
         self._dialog_snapshot: list[Dialog] = []
         self._dialog_snapshot_at = 0.0
         self._dialog_scan_task: asyncio.Task[list[Dialog]] | None = None
+        self._chat_photo_tasks: dict[int, asyncio.Task[DownloadedMedia]] = {}
+        self._media_download_tasks: dict[tuple[int, int], asyncio.Task[DownloadedMedia]] = {}
         self._message_persist_queue: asyncio.Queue[Message] = asyncio.Queue(maxsize=5000)
         self._message_persist_worker: asyncio.Task | None = None
         self._connection_monitor: asyncio.Task | None = None
@@ -885,19 +887,26 @@ class TelegramDesktopService:
             photo_available=bool(getattr(entity, "photo", None)),
         )
 
-    async def download_chat_photo(self, chat_id: int) -> DownloadedMedia:
+    async def _download_chat_photo_once(self, chat_id: int) -> DownloadedMedia:
         client = self._require_authorized()
+        root = self.settings.data_root / "avatars"
+        root.mkdir(parents=True, exist_ok=True)
+        target = chat_photo_path(root, chat_id)
+
+        if is_fresh_chat_photo(target):
+            return DownloadedMedia(
+                path=target,
+                filename=target.name,
+                mime_type="image/jpeg",
+            )
+
         entity = await client.get_entity(chat_id)
         if not getattr(entity, "photo", None):
             raise DesktopError("Chat photo is not available")
 
-        root = self.settings.data_root / "avatars"
-        root.mkdir(parents=True, exist_ok=True)
-        target = chat_photo_path(root, chat_id)
-        if not is_fresh_chat_photo(target):
-            downloaded = await client.download_profile_photo(entity, file=str(target))
-            if downloaded is None or not target.is_file():
-                raise DesktopError("Chat photo download failed")
+        downloaded = await client.download_profile_photo(entity, file=str(target))
+        if downloaded is None or not target.is_file() or target.stat().st_size == 0:
+            raise DesktopError("Chat photo download failed")
 
         return DownloadedMedia(
             path=target,
@@ -905,7 +914,27 @@ class TelegramDesktopService:
             mime_type="image/jpeg",
         )
 
-    async def download_media(self, chat_id: int, message_id: int) -> DownloadedMedia:
+    async def download_chat_photo(self, chat_id: int) -> DownloadedMedia:
+        root = self.settings.data_root / "avatars"
+        target = chat_photo_path(root, chat_id)
+        if is_fresh_chat_photo(target):
+            return DownloadedMedia(
+                path=target,
+                filename=target.name,
+                mime_type="image/jpeg",
+            )
+
+        task = self._chat_photo_tasks.get(chat_id)
+        if task is None or task.done():
+            task = asyncio.create_task(self._download_chat_photo_once(chat_id))
+            self._chat_photo_tasks[chat_id] = task
+        try:
+            return await task
+        finally:
+            if self._chat_photo_tasks.get(chat_id) is task and task.done():
+                self._chat_photo_tasks.pop(chat_id, None)
+
+    async def _download_media_once(self, chat_id: int, message_id: int) -> DownloadedMedia:
         client = self._require_authorized()
         message = await client.get_messages(chat_id, ids=message_id)
         if message is None or not getattr(message, "media", None):
@@ -924,7 +953,7 @@ class TelegramDesktopService:
         target = media_path(root, chat_id, message_id, filename)
         if not target.is_file() or target.stat().st_size == 0:
             downloaded = await client.download_media(message, file=str(target))
-            if downloaded is None or not target.is_file():
+            if downloaded is None or not target.is_file() or target.stat().st_size == 0:
                 raise DesktopError("Media download failed")
 
         return DownloadedMedia(
@@ -932,6 +961,18 @@ class TelegramDesktopService:
             filename=filename,
             mime_type=mime_type or mimetypes.guess_type(filename)[0],
         )
+
+    async def download_media(self, chat_id: int, message_id: int) -> DownloadedMedia:
+        key = (chat_id, message_id)
+        task = self._media_download_tasks.get(key)
+        if task is None or task.done():
+            task = asyncio.create_task(self._download_media_once(chat_id, message_id))
+            self._media_download_tasks[key] = task
+        try:
+            return await task
+        finally:
+            if self._media_download_tasks.get(key) is task and task.done():
+                self._media_download_tasks.pop(key, None)
 
     async def _scan_dialogs(self) -> list[Dialog]:
         client = self._require_authorized()
