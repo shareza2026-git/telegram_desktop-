@@ -886,7 +886,10 @@ function App() {
 
     function connectSocket() {
       if (disposed) return
-      socket = new WebSocket(socketBase + '/ws/telegram')
+      const socketUrl = isPopoutWindow && popoutChatId
+        ? socketBase + '/ws/telegram?chat_id=' + encodeURIComponent(String(popoutChatId))
+        : socketBase + '/ws/telegram'
+      socket = new WebSocket(socketUrl)
       socket.onopen = () => {
         const wasReconnect = retryCount > 0
         retryCount = 0
@@ -904,10 +907,17 @@ function App() {
           void refreshSnapshot()
         }
       }
-      if (packet.type === 'RESYNC') void resyncActiveChat()
+      if (packet.type === 'RESYNC') {
+        if (isPopoutWindow) {
+          void resyncActiveChat()
+        } else {
+          void refreshSnapshot(true).then(() => resyncActiveChat())
+        }
+      }
       if (packet.type === 'MESSAGE_NEW' || packet.type === 'MESSAGE_EDITED') {
         const message = packet.data as Message
-        setDialogs(current => current.map(dialog => {
+        if (isPopoutWindow && selectedChatIdRef.current !== message.chat_id) return
+        if (!isPopoutWindow) setDialogs(current => current.map(dialog => {
           if (dialog.chat_id !== message.chat_id) return dialog
           const activeAndVisible = (
             selectedChatIdRef.current === message.chat_id
@@ -922,7 +932,7 @@ function App() {
               : dialog.unread_count
           }
         }))
-        if (packet.type === 'MESSAGE_NEW' && !message.outgoing) {
+        if (!isPopoutWindow && packet.type === 'MESSAGE_NEW' && !message.outgoing) {
           const activeAndVisible = (
             selectedChatIdRef.current === message.chat_id
             && document.visibilityState === 'visible'
@@ -945,7 +955,7 @@ function App() {
           }
         }
       }
-      if (packet.type === 'DIALOG_UPDATED') {
+      if (packet.type === 'DIALOG_UPDATED' && !isPopoutWindow) {
         applyDialogPatch(packet.data as DialogPatch)
       }
       if (packet.type === 'CHAT_ACTION') {
