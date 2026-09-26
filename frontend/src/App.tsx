@@ -546,11 +546,32 @@ function App() {
 
 
   useEffect(() => {
-    if (!isPopoutWindow || !popoutChatId || !dialogs.length) return
-    if (selected?.chat_id === popoutChatId) return
-    const dialog = dialogs.find(item => item.chat_id === popoutChatId)
-    if (dialog) void openDialog(dialog)
-  }, [dialogs, selected?.chat_id])
+    if (!isPopoutWindow || !popoutChatId || !status?.authorized) return
+    if (selectedChatIdRef.current === popoutChatId) return
+
+    let disposed = false
+    api<ChatInfo>('/api/telegram/chats/' + popoutChatId)
+      .then(info => {
+        if (disposed || selectedChatIdRef.current === popoutChatId) return
+        openDialog({
+          chat_id: info.chat_id,
+          title: info.title,
+          dialog_type: info.dialog_type,
+          username: info.username,
+          unread_count: 0,
+          pinned: false,
+          archived: false,
+          muted: false
+        })
+      })
+      .catch(error => {
+        if (!disposed) setError(errorMessage(error, 'گفتگو در پنجره جدید بارگذاری نشد.'))
+      })
+
+    return () => {
+      disposed = true
+    }
+  }, [status?.authorized])
 
   useEffect(() => {
     notificationsEnabledRef.current = notificationsEnabled
@@ -638,12 +659,13 @@ function App() {
         const nextStatus = await api<Status>('/api/telegram/status')
         if (disposed) return
         setStatus(nextStatus)
-        if (nextStatus.authorized) {
-          const [nextDialogs, nextFolders] = await Promise.all([
-            api<Dialog[]>('/api/telegram/dialogs'),
-            api<DialogFolder[]>('/api/telegram/dialog-folders')
-          ])
+        if (nextStatus.authorized && !isPopoutWindow) {
+          const nextDialogs = await api<Dialog[]>('/api/telegram/dialogs')
+          if (disposed) return
           setDialogs(nextDialogs)
+
+          const nextFolders = await api<DialogFolder[]>('/api/telegram/dialog-folders')
+          if (disposed) return
           setTelegramFolders(nextFolders)
         }
       } catch {
