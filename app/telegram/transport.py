@@ -1,7 +1,9 @@
 import asyncio
 import base64
+import hashlib
 import json
 import logging
+import sys
 from pathlib import Path
 from typing import Literal
 from urllib.parse import parse_qs, urlparse
@@ -134,9 +136,58 @@ class TransportCatalog:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({"selected_index": index}, indent=2), encoding="utf-8")
 
+    def _xray_core_path(self) -> Path:
+        return Path(sys.executable).resolve().parent / "xray.exe"
+
+    def _xray_runtime_directory(self) -> Path:
+        return self.path.parent / "runtime" / "xray"
+
     def add_proxy_link(self, link: str) -> dict:
         raw = link.strip()
         parsed = urlparse(raw)
+
+        if parsed.scheme.casefold() == "vless":
+            profile = parse_vless_uri(raw)
+            fingerprint = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+            record = {
+                "type": "socks5",
+                "host": "127.0.0.1",
+                "port": 1080,
+                "managed_v2ray": True,
+                "v2ray_name": profile.display_name or f"VLESS {profile.host}",
+                "route_id": f"user-vless-{fingerprint}",
+                "vless_uri": raw,
+                "xray_core_path": str(self._xray_core_path()),
+                "runtime_directory": str(self._xray_runtime_directory()),
+            }
+            records = self._load_user_records()
+            for existing in records:
+                if (
+                    existing.get("managed_v2ray")
+                    and str(existing.get("vless_uri") or "").strip() == raw
+                ):
+                    existing.update(record)
+                    break
+            else:
+                records.append(record)
+            self._save_user_records(records)
+
+            routes = self.load()
+            for index, route in enumerate(routes, 1):
+                if (
+                    route.managed_v2ray
+                    and route.vless_uri is not None
+                    and route.vless_uri.get_secret_value() == raw
+                ):
+                    return {
+                        "index": index,
+                        "name": route.display_name,
+                        "type": "vless",
+                        "host": profile.host,
+                        "port": profile.port,
+                    }
+            raise ValueError("VLESS proxy could not be added")
+
         host = parsed.netloc.casefold()
         path = parsed.path.casefold()
         kind = None
@@ -146,7 +197,7 @@ class TransportCatalog:
             if path in {"/proxy", "/socks"}:
                 kind = path.lstrip("/")
         if kind not in {"proxy", "socks"}:
-            raise ValueError("Unsupported Telegram proxy link")
+            raise ValueError("Unsupported proxy link")
 
         values = parse_qs(parsed.query)
         server = (values.get("server") or [""])[0].strip()
@@ -219,7 +270,11 @@ class TransportCatalog:
         result: list[ProxyRoute] = []
         for item in records:
             try:
-                result.append(ProxyRoute.model_validate(item))
+                normalized = dict(item)
+                if normalized.get("managed_v2ray"):
+                    normalized["xray_core_path"] = str(self._xray_core_path())
+                    normalized["runtime_directory"] = str(self._xray_runtime_directory())
+                result.append(ProxyRoute.model_validate(normalized))
             except Exception:
                 logging.getLogger(__name__).warning("Skipping invalid proxy record")
         return result
