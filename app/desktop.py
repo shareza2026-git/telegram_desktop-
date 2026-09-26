@@ -1,5 +1,8 @@
 import argparse
+import json
 import os
+import shutil
+import sqlite3
 from pathlib import Path
 
 
@@ -12,10 +15,79 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _session_has_auth_key(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        connection = sqlite3.connect(str(path))
+        try:
+            row = connection.execute(
+                "SELECT length(auth_key) FROM sessions LIMIT 1"
+            ).fetchone()
+            return bool(row and row[0] and int(row[0]) >= 64)
+        finally:
+            connection.close()
+    except Exception:
+        return False
+
+
+def _restore_portable_state(data_root: Path, transfer_dir: Path | None) -> None:
+    if transfer_dir is None:
+        return
+    transfer_dir = transfer_dir.resolve()
+    if not transfer_dir.is_dir():
+        return
+
+    data_root.mkdir(parents=True, exist_ok=True)
+    account_dir = data_root / "accounts" / "default"
+    account_dir.mkdir(parents=True, exist_ok=True)
+
+    portable_session = transfer_dir / "telegram-session.session"
+    local_session = account_dir / "client.session"
+    if _session_has_auth_key(portable_session):
+        temporary = account_dir / "client.session.portable.tmp"
+        temporary.unlink(missing_ok=True)
+        source = sqlite3.connect(str(portable_session))
+        target = sqlite3.connect(str(temporary))
+        try:
+            source.backup(target)
+            target.commit()
+        finally:
+            target.close()
+            source.close()
+        if not _session_has_auth_key(temporary):
+            temporary.unlink(missing_ok=True)
+            raise RuntimeError("Portable Telegram session is not usable")
+        for suffix in ("-wal", "-shm", "-journal"):
+            Path(str(local_session) + suffix).unlink(missing_ok=True)
+        temporary.replace(local_session)
+
+    portable_api = transfer_dir / "telegram-api.env"
+    if portable_api.is_file():
+        shutil.copy2(portable_api, data_root / "settings.env")
+
+    portable_proxies = transfer_dir / "telegram-proxies.json"
+    if portable_proxies.is_file():
+        # Validate before replacing the private copy so a truncated portable
+        # file cannot break startup.
+        payload = json.loads(portable_proxies.read_text(encoding="utf-8"))
+        if isinstance(payload, dict) and isinstance(payload.get("proxies"), list):
+            shutil.copy2(portable_proxies, data_root / "proxies.json")
+
+
 def main() -> None:
     args = parse_args()
     data_root = Path(args.data_root).expanduser().resolve()
     data_root.mkdir(parents=True, exist_ok=True)
+    transfer_dir = (
+        Path(args.transfer_dir).expanduser().resolve()
+        if args.transfer_dir
+        else None
+    )
+
+    # The executable-folder portable bundle is authoritative. Restore it before
+    # loading settings or creating Telethon's private session.
+    _restore_portable_state(data_root, transfer_dir)
 
     # Load secrets from a user-owned file outside the installed application.
     # Existing process environment variables keep priority over file values.
@@ -30,8 +102,8 @@ def main() -> None:
     os.environ["TELEGRAM_AUTO_IMPORT_SOURCE"] = "false"
 
     os.environ["TELEGRAM_CLIENT_DATA_ROOT"] = str(data_root)
-    if args.transfer_dir:
-        os.environ["TELEGRAM_TRANSFER_DIR"] = str(Path(args.transfer_dir).expanduser().resolve())
+    if transfer_dir is not None:
+        os.environ["TELEGRAM_TRANSFER_DIR"] = str(transfer_dir)
     if args.portable_config:
         os.environ["TELEGRAM_PORTABLE_CONFIG"] = str(Path(args.portable_config).expanduser().resolve())
     if args.portable_mirror:
