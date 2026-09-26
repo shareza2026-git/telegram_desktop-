@@ -102,6 +102,8 @@ class TelegramDesktopService:
         self._recent_media: dict[tuple[str, str], Any] = {}
         self._priority_chat_ids: set[int] = set()
         self._dialog_snapshot: list[Dialog] = []
+        self._dialog_snapshot_at = 0.0
+        self._dialog_scan_task: asyncio.Task[list[Dialog]] | None = None
         self._message_persist_queue: asyncio.Queue[Message] = asyncio.Queue(maxsize=5000)
         self._message_persist_worker: asyncio.Task | None = None
         self._connection_monitor: asyncio.Task | None = None
@@ -931,9 +933,9 @@ class TelegramDesktopService:
             mime_type=mime_type or mimetypes.guess_type(filename)[0],
         )
 
-    async def list_dialogs(self, search: str | None = None) -> list[Dialog]:
+    async def _scan_dialogs(self) -> list[Dialog]:
         client = self._require_authorized()
-        dialogs = []
+        dialogs: list[Dialog] = []
         async for item in client.iter_dialogs():
             value = self._dialog_model(item)
             if self.status.user_id is not None and value.chat_id == int(self.status.user_id):
@@ -948,15 +950,12 @@ class TelegramDesktopService:
                 self._outbox_read_max.get(value.chat_id, 0),
                 read_max,
             )
-            if search and search.casefold() not in value.title.casefold() and not (
-                value.username and search.casefold() in value.username.casefold()
-            ):
-                continue
             dialogs.append(value)
             if "اتاق" in value.title:
                 self._priority_chat_ids.add(value.chat_id)
             else:
                 self._priority_chat_ids.discard(value.chat_id)
+
         await self.store.upsert_dialogs(dialogs)
         ordered = sorted(
             dialogs,
@@ -966,7 +965,43 @@ class TelegramDesktopService:
             ),
         )
         self._dialog_snapshot = ordered
+        self._dialog_snapshot_at = asyncio.get_running_loop().time()
         return ordered
+
+    async def list_dialogs(
+        self,
+        search: str | None = None,
+        force: bool = False,
+    ) -> list[Dialog]:
+        self._require_authorized()
+        now = asyncio.get_running_loop().time()
+        if (
+            not force
+            and self._dialog_snapshot
+            and now - self._dialog_snapshot_at < 10.0
+        ):
+            dialogs = self._dialog_snapshot
+        else:
+            task = self._dialog_scan_task
+            if task is None or task.done():
+                task = asyncio.create_task(self._scan_dialogs())
+                self._dialog_scan_task = task
+            try:
+                dialogs = await task
+            finally:
+                if self._dialog_scan_task is task and task.done():
+                    self._dialog_scan_task = None
+
+        if not search:
+            return dialogs
+
+        query = search.casefold()
+        return [
+            value
+            for value in dialogs
+            if query in value.title.casefold()
+            or bool(value.username and query in value.username.casefold())
+        ]
 
     async def list_dialog_folders(self) -> list[DialogFolder]:
         client = self._require_authorized()
