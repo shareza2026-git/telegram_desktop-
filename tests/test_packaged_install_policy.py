@@ -32,4 +32,4 @@ def test_windows_install_keeps_three_portable_files_beside_installed_exe():
     assert '$APPDATA\\local.telegram.desktop\\accounts\\default\\client.session' in hooks
     assert '"binaries/xray"' in windows_config
     assert '"identifier": "local.telegram.desktop"' in tauri_config
-    assert '"version": "0.1.20"' in tauri_config
+    assert '"version": "0.1.21"' in tauri_config
