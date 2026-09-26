@@ -88,6 +88,12 @@ class ChatStore:
         async with self._lock:
             await asyncio.to_thread(self._upsert_dialog_sync, dialog)
 
+    async def upsert_dialogs(self, dialogs: list[Dialog]) -> None:
+        if not dialogs:
+            return
+        async with self._lock:
+            await asyncio.to_thread(self._upsert_dialogs_sync, dialogs)
+
     def _upsert_dialog_sync(self, dialog: Dialog) -> None:
         with self._connect() as connection:
             connection.execute(
@@ -124,6 +130,45 @@ class ChatStore:
                 ),
             )
 
+    def _upsert_dialogs_sync(self, dialogs: list[Dialog]) -> None:
+        with self._connect() as connection:
+            connection.executemany(
+                """
+                INSERT INTO dialogs (
+                    chat_id, title, dialog_type, username, unread_count,
+                    pinned, archived, muted, last_message_id, last_message_at,
+                    last_message_preview
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(chat_id) DO UPDATE SET
+                    title=excluded.title,
+                    dialog_type=excluded.dialog_type,
+                    username=excluded.username,
+                    unread_count=excluded.unread_count,
+                    pinned=excluded.pinned,
+                    archived=excluded.archived,
+                    muted=excluded.muted,
+                    last_message_id=excluded.last_message_id,
+                    last_message_at=excluded.last_message_at,
+                    last_message_preview=excluded.last_message_preview
+                """,
+                [
+                    (
+                        dialog.chat_id,
+                        dialog.title,
+                        dialog.dialog_type,
+                        dialog.username,
+                        dialog.unread_count,
+                        int(dialog.pinned),
+                        int(dialog.archived),
+                        int(dialog.muted),
+                        dialog.last_message_id,
+                        dialog.last_message_at.isoformat() if dialog.last_message_at else None,
+                        dialog.last_message_preview,
+                    )
+                    for dialog in dialogs
+                ],
+            )
+
     async def mark_dialog_read(self, chat_id: int) -> None:
         async with self._lock:
             await asyncio.to_thread(self._mark_dialog_read_sync, chat_id)
@@ -138,6 +183,12 @@ class ChatStore:
     async def upsert_message(self, message: Message) -> None:
         async with self._lock:
             await asyncio.to_thread(self._upsert_message_sync, message)
+
+    async def upsert_messages(self, messages: list[Message]) -> None:
+        if not messages:
+            return
+        async with self._lock:
+            await asyncio.to_thread(self._upsert_messages_sync, messages)
 
     def _upsert_message_sync(self, message: Message) -> None:
         media_json = json.dumps(
@@ -184,6 +235,59 @@ class ChatStore:
                     int(message.read),
                     int(message.deleted),
                 ),
+            )
+
+    def _upsert_messages_sync(self, messages: list[Message]) -> None:
+        rows = []
+        for message in messages:
+            media_json = json.dumps(
+                message.media.model_dump(mode="json") if message.media else None,
+                ensure_ascii=False,
+            )
+            reactions_json = json.dumps(
+                [item.model_dump(mode="json") for item in message.reactions],
+                ensure_ascii=False,
+            )
+            rows.append(
+                (
+                    message.chat_id,
+                    message.message_id,
+                    message.text,
+                    message.date.isoformat(),
+                    message.sender_id,
+                    message.sender_name,
+                    int(message.outgoing),
+                    int(message.edited),
+                    message.reply_to_message_id,
+                    media_json,
+                    reactions_json,
+                    int(message.read),
+                    int(message.deleted),
+                )
+            )
+
+        with self._connect() as connection:
+            connection.executemany(
+                """
+                INSERT INTO messages (
+                    chat_id, message_id, text, date, sender_id, sender_name,
+                    outgoing, edited, reply_to_message_id, media_json,
+                    reactions_json, read, deleted
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(chat_id, message_id) DO UPDATE SET
+                    text=excluded.text,
+                    date=excluded.date,
+                    sender_id=excluded.sender_id,
+                    sender_name=excluded.sender_name,
+                    outgoing=excluded.outgoing,
+                    edited=excluded.edited,
+                    reply_to_message_id=excluded.reply_to_message_id,
+                    media_json=excluded.media_json,
+                    reactions_json=excluded.reactions_json,
+                    read=MAX(messages.read, excluded.read),
+                    deleted=excluded.deleted
+                """,
+                rows,
             )
 
     async def mark_outgoing_read(self, chat_id: int, max_id: int) -> None:
