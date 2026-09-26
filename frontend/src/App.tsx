@@ -3250,11 +3250,13 @@ function App() {
                       <span className="proxy-route-copy">
                         <strong dir="ltr">{route.name}</strong>
                         <small className={probe?.available === false ? 'unavailable' : ''}>
-                          {probe?.available
-                            ? 'Connected, Ping: ' + Math.round(probe.latency_ms || 0) + ' ms'
-                            : probe
-                              ? 'Unavailable'
-                              : 'Checking…'}
+                          {probe?.active
+                            ? 'Connected'
+                            : probe?.available
+                              ? (probe.latency_ms != null ? 'Ping: ' + Math.round(probe.latency_ms) + ' ms' : 'Available')
+                              : probe
+                                ? 'Unavailable'
+                                : 'Checking…'}
                           {route.managed_v2ray ? ' · V2Ray' : ''}
                         </small>
                       </span>
