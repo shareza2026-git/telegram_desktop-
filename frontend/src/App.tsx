@@ -489,6 +489,7 @@ function App() {
   const [telegramFolders, setTelegramFolders] = useState<DialogFolder[]>([])
   const [sidebarWidth, setSidebarWidth] = useState(() => Number(window.localStorage.getItem('telegram-sidebar-width')) || 312)
   const sidebarResizeRef = useRef<{ startX: number; startWidth: number } | null>(null)
+  const sidebarResizeCleanupRef = useRef<(() => void) | null>(null)
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [hasOlder, setHasOlder] = useState(false)
   const [hasNewer, setHasNewer] = useState(false)
@@ -730,6 +731,8 @@ function App() {
       if (chatActionTimerRef.current !== null) window.clearTimeout(chatActionTimerRef.current)
       if (focusTimerRef.current !== null) window.clearTimeout(focusTimerRef.current)
       if (searchJumpTimerRef.current !== null) window.clearTimeout(searchJumpTimerRef.current)
+      sidebarResizeCleanupRef.current?.()
+      sidebarResizeCleanupRef.current = null
       document.body.classList.remove('sidebar-resizing')
     }
   }, [])
@@ -1297,6 +1300,7 @@ function App() {
 
   function beginSidebarResize(event: ReactMouseEvent<HTMLDivElement>) {
     event.preventDefault()
+    sidebarResizeCleanupRef.current?.()
     sidebarResizeRef.current = { startX: event.clientX, startWidth: sidebarWidth }
     let latestWidth = sidebarWidth
 
@@ -1309,14 +1313,22 @@ function App() {
       setSidebarWidth(nextWidth)
     }
 
-    const handleUp = () => {
-      sidebarResizeRef.current = null
-      window.localStorage.setItem('telegram-sidebar-width', String(latestWidth))
+    const cleanup = () => {
       window.removeEventListener('mousemove', handleMove)
       window.removeEventListener('mouseup', handleUp)
       document.body.classList.remove('sidebar-resizing')
+      sidebarResizeRef.current = null
+      if (sidebarResizeCleanupRef.current === cleanup) {
+        sidebarResizeCleanupRef.current = null
+      }
     }
 
+    const handleUp = () => {
+      window.localStorage.setItem('telegram-sidebar-width', String(latestWidth))
+      cleanup()
+    }
+
+    sidebarResizeCleanupRef.current = cleanup
     document.body.classList.add('sidebar-resizing')
     window.addEventListener('mousemove', handleMove)
     window.addEventListener('mouseup', handleUp)
