@@ -2461,11 +2461,10 @@ function App() {
 
   async function closeApplication() {
     try {
-      await invoke('shutdown_instance_backend')
+      await invoke('close_current_window')
     } catch {
-      // Backend may already be stopped; closing the window must still continue.
+      await appWindow.close()
     }
-    await appWindow.close()
   }
 
   async function sendMessage(event: FormEvent) {
