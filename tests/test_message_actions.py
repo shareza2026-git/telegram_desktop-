@@ -430,3 +430,23 @@ async def test_disconnected_authorized_client_is_recovered_and_published():
     assert client.disconnects == 1
     assert [packet["type"] for packet in service.events.packets] == ["READY", "READY"]
     assert service.events.packets[-1]["data"]["connected"] is True
+
+
+@pytest.mark.asyncio
+async def test_delete_without_chat_id_uses_recent_message_mapping():
+    service = build_service(FakeClient())
+    service._recent_message_chat = {77: -100123}
+
+    event = type("DeleteEvent", (), {
+        "chat_id": None,
+        "deleted_ids": [77],
+    })()
+
+    await service._on_delete(event)
+
+    assert service.store.deleted == [(-100123, 77)]
+    assert service.events.packets == [{
+        "type": "MESSAGE_DELETED",
+        "data": {"chat_id": -100123, "message_id": 77},
+    }]
+    assert 77 not in service._recent_message_chat
