@@ -34,7 +34,7 @@ from app.models import (
 )
 from app.storage import ChatStore
 from app.telegram.client import build_client
-from app.telegram.media import DownloadedMedia, media_path, safe_media_name
+from app.telegram.media import DownloadedMedia, cached_media_path, media_path, safe_media_name
 from app.telegram.profile import chat_photo_path, is_fresh_chat_photo
 from app.telegram.portable import remove_account_from_portable, sync_account_to_portable
 from app.telegram.session import SessionManager
@@ -963,6 +963,15 @@ class TelegramDesktopService:
         )
 
     async def download_media(self, chat_id: int, message_id: int) -> DownloadedMedia:
+        root = self.settings.data_root / "downloads"
+        cached = cached_media_path(root, chat_id, message_id)
+        if cached is not None:
+            return DownloadedMedia(
+                path=cached,
+                filename=cached.name.split("_", 2)[-1],
+                mime_type=mimetypes.guess_type(cached.name)[0],
+            )
+
         key = (chat_id, message_id)
         task = self._media_download_tasks.get(key)
         if task is None or task.done():
