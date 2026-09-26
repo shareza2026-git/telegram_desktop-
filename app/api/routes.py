@@ -418,7 +418,7 @@ async def logout(request: Request):
 
 
 @router.websocket("/ws/telegram")
-async def websocket(websocket: WebSocket):
+async def websocket(websocket: WebSocket, chat_id: int | None = None):
     origin = websocket.headers.get("origin")
     allowed = {
         None,
@@ -434,7 +434,7 @@ async def websocket(websocket: WebSocket):
 
     await websocket.accept()
     desktop = websocket.app.state.telegram_desktop
-    queue = desktop.events.subscribe()
+    queue = desktop.events.subscribe(chat_id)
     try:
         await websocket.send_json({"type": "READY", "data": desktop.status.model_dump(mode="json")})
         while True:
