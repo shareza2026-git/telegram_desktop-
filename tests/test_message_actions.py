@@ -436,6 +436,13 @@ async def test_disconnected_authorized_client_is_recovered_and_published():
 async def test_delete_without_chat_id_uses_recent_message_mapping():
     service = build_service(FakeClient())
     service._recent_message_chat = {77: -100123}
+    relayed = []
+
+    class FakeRelay:
+        async def enqueue_delete(self, chat_id, message_id):
+            relayed.append((chat_id, message_id))
+
+    service.relay = FakeRelay()
 
     event = type("DeleteEvent", (), {
         "chat_id": None,
@@ -450,3 +457,4 @@ async def test_delete_without_chat_id_uses_recent_message_mapping():
         "data": {"chat_id": -100123, "message_id": 77},
     }]
     assert 77 not in service._recent_message_chat
+    assert relayed == [(-100123, 77)]

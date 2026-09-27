@@ -744,13 +744,13 @@ class TelegramDesktopService:
             await self.events.publish(packet)
             self._persist_message_background(message)
             if self.relay is not None:
-                await self.relay.enqueue(chat_id, message.message_id)
+                await self.relay.enqueue(chat_id, message.message_id, event.message)
             return
 
         self._persist_message_background(message)
         await self.events.publish(packet)
         if self.relay is not None:
-            await self.relay.enqueue(chat_id, message.message_id)
+            await self.relay.enqueue(chat_id, message.message_id, event.message)
 
     def delivery_diagnostics(self) -> dict:
         return {
@@ -866,6 +866,8 @@ class TelegramDesktopService:
                     "data": {"chat_id": int(chat_id), "message_id": message_id},
                 }
             )
+            if self.relay is not None:
+                await self.relay.enqueue_delete(int(chat_id), message_id)
 
     async def _on_reaction(self, update: Any) -> None:
         if self.client is None:

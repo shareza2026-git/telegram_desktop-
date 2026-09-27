@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import sqlite3
+import time
+from collections import OrderedDict
 from contextlib import suppress
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -61,6 +63,11 @@ class RelayStore:
                 );
                 CREATE INDEX IF NOT EXISTS ix_relay_deliveries_status
                     ON relay_deliveries(status, mapping_id, source_message_id);
+                CREATE TABLE IF NOT EXISTS relay_source_deletions (
+                    source_chat_id INTEGER NOT NULL,
+                    source_message_id INTEGER NOT NULL,
+                    PRIMARY KEY(source_chat_id, source_message_id)
+                );
             """)
 
     async def mappings(self) -> list[dict]:
@@ -104,10 +111,42 @@ class RelayStore:
         with self._connect() as connection:
             cursor = connection.execute(
                 "INSERT OR IGNORE INTO relay_deliveries(mapping_id, source_message_id) "
-                "SELECT id, ? FROM relay_mappings WHERE source_chat_id=?",
+                "SELECT id, ? FROM relay_mappings WHERE source_chat_id=? "
+                "AND NOT EXISTS (SELECT 1 FROM relay_source_deletions "
+                "WHERE source_chat_id=? AND source_message_id=?)",
+                (message_id, source_id, source_id, message_id),
+            )
+            return max(cursor.rowcount, 0)
+
+    async def mark_source_deleted(self, source_id: int, message_id: int) -> int:
+        return await asyncio.to_thread(self._mark_source_deleted, source_id, message_id)
+
+    def _mark_source_deleted(self, source_id: int, message_id: int) -> int:
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT OR IGNORE INTO relay_source_deletions(source_chat_id, source_message_id) VALUES (?, ?)",
+                (source_id, message_id),
+            )
+            cursor = connection.execute(
+                "UPDATE relay_deliveries SET status=CASE "
+                "WHEN status='deleted' THEN 'deleted' "
+                "WHEN destination_message_id IS NOT NULL AND status IN ('sent', 'delete_pending', 'delete_failed') THEN 'delete_pending' "
+                "ELSE 'source_deleted' END, error_code=NULL "
+                "WHERE source_message_id=? AND mapping_id IN "
+                "(SELECT id FROM relay_mappings WHERE source_chat_id=?)",
                 (message_id, source_id),
             )
             return max(cursor.rowcount, 0)
+
+    async def is_source_deleted(self, source_id: int, message_id: int) -> bool:
+        return await asyncio.to_thread(self._is_source_deleted, source_id, message_id)
+
+    def _is_source_deleted(self, source_id: int, message_id: int) -> bool:
+        with self._connect() as connection:
+            return connection.execute(
+                "SELECT 1 FROM relay_source_deletions WHERE source_chat_id=? AND source_message_id=?",
+                (source_id, message_id),
+            ).fetchone() is not None
 
     async def next_pending(self) -> dict | None:
         return await asyncio.to_thread(self._next_pending)
@@ -121,15 +160,55 @@ class RelayStore:
             ).fetchone()
             return dict(row) if row else None
 
-    async def finish(self, mapping_id: int, message_id: int, status: str, destination_message_id: int | None = None, error_code: str | None = None) -> None:
-        await asyncio.to_thread(self._finish, mapping_id, message_id, status, destination_message_id, error_code)
+    async def next_delete_pending(self) -> dict | None:
+        return await asyncio.to_thread(self._next_delete_pending)
 
-    def _finish(self, mapping_id: int, message_id: int, status: str, destination_message_id: int | None, error_code: str | None) -> None:
+    def _next_delete_pending(self) -> dict | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT d.mapping_id, d.source_message_id, d.destination_message_id, m.destination_chat_id "
+                "FROM relay_deliveries d JOIN relay_mappings m ON m.id=d.mapping_id "
+                "WHERE d.status='delete_pending' AND d.destination_message_id IS NOT NULL "
+                "ORDER BY d.rowid LIMIT 1"
+            ).fetchone()
+            return dict(row) if row else None
+
+    async def finish(self, mapping_id: int, message_id: int, status: str, destination_message_id: int | None = None, error_code: str | None = None) -> bool:
+        return await asyncio.to_thread(self._finish, mapping_id, message_id, status, destination_message_id, error_code)
+
+    def _finish(self, mapping_id: int, message_id: int, status: str, destination_message_id: int | None, error_code: str | None) -> bool:
+        with self._connect() as connection:
+            if status == "sent":
+                connection.execute(
+                    "UPDATE relay_deliveries SET status=CASE "
+                    "WHEN EXISTS (SELECT 1 FROM relay_source_deletions s JOIN relay_mappings m "
+                    "ON m.source_chat_id=s.source_chat_id WHERE m.id=? AND s.source_message_id=?) "
+                    "THEN 'delete_pending' ELSE 'sent' END, destination_message_id=?, error_code=NULL "
+                    "WHERE mapping_id=? AND source_message_id=?",
+                    (mapping_id, message_id, destination_message_id, mapping_id, message_id),
+                )
+            else:
+                connection.execute(
+                    "UPDATE relay_deliveries SET status=CASE WHEN status='source_deleted' "
+                    "THEN status ELSE ? END, error_code=? "
+                    "WHERE mapping_id=? AND source_message_id=?",
+                    (status, error_code, mapping_id, message_id),
+                )
+            row = connection.execute(
+                "SELECT status FROM relay_deliveries WHERE mapping_id=? AND source_message_id=?",
+                (mapping_id, message_id),
+            ).fetchone()
+            return bool(row and row["status"] == "delete_pending")
+
+    async def finish_delete(self, mapping_id: int, message_id: int, success: bool, error_code: str | None = None) -> None:
+        await asyncio.to_thread(self._finish_delete, mapping_id, message_id, success, error_code)
+
+    def _finish_delete(self, mapping_id: int, message_id: int, success: bool, error_code: str | None) -> None:
         with self._connect() as connection:
             connection.execute(
-                "UPDATE relay_deliveries SET status=?, destination_message_id=?, error_code=? "
-                "WHERE mapping_id=? AND source_message_id=?",
-                (status, destination_message_id, error_code, mapping_id, message_id),
+                "UPDATE relay_deliveries SET status=?, error_code=? "
+                "WHERE mapping_id=? AND source_message_id=? AND status='delete_pending'",
+                ("deleted" if success else "delete_failed", error_code, mapping_id, message_id),
             )
 
     async def counts(self) -> dict[str, int]:
@@ -145,9 +224,13 @@ class RelayStore:
 
     def _retry_failed(self) -> int:
         with self._connect() as connection:
-            return connection.execute(
+            sent = connection.execute(
                 "UPDATE relay_deliveries SET status='pending', error_code=NULL WHERE status='failed'"
             ).rowcount
+            deleted = connection.execute(
+                "UPDATE relay_deliveries SET status='delete_pending', error_code=NULL WHERE status='delete_failed'"
+            ).rowcount
+            return sent + deleted
 
     async def clear(self) -> None:
         await asyncio.to_thread(self._clear)
@@ -155,6 +238,7 @@ class RelayStore:
     def _clear(self) -> None:
         with self._connect() as connection:
             connection.execute("DELETE FROM relay_mappings")
+            connection.execute("DELETE FROM relay_source_deletions")
 
 
 class RelayService:
@@ -171,16 +255,21 @@ class RelayService:
         self.phone: str | None = None
         self.code_hash: str | None = None
         self.last_error: str | None = None
+        self.last_delivery_ms: int | None = None
         self._connect_lock = asyncio.Lock()
         self._wake = asyncio.Event()
+        self._delete_wake = asyncio.Event()
         self._worker: asyncio.Task | None = None
+        self._delete_worker: asyncio.Task | None = None
         self._startup: asyncio.Task | None = None
         self._source_ids: set[int] = set()
+        self._recent_messages: OrderedDict[tuple[int, int], tuple[Any, float]] = OrderedDict()
 
     async def start(self) -> None:
         await self.store.initialize()
         self._source_ids = {item["source_chat_id"] for item in await self.store.mappings()}
         self._worker = asyncio.create_task(self._work())
+        self._delete_worker = asyncio.create_task(self._delete_work())
         if self.session_path.is_file():
             self._startup = asyncio.create_task(self._restore())
 
@@ -188,6 +277,7 @@ class RelayService:
         try:
             await self.connect()
             self._wake.set()
+            self._delete_wake.set()
         except Exception as error:
             self.last_error = type(error).__name__
             logger.warning("Destination account could not reconnect: %s", type(error).__name__)
@@ -266,6 +356,10 @@ class RelayService:
             "sent": counts.get("sent", 0),
             "failed": counts.get("failed", 0),
             "blocked": counts.get("blocked", 0),
+            "delete_pending": counts.get("delete_pending", 0),
+            "deleted": counts.get("deleted", 0),
+            "delete_failed": counts.get("delete_failed", 0),
+            "last_delivery_ms": self.last_delivery_ms,
             "last_error": self.last_error,
         }
 
@@ -329,6 +423,7 @@ class RelayService:
         self.phone = None
         self.code_hash = None
         self._wake.set()
+        self._delete_wake.set()
         return {"code_sent": True, "requires_2fa": False, "authorized": True}
 
     async def source_channels(self) -> list[dict]:
@@ -373,9 +468,15 @@ class RelayService:
             raise DesktopError("ابتدا اکانت دوم را وارد کنید.")
         return self.client
 
-    async def enqueue(self, source_id: int, message_id: int) -> None:
+    async def enqueue(self, source_id: int, message_id: int, message: Any | None = None) -> None:
         if source_id not in self._source_ids:
             return
+        if message is not None:
+            key = (source_id, message_id)
+            self._recent_messages[key] = (message, time.monotonic())
+            self._recent_messages.move_to_end(key)
+            if len(self._recent_messages) > 512:
+                self._recent_messages.popitem(last=False)
         try:
             if await self.store.enqueue(source_id, message_id):
                 self._wake.set()
@@ -383,10 +484,22 @@ class RelayService:
             self.last_error = type(error).__name__
             logger.warning("Relay queue failed: %s", type(error).__name__)
 
+    async def enqueue_delete(self, source_id: int, message_id: int) -> None:
+        if source_id not in self._source_ids:
+            return
+        self._recent_messages.pop((source_id, message_id), None)
+        try:
+            await self.store.mark_source_deleted(source_id, message_id)
+            self._delete_wake.set()
+        except Exception as error:
+            self.last_error = type(error).__name__
+            logger.warning("Relay delete queue failed: %s", type(error).__name__)
+
     async def retry_failed(self) -> int:
         count = await self.store.retry_failed()
         if count:
             self._wake.set()
+            self._delete_wake.set()
         return count
 
     async def _work(self) -> None:
@@ -401,13 +514,40 @@ class RelayService:
                     break
                 await self._deliver(item)
 
+    async def _delete_work(self) -> None:
+        while True:
+            await self._delete_wake.wait()
+            self._delete_wake.clear()
+            while self.authorized:
+                item = await self.store.next_delete_pending()
+                if item is None:
+                    break
+                await self._delete_destination(item)
+
+    async def _delete_destination(self, item: dict) -> None:
+        try:
+            destination = await self._require_authorized()
+            await destination.delete_messages(
+                item["destination_chat_id"], [item["destination_message_id"]], revoke=True,
+            )
+            await self.store.finish_delete(item["mapping_id"], item["source_message_id"], True)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            self.last_error = type(error).__name__
+            logger.warning("Relay destination deletion failed: %s", type(error).__name__)
+            await self.store.finish_delete(
+                item["mapping_id"], item["source_message_id"], False, type(error).__name__,
+            )
+
     async def _deliver(self, item: dict) -> None:
         mapping_id = item["mapping_id"]
         message_id = item["source_message_id"]
+        source_id = item["source_chat_id"]
+        cached = self._recent_messages.get((source_id, message_id))
         try:
             destination = await self._require_authorized()
-            source = self.primary._require_authorized()
-            message = await source.get_messages(item["source_chat_id"], ids=message_id)
+            message = cached[0] if cached is not None else await self.primary._require_authorized().get_messages(source_id, ids=message_id)
             if message is None:
                 await self.store.finish(mapping_id, message_id, "failed", error_code="SOURCE_MISSING")
                 return
@@ -417,16 +557,21 @@ class RelayService:
             if getattr(getattr(message, "chat", None), "noforwards", False):
                 await self.store.finish(mapping_id, message_id, "blocked", error_code="CONTENT_PROTECTED")
                 return
+            if await self.store.is_source_deleted(source_id, message_id):
+                return
             text = str(getattr(message, "raw_text", None) or "")
             if getattr(message, "media", None):
                 size = int(getattr(getattr(message, "file", None), "size", 0) or 0)
                 if size > 100 * 1024 * 1024:
                     await self.store.finish(mapping_id, message_id, "failed", error_code="MEDIA_TOO_LARGE")
                     return
+                source = self.primary._require_authorized()
                 with TemporaryDirectory(prefix="relay-", dir=self.settings.data_root) as directory:
                     path = await source.download_media(message, file=directory)
                     if not path:
                         raise RuntimeError("MEDIA_DOWNLOAD_FAILED")
+                    if await self.store.is_source_deleted(source_id, message_id):
+                        return
                     sent = await destination.send_file(item["destination_chat_id"], path, caption=text)
             elif text:
                 sent = await destination.send_message(item["destination_chat_id"], text)
@@ -435,7 +580,11 @@ class RelayService:
                 return
             if isinstance(sent, list):
                 sent = sent[0]
-            await self.store.finish(mapping_id, message_id, "sent", destination_message_id=int(sent.id))
+            needs_delete = await self.store.finish(mapping_id, message_id, "sent", destination_message_id=int(sent.id))
+            if needs_delete:
+                self._delete_wake.set()
+            if cached is not None:
+                self.last_delivery_ms = round((time.monotonic() - cached[1]) * 1000)
         except asyncio.CancelledError:
             raise
         except Exception as error:
@@ -461,9 +610,10 @@ class RelayService:
         self.session_path.unlink(missing_ok=True)
         await self.store.clear()
         self._source_ids.clear()
+        self._recent_messages.clear()
 
     async def close(self) -> None:
-        for task in (self._startup, self._worker):
+        for task in (self._startup, self._worker, self._delete_worker):
             if task is not None:
                 task.cancel()
                 with suppress(asyncio.CancelledError):

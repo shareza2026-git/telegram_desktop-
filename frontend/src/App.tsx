@@ -176,6 +176,10 @@ type RelayStatus = {
   sent: number
   failed: number
   blocked: number
+  delete_pending: number
+  deleted: number
+  delete_failed: number
+  last_delivery_ms?: number | null
   last_error?: string | null
 }
 
@@ -3641,9 +3645,10 @@ function App() {
                 <>
                   <section className="settings-section">
                     <h3>اکانت دوم: {relayStatus.display_name || 'متصل'}</h3>
-                    <div className="safe-note">فقط پیام‌های جدید گروه‌ها یا کانال‌های انتخاب‌شده از اکانت اول خوانده و با اکانت دوم در کانال مقصد ارسال می‌شوند. پیام‌های قدیمی منتقل نمی‌شوند.</div>
-                    <div className="relay-counts">در صف: {relayStatus.pending} · ارسال‌شده: {relayStatus.sent} · خطا: {relayStatus.failed} · مسدود: {relayStatus.blocked}</div>
-                    {relayStatus.failed > 0 && <button type="button" className="relay-secondary" disabled={relayBusy} onClick={() => void retryRelayFailed()}>تلاش دوباره برای خطاها</button>}
+                    <div className="safe-note">فقط پیام‌های جدید گروه‌ها یا کانال‌های انتخاب‌شده از اکانت اول به کانال مقصد ارسال می‌شوند. حذف پیام منتقل‌شده نیز وقتی تلگرام رویداد حذف را به برنامه برساند در مقصد اعمال می‌شود. پیام‌های قدیمی منتقل نمی‌شوند.</div>
+                    <div className="relay-counts">در صف ارسال: {relayStatus.pending} · ارسال‌شده: {relayStatus.sent} · حذف‌شده در مقصد: {relayStatus.deleted} · در صف حذف: {relayStatus.delete_pending} · خطا: {relayStatus.failed + relayStatus.delete_failed} · مسدود: {relayStatus.blocked}</div>
+                    {relayStatus.last_delivery_ms != null && <div className="relay-counts">زمان آخرین انتقال از دریافت رویداد تا تأیید ارسال: {relayStatus.last_delivery_ms} میلی‌ثانیه</div>}
+                    {relayStatus.failed + relayStatus.delete_failed > 0 && <button type="button" className="relay-secondary" disabled={relayBusy} onClick={() => void retryRelayFailed()}>تلاش دوباره برای خطاها</button>}
                     <button type="button" className="relay-secondary" disabled={relayBusy} onClick={() => void refreshRelay().catch(caught => setRelayError(errorMessage(caught, 'بازخوانی انجام نشد.')))}>بازخوانی وضعیت و کانال‌ها</button>
                   </section>
                   <section className="settings-section">
