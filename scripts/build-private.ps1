@@ -3,7 +3,8 @@ param(
     [Parameter(Mandatory=$true)][string]$ApiFile,
     [Parameter(Mandatory=$true)][string]$ProxyFile,
     [Parameter(Mandatory=$true)][string]$PythonExe,
-    [Parameter(Mandatory=$true)][string]$XrayExe
+    [Parameter(Mandatory=$true)][string]$XrayExe,
+    [int]$PreferredProxyIndex = 0
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
@@ -14,10 +15,19 @@ $version = (Get-Content (Join-Path $tauri 'tauri.conf.json') -Raw | ConvertFrom-
 foreach ($inputFile in @($ApiFile, $ProxyFile, $PythonExe, $XrayExe)) {
     if (-not (Test-Path -LiteralPath $inputFile -PathType Leaf)) { throw 'Required build input is missing.' }
 }
+$proxyBuildFile = (Resolve-Path -LiteralPath $ProxyFile).Path
+if ($PreferredProxyIndex -gt 0) {
+    $proxyPayload = Get-Content -LiteralPath $ProxyFile -Raw | ConvertFrom-Json
+    if ($PreferredProxyIndex -gt @($proxyPayload.proxies).Count) { throw 'Preferred proxy index is outside the configured route list.' }
+    $proxyPayload | Add-Member -NotePropertyName selected_index -NotePropertyValue $PreferredProxyIndex -Force
+    $proxyBuildFile = Join-Path $repo '.build-temp/private-proxies.json'
+    New-Item -ItemType Directory -Path (Split-Path -Parent $proxyBuildFile) -Force | Out-Null
+    $proxyPayload | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $proxyBuildFile -Encoding UTF8
+}
 # Explicit allowlist: never package a session, data directory, or arbitrary glob.
 $resources = @{}
 $resources[(Resolve-Path -LiteralPath $ApiFile).Path] = 'telegram-api.env'
-$resources[(Resolve-Path -LiteralPath $ProxyFile).Path] = 'telegram-proxies.json'
+$resources[$proxyBuildFile] = 'telegram-proxies.json'
 # Keep the Python runtime unpacked beside the sidecar. One-file PyInstaller
 # extracts all DLLs into Temp on every launch, delaying the local API.
 $resources[(Join-Path $repo 'dist/telegram-desktop-backend/backend-runtime/')] = 'backend-runtime/'
@@ -66,7 +76,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $tauri 'binaries/xray-x86_64-pc-windows-msvc.exe') -Destination (Join-Path $portableOutput 'xray.exe')
     Copy-Item -LiteralPath (Join-Path $repo 'dist/telegram-desktop-backend/backend-runtime') -Destination (Join-Path $portableOutput 'backend-runtime') -Recurse
     Copy-Item -LiteralPath $ApiFile -Destination (Join-Path $portableOutput 'telegram-api.env')
-    Copy-Item -LiteralPath $ProxyFile -Destination (Join-Path $portableOutput 'telegram-proxies.json')
+    Copy-Item -LiteralPath $proxyBuildFile -Destination (Join-Path $portableOutput 'telegram-proxies.json')
     Write-Output "PRIVATE_INSTALLER=$privateOutput"
     Write-Output "PORTABLE_FOLDER=$portableOutput"
 } finally {
