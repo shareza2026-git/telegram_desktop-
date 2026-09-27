@@ -1,4 +1,4 @@
-"""Read from the primary account and publish selected channels through a second account."""
+"""Read selected primary chats and publish through a second account."""
 
 from __future__ import annotations
 
@@ -334,8 +334,8 @@ class RelayService:
     async def source_channels(self) -> list[dict]:
         dialogs = await self.primary.list_dialogs(force=True)
         return [
-            {"chat_id": dialog.chat_id, "title": dialog.title}
-            for dialog in dialogs if dialog.dialog_type == "channel"
+            {"chat_id": dialog.chat_id, "title": dialog.title, "dialog_type": dialog.dialog_type}
+            for dialog in dialogs if dialog.dialog_type in {"channel", "group", "supergroup"}
         ]
 
     async def destination_channels(self) -> list[dict]:
@@ -356,7 +356,7 @@ class RelayService:
         source = next((item for item in sources if item["chat_id"] == source_id), None)
         destination = next((item for item in destinations if item["chat_id"] == destination_id), None)
         if source is None or destination is None:
-            raise DesktopError("کانال مبدأ یا مقصد در فهرست حساب مربوطه پیدا نشد.")
+            raise DesktopError("گروه/کانال مبدأ یا کانال مقصد در فهرست حساب مربوطه پیدا نشد.")
         mapping = await self.store.add_mapping(source_id, destination_id, source["title"], destination["title"])
         self._source_ids.add(source_id)
         return mapping

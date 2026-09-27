@@ -8,6 +8,30 @@ from app.telegram.relay import RelayService, RelayStore
 
 
 @pytest.mark.asyncio
+async def test_relay_source_list_includes_groups_and_supergroups(tmp_path):
+    settings = Settings(
+        TELEGRAM_API_ID=12345,
+        TELEGRAM_API_HASH="test-only-hash",
+        TELEGRAM_CLIENT_DATA_ROOT=str(tmp_path / "data"),
+        TELEGRAM_PROXY_CONFIG=str(tmp_path / "none.json"),
+    )
+    dialogs = [
+        SimpleNamespace(chat_id=-1, title="Channel", dialog_type="channel"),
+        SimpleNamespace(chat_id=-2, title="Group", dialog_type="group"),
+        SimpleNamespace(chat_id=-1003, title="Supergroup", dialog_type="supergroup"),
+        SimpleNamespace(chat_id=4, title="Private chat", dialog_type="user"),
+    ]
+    primary = SimpleNamespace(list_dialogs=AsyncMock(return_value=dialogs))
+    relay = RelayService(settings, primary, SimpleNamespace())
+    await relay.store.initialize()
+    assert [item["chat_id"] for item in await relay.source_channels()] == [-1, -2, -1003]
+    relay.destination_channels = AsyncMock(return_value=[{"chat_id": -1009, "title": "Destination"}])
+    mapping = await relay.add_mapping(-1003, -1009)
+    assert mapping["source_title"] == "Supergroup"
+    assert -1003 in relay._source_ids
+
+
+@pytest.mark.asyncio
 async def test_relay_store_keeps_distinct_mappings_and_deduplicates_events(tmp_path):
     store = RelayStore(tmp_path / "relay.sqlite3")
     await store.initialize()

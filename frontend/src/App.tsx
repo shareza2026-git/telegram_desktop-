@@ -179,7 +179,7 @@ type RelayStatus = {
   last_error?: string | null
 }
 
-type RelayChannel = { chat_id: number; title: string }
+type RelayChannel = { chat_id: number; title: string; dialog_type?: string }
 type RelayMapping = {
   id: number
   source_chat_id: number
@@ -3641,7 +3641,7 @@ function App() {
                 <>
                   <section className="settings-section">
                     <h3>اکانت دوم: {relayStatus.display_name || 'متصل'}</h3>
-                    <div className="safe-note">فقط پیام‌های جدید کانال‌های انتخاب‌شده از اکانت اول خوانده و با اکانت دوم در مقصد ارسال می‌شوند. پیام‌های قدیمی منتقل نمی‌شوند.</div>
+                    <div className="safe-note">فقط پیام‌های جدید گروه‌ها یا کانال‌های انتخاب‌شده از اکانت اول خوانده و با اکانت دوم در کانال مقصد ارسال می‌شوند. پیام‌های قدیمی منتقل نمی‌شوند.</div>
                     <div className="relay-counts">در صف: {relayStatus.pending} · ارسال‌شده: {relayStatus.sent} · خطا: {relayStatus.failed} · مسدود: {relayStatus.blocked}</div>
                     {relayStatus.failed > 0 && <button type="button" className="relay-secondary" disabled={relayBusy} onClick={() => void retryRelayFailed()}>تلاش دوباره برای خطاها</button>}
                     <button type="button" className="relay-secondary" disabled={relayBusy} onClick={() => void refreshRelay().catch(caught => setRelayError(errorMessage(caught, 'بازخوانی انجام نشد.')))}>بازخوانی وضعیت و کانال‌ها</button>
@@ -3651,7 +3651,7 @@ function App() {
                     {!relayMappings.length && <div className="settings-muted">هنوز انتقالی ثبت نشده است. با + یک جفت کانال انتخاب کنید.</div>}
                     {relayMappings.map(mapping => <div className="relay-mapping" key={mapping.id}><span dir="auto">{mapping.source_title} ← {mapping.destination_title}</span><button type="button" disabled={relayBusy} aria-label={'حذف انتقال ' + mapping.source_title} onClick={() => void removeRelayMapping(mapping.id)}>×</button></div>)}
                     {relayAddOpen && <form className="relay-form" onSubmit={addRelayMapping}>
-                      <label>کانال مبدأ از اکانت اول<select value={relaySourceDraft} onChange={event => setRelaySourceDraft(event.target.value)} required><option value="">انتخاب کانال مبدأ</option>{relaySources.map(channel => <option value={channel.chat_id} key={channel.chat_id}>{channel.title}</option>)}</select></label>
+                      <label>گروه یا کانال مبدأ از اکانت اول<select value={relaySourceDraft} onChange={event => setRelaySourceDraft(event.target.value)} required><option value="">انتخاب گروه یا کانال مبدأ</option>{relaySources.map(channel => <option value={channel.chat_id} key={channel.chat_id}>{channel.dialog_type === 'channel' ? 'کانال' : 'گروه'} · {channel.title}</option>)}</select></label>
                       <label>کانال مقصد از اکانت دوم<select value={relayDestinationDraft} onChange={event => setRelayDestinationDraft(event.target.value)} required><option value="">انتخاب کانال مقصد</option>{relayDestinations.map(channel => <option value={channel.chat_id} key={channel.chat_id}>{channel.title}</option>)}</select></label>
                       <div className="relay-form-actions"><button className="relay-action" type="submit" disabled={relayBusy || !relaySourceDraft || !relayDestinationDraft}>ثبت انتقال</button><button className="relay-secondary" type="button" onClick={() => setRelayAddOpen(false)}>انصراف</button></div>
                     </form>}
