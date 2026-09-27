@@ -8,7 +8,7 @@ from typing import Any
 from pydantic import SecretStr
 
 from telethon import TelegramClient, events, functions, types, utils
-from telethon.sessions import MemorySession
+from telethon.sessions import MemorySession, SQLiteSession
 from telethon.errors import (
     FloodWaitError,
     PasswordHashInvalidError,
@@ -92,6 +92,7 @@ class TelegramDesktopService:
         self.transfer_bundle = TransferBundle(settings, transport)
         self.sessions = SessionManager(settings)
         self.events = EventBroker()
+        self.relay = None
         self.client: TelegramClient | None = None
         self.route: ProxyRoute | None = None
         self.handlers: list[tuple[Any, Any]] = []
@@ -114,8 +115,12 @@ class TelegramDesktopService:
         self._message_persist_worker: asyncio.Task | None = None
         self._connection_monitor: asyncio.Task | None = None
         self._initial_connect_task: asyncio.Task | None = None
+        self._proxy_switch_task: asyncio.Task | None = None
+        self._proxy_switch_generation = 0
         self._recent_message_chat: dict[int, int] = {}
         self._session_metadata: dict = {}
+        self._incoming_messages = 0
+        self._last_telegram_lag_seconds: float | None = None
         info = self.sessions.info()
         self.status = ClientStatus(
             configured=settings.telegram_configured,
@@ -251,12 +256,10 @@ class TelegramDesktopService:
             preferred = routes[selected - 1]
             candidates.append(preferred)
             candidates.extend(route for index, route in enumerate(routes, 1) if index != selected)
-            if self.settings.telegram_allow_direct:
-                candidates.append(None)
+            candidates.append(None)
         else:
             candidates.extend(routes)
-            if self.settings.telegram_allow_direct:
-                candidates.append(None)
+            candidates.append(None)
         if not candidates:
             self.status = self.status.model_copy(
                 update={"state": "PROXY_ERROR", "last_error": "No Telegram route is configured"}
@@ -287,8 +290,8 @@ class TelegramDesktopService:
                     route_options,
                     session=runtime_session,
                 )
-                await client.connect()
-                authorized = await client.is_user_authorized()
+                await asyncio.wait_for(client.connect(), timeout=12.0)
+                authorized = await asyncio.wait_for(client.is_user_authorized(), timeout=8.0)
                 self.client = client
                 self.route = route
                 if authorized:
@@ -302,6 +305,12 @@ class TelegramDesktopService:
                             "active_route": route.display_name if route else "direct",
                         }
                     )
+                # Retry the last working route first on the next launch, instead
+                # of paying the timeout of the same unavailable route again.
+                try:
+                    self.transport.set_selected_index(routes.index(route) + 1 if route else 0)
+                except OSError:
+                    logger.warning("Could not save the working route preference")
                 return
             except Exception as error:
                 route_name = route.display_name if route is not None else "direct"
@@ -334,7 +343,9 @@ class TelegramDesktopService:
 
         target = self.settings.data_root / "settings.env"
         target.parent.mkdir(parents=True, exist_ok=True)
-        direct_allowed = self.settings.telegram_allow_direct or not self.transport.load()
+        # Keep direct as a durable fallback after a proxy is configured. This
+        # avoids forcing users to re-enter a route when it is temporarily down.
+        direct_allowed = True
         target.write_text(
             f"TELEGRAM_API_ID={values.api_id}\n"
             f"TELEGRAM_API_HASH={key}\n"
@@ -421,10 +432,15 @@ class TelegramDesktopService:
         self.login_phone = None
         self.login_code_hash = None
 
-    async def _mark_authorized(self) -> None:
+    async def _mark_authorized(self, *, account: Any | None = None, persist_session: bool = False) -> None:
         if self.client is None:
             raise DesktopError("Telegram client is not connected")
-        account = await self.client.get_me()
+        if account is None:
+            account = await asyncio.wait_for(self.client.get_me(), timeout=8.0)
+        if persist_session and isinstance(self.client.session, MemorySession):
+            await asyncio.to_thread(self.sessions.persist_runtime_session, self.client.session)
+        elif isinstance(self.client.session, SQLiteSession):
+            await asyncio.to_thread(self.client.session.save)
         self._register_handlers()
         self.status = self.status.model_copy(
             update={
@@ -439,8 +455,10 @@ class TelegramDesktopService:
                 "client_session_exists": True,
             }
         )
+        await self.events.publish({"type": "READY", "data": self.status.model_dump(mode="json")})
         try:
-            sync_account_to_portable(
+            await asyncio.to_thread(
+                sync_account_to_portable,
                 self.settings,
                 user_id=int(account.id),
                 display_name=self.status.display_name,
@@ -448,7 +466,7 @@ class TelegramDesktopService:
             )
         except Exception:
             logger.warning("Portable account bundle could not be updated", exc_info=True)
-        self.transfer_bundle.sync(include_session=True)
+        await asyncio.to_thread(self.transfer_bundle.sync, include_session=True)
 
     def _register_handlers(self) -> None:
         if self.client is None or self.handlers:
@@ -711,6 +729,10 @@ class TelegramDesktopService:
             return
         chat_id = int(event.chat_id)
         message = self._message_model(event.message, chat_id)
+        self._incoming_messages += 1
+        self._last_telegram_lag_seconds = max(
+            0.0, (datetime.now(timezone.utc) - message.date).total_seconds()
+        )
         self._remember_message_chat(message.message_id, chat_id)
         self._update_dialog_snapshot_from_message(message)
         packet = {
@@ -721,10 +743,26 @@ class TelegramDesktopService:
         if self._is_priority_chat(chat_id):
             await self.events.publish(packet)
             self._persist_message_background(message)
+            if self.relay is not None:
+                await self.relay.enqueue(chat_id, message.message_id, event.message)
             return
 
         self._persist_message_background(message)
         await self.events.publish(packet)
+        if self.relay is not None:
+            await self.relay.enqueue(chat_id, message.message_id, event.message)
+
+    def delivery_diagnostics(self) -> dict:
+        return {
+            "connected": self.status.connected,
+            "authorized": self.status.authorized,
+            "incoming_messages": self._incoming_messages,
+            "last_telegram_lag_seconds": (
+                round(self._last_telegram_lag_seconds, 1)
+                if self._last_telegram_lag_seconds is not None else None
+            ),
+            "frontend_connections": len(self.events._subscribers),
+        }
 
     async def _on_edit(self, event: Any) -> None:
         if event.chat_id is None:
@@ -828,6 +866,8 @@ class TelegramDesktopService:
                     "data": {"chat_id": int(chat_id), "message_id": message_id},
                 }
             )
+            if self.relay is not None:
+                await self.relay.enqueue_delete(int(chat_id), message_id)
 
     async def _on_reaction(self, update: Any) -> None:
         if self.client is None:
@@ -856,7 +896,7 @@ class TelegramDesktopService:
     async def add_proxy_link(self, link: str) -> dict:
         try:
             result = self.transport.add_proxy_link(link)
-            self.transfer_bundle.sync(include_session=self.status.authorized)
+            await asyncio.to_thread(self.transfer_bundle.sync, include_session=False)
             return result
         except ValueError:
             raise
@@ -865,26 +905,34 @@ class TelegramDesktopService:
         routes = self.transport.load()
         if index is not None and index != 0 and not (1 <= index <= len(routes)):
             raise ValueError("Proxy selection is invalid")
-        async with self._lifecycle_lock:
+        if not self.settings.telegram_configured:
             self.transport.set_selected_index(index)
-            client = self.client
-            self._unregister_handlers()
-            if client is not None:
-                with suppress(Exception):
-                    await client.disconnect()
-            self.client = None
-            if self.route is not None:
-                with suppress(Exception):
-                    await self.route.deactivate()
-            self.route = None
-            await self._connect()
-            self.transfer_bundle.sync(include_session=self.status.authorized)
-            await self.events.publish({"type": "READY", "data": self.status.model_dump(mode="json")})
-        return {
-            "selected_index": index,
-            "active_route": self.status.active_route,
-            "connected": self.status.connected,
-        }
+            return {"selected_index": index, "active_route": None, "connected": False}
+        self.transport.set_selected_index(index)
+        self._proxy_switch_generation += 1
+        if self._proxy_switch_task is None or self._proxy_switch_task.done():
+            self._proxy_switch_task = asyncio.create_task(self._apply_proxy_selection())
+        return {"selected_index": index, "active_route": self.status.active_route, "connected": self.status.connected}
+
+    async def _apply_proxy_selection(self) -> None:
+        while True:
+            generation = self._proxy_switch_generation
+            async with self._lifecycle_lock:
+                client = self.client
+                self._unregister_handlers()
+                if client is not None:
+                    with suppress(Exception):
+                        await client.disconnect()
+                self.client = None
+                if self.route is not None:
+                    with suppress(Exception):
+                        await self.route.deactivate()
+                self.route = None
+                await self._connect()
+                await asyncio.to_thread(self.transfer_bundle.sync, include_session=False)
+                await self.events.publish({"type": "READY", "data": self.status.model_dump(mode="json")})
+            if self._proxy_switch_generation == generation:
+                return
 
     async def probe_proxies(self) -> list[dict]:
         routes = self.transport.load()
@@ -1145,6 +1193,7 @@ class TelegramDesktopService:
         )
         self._dialog_snapshot = ordered
         self._dialog_snapshot_at = asyncio.get_running_loop().time()
+        await self.events.publish({"type": "DIALOGS_REFRESHED", "data": {}})
         return ordered
 
     async def list_dialogs(
@@ -1166,7 +1215,11 @@ class TelegramDesktopService:
                 task = asyncio.create_task(self._scan_dialogs())
                 self._dialog_scan_task = task
             try:
-                dialogs = await task
+                # Telegram can stall midway through a large dialog scan. Keep
+                # the local list visible, then notify the UI when it finishes.
+                dialogs = await asyncio.wait_for(asyncio.shield(task), timeout=4.0)
+            except asyncio.TimeoutError:
+                dialogs = self._dialog_snapshot or await self.store.list_dialogs()
             finally:
                 if self._dialog_scan_task is task and task.done():
                     self._dialog_scan_task = None
@@ -1189,7 +1242,7 @@ class TelegramDesktopService:
             dialogs = await self.list_dialogs()
         by_id = {item.chat_id: item for item in dialogs}
         try:
-            result = await client(functions.messages.GetDialogFiltersRequest())
+            result = await asyncio.wait_for(client(functions.messages.GetDialogFiltersRequest()), timeout=5.0)
         except Exception as error:
             logger.warning("Telegram dialog folders could not be loaded: %s", type(error).__name__)
             raise DesktopError("Telegram dialog folders could not be loaded") from None
@@ -1675,21 +1728,45 @@ class TelegramDesktopService:
         self.status = self.status.model_copy(update={"state": "AUTH_REQUIRED", "last_error": None})
         return {"code_sent": True, "requires_2fa": False}
 
+    async def _recover_authorized_account(self) -> Any | None:
+        """Recover when Telegram accepted login but the final RPC response was lost."""
+        if self.client is None:
+            return None
+        try:
+            authorized = await asyncio.wait_for(
+                self.client.is_user_authorized(),
+                timeout=8.0,
+            )
+            if not authorized:
+                return None
+            return await asyncio.wait_for(self.client.get_me(), timeout=8.0)
+        except Exception as error:
+            logger.warning(
+                "Telegram authentication recovery failed: %s",
+                type(error).__name__,
+            )
+            return None
+
     async def verify_code(self, code: str) -> dict:
         if self.client is None or not self.login_phone or not self.login_code_hash:
             raise DesktopError("Request a new login code")
         try:
-            await self.client.sign_in(
-                phone=self.login_phone,
-                code=code.strip(),
-                phone_code_hash=self.login_code_hash,
+            account = await asyncio.wait_for(
+                self.client.sign_in(
+                    phone=self.login_phone,
+                    code=code.strip(),
+                    phone_code_hash=self.login_code_hash,
+                ),
+                timeout=20.0,
             )
         except SessionPasswordNeededError:
             return {"code_sent": True, "requires_2fa": True, "authorized": False}
         except Exception as error:
             self._log_auth_error(error)
-            raise self._auth_error(error, "تأیید کد انجام نشد.") from None
-        await self._mark_authorized()
+            account = await self._recover_authorized_account()
+            if account is None:
+                raise self._auth_error(error, "تأیید کد انجام نشد.") from None
+        await self._mark_authorized(account=account, persist_session=True)
         self._clear_login_challenge()
         return {"code_sent": True, "requires_2fa": False, "authorized": True}
 
@@ -1697,11 +1774,16 @@ class TelegramDesktopService:
         if self.client is None:
             raise DesktopError("Request a new login code")
         try:
-            await self.client.sign_in(password=password)
+            account = await asyncio.wait_for(
+                self.client.sign_in(password=password),
+                timeout=20.0,
+            )
         except Exception as error:
             self._log_auth_error(error)
-            raise self._auth_error(error, "تأیید رمز دومرحله‌ای انجام نشد.") from None
-        await self._mark_authorized()
+            account = await self._recover_authorized_account()
+            if account is None:
+                raise self._auth_error(error, "تأیید رمز دومرحله‌ای انجام نشد.") from None
+        await self._mark_authorized(account=account, persist_session=True)
         self._clear_login_challenge()
         return {"code_sent": True, "requires_2fa": False, "authorized": True}
 

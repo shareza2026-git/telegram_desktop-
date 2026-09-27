@@ -4,6 +4,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 
 import { DRAFT_STORAGE_KEY, parseDraftMap, updateDraftMap } from './drafts'
 import { PREFERENCES_STORAGE_KEY, parsePreferences, resolvedTheme, type ClientPreferences } from './preferences'
+import { shouldHoldAuthScreen, canShowCachedWorkspace } from './startup'
 
 type Dialog = {
   chat_id: number
@@ -164,6 +165,31 @@ type AuthResponse = {
   code_sent: boolean
   requires_2fa: boolean
   authorized: boolean
+}
+
+type RelayStatus = {
+  configured: boolean
+  connected: boolean
+  authorized: boolean
+  display_name?: string | null
+  pending: number
+  sent: number
+  failed: number
+  blocked: number
+  delete_pending: number
+  deleted: number
+  delete_failed: number
+  last_delivery_ms?: number | null
+  last_error?: string | null
+}
+
+type RelayChannel = { chat_id: number; title: string; dialog_type?: string }
+type RelayMapping = {
+  id: number
+  source_chat_id: number
+  destination_chat_id: number
+  source_title: string
+  destination_title: string
 }
 
 type AuthStep = 'phone' | 'code' | 'password'
@@ -525,11 +551,26 @@ function App() {
   const [selectedMessageIds, setSelectedMessageIds] = useState<Set<number>>(() => new Set())
   const [bulkBusy, setBulkBusy] = useState<'delete' | 'forward' | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [relayOpen, setRelayOpen] = useState(false)
+  const [relayStatus, setRelayStatus] = useState<RelayStatus | null>(null)
+  const [relayMappings, setRelayMappings] = useState<RelayMapping[]>([])
+  const [relaySources, setRelaySources] = useState<RelayChannel[]>([])
+  const [relayDestinations, setRelayDestinations] = useState<RelayChannel[]>([])
+  const [relayAddOpen, setRelayAddOpen] = useState(false)
+  const [relaySourceDraft, setRelaySourceDraft] = useState('')
+  const [relayDestinationDraft, setRelayDestinationDraft] = useState('')
+  const [relayPhone, setRelayPhone] = useState('')
+  const [relayCode, setRelayCode] = useState('')
+  const [relayPassword, setRelayPassword] = useState('')
+  const [relayAuthStep, setRelayAuthStep] = useState<AuthStep>('phone')
+  const [relayBusy, setRelayBusy] = useState(false)
+  const [relayError, setRelayError] = useState('')
   const [proxySettingsOpen, setProxySettingsOpen] = useState(false)
   const [proxyProbes, setProxyProbes] = useState<ProxyProbe[]>([])
   const [proxyBusy, setProxyBusy] = useState(false)
   const [proxyLinkDraft, setProxyLinkDraft] = useState('')
   const [showProxyAdd, setShowProxyAdd] = useState(false)
+  const [showAuthProxyManager, setShowAuthProxyManager] = useState(false)
   const [mainMenuOpen, setMainMenuOpen] = useState(false)
   const [transportStatus, setTransportStatus] = useState<TransportStatus | null>(null)
   const [deviceSessions, setDeviceSessions] = useState<DeviceSession[]>([])
@@ -795,31 +836,27 @@ function App() {
   }, [totalUnread])
 
   useEffect(() => {
-    if (status?.state !== 'PROXY_ERROR') return
+    if (status?.state !== 'PROXY_ERROR' && !showAuthProxyManager) return
 
     let disposed = false
     const refresh = async () => {
       try {
-        const [transport, probes] = await Promise.all([
-          api<TransportStatus>('/api/telegram/transport'),
-          api<ProxyProbe[]>('/api/telegram/transport/probe')
-        ])
-        if (!disposed) {
-          setTransportStatus(transport)
-          setProxyProbes(probes)
-        }
+        const transport = await api<TransportStatus>('/api/telegram/transport')
+        if (!disposed) setTransportStatus(transport)
+        const probes = await api<ProxyProbe[]>('/api/telegram/transport/probe')
+        if (!disposed) setProxyProbes(probes)
       } catch {
         // Keep the recovery screen usable; the next polling cycle retries.
       }
     }
 
     void refresh()
-    const timer = window.setInterval(() => void refresh(), 5000)
+    const timer = window.setInterval(() => void refresh(), 20000)
     return () => {
       disposed = true
       window.clearInterval(timer)
     }
-  }, [status?.state])
+  }, [status?.state, showAuthProxyManager])
 
   const forwardDialogs = useMemo(() => {
     const value = forwardQuery.trim().toLocaleLowerCase()
@@ -929,6 +966,10 @@ function App() {
       if (packet.type === 'READY') {
         const ready = packet.data as Status
         setStatus(ready)
+        if (ready.authorized) {
+          setError('')
+          setAuthBusy(false)
+        }
         if (ready.authorized && !lastFullSnapshotAt && !isPopoutWindow) {
           void refreshSnapshot()
         }
@@ -938,6 +979,13 @@ function App() {
           void resyncActiveChat()
         } else {
           void refreshSnapshot(true).then(() => resyncActiveChat())
+        }
+      }
+      if (packet.type === 'DIALOGS_REFRESHED' && !isPopoutWindow) {
+        if (snapshotPromise) {
+          void snapshotPromise.then(() => refreshSnapshot(true))
+        } else {
+          void refreshSnapshot(true)
         }
       }
       if (packet.type === 'MESSAGE_NEW' || packet.type === 'MESSAGE_EDITED') {
@@ -1032,8 +1080,8 @@ function App() {
       }
       socket.onclose = () => {
         if (disposed) return
-        setStatus(current => current ? { ...current, connected: false, state: 'CONNECTING' } : current)
-        const delay = Math.min(1000 * 2 ** retryCount, 10000)
+        void refreshStatus()
+        const delay = Math.min(250 * 2 ** Math.min(retryCount, 5), 5000)
         retryCount += 1
         retryTimer = window.setTimeout(connectSocket, delay)
       }
@@ -1182,7 +1230,7 @@ function App() {
       .catch(() => undefined)
 
     return () => controller.abort()
-  }, [selected?.chat_id])
+  }, [selected?.chat_id, status?.authorized])
 
   useEffect(() => {
     if (!selected || editing) return
@@ -1636,11 +1684,27 @@ function App() {
     const nextStatus = await api<Status>('/api/telegram/status')
     setStatus(nextStatus)
     if (nextStatus.authorized && !isPopoutWindow) {
-      const nextDialogs = await api<Dialog[]>('/api/telegram/dialogs')
-      setDialogs(nextDialogs)
-      const nextFolders = await api<DialogFolder[]>('/api/telegram/dialog-folders')
-      setTelegramFolders(nextFolders)
+      void Promise.allSettled([
+        api<Dialog[]>('/api/telegram/dialogs').then(setDialogs),
+        api<DialogFolder[]>('/api/telegram/dialog-folders').then(setTelegramFolders)
+      ])
     }
+  }
+
+  async function recoverLoginResponse(): Promise<boolean> {
+    // A lost response must never trigger another code/password submission.
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      if (attempt) await new Promise(resolve => window.setTimeout(resolve, 300))
+      try {
+        const latest = await api<Status>('/api/telegram/status')
+        setStatus(latest)
+        if (latest.authorized) {
+          setError('')
+          return true
+        }
+      } catch { /* The local backend may briefly be reconnecting. */ }
+    }
+    return false
   }
 
   async function importSession() {
@@ -1718,13 +1782,20 @@ function App() {
     setProxyBusy(true)
     setError('')
     try {
-      await api<{ index: number }>('/api/telegram/transport/add-link', {
+      const added = await api<{ index: number }>('/api/telegram/transport/add-link', {
         method: 'POST',
         body: JSON.stringify({ link })
       })
+      await api('/api/telegram/transport/select', {
+        method: 'POST',
+        body: JSON.stringify({ index: added.index })
+      })
+      setStatus(await api<Status>('/api/telegram/status'))
       setProxyLinkDraft('')
       setShowProxyAdd(false)
-      await refreshProxySettings()
+      setShowAuthProxyManager(false)
+      setAuthNotice('پراکسی ذخیره شد؛ اتصال در پس‌زمینه بررسی می‌شود.')
+      void refreshProxySettings()
     } catch (caught) {
       setError(errorMessage(caught, 'پراکسی اضافه نشد.'))
     } finally {
@@ -1776,7 +1847,7 @@ function App() {
         await refreshAuthorizedState()
       }
     } catch (caught) {
-      setError(errorMessage(caught, 'تأیید کد انجام نشد.'))
+      if (!await recoverLoginResponse()) setError(errorMessage(caught, 'تأیید کد انجام نشد.'))
     } finally {
       setAuthBusy(false)
     }
@@ -1797,7 +1868,7 @@ function App() {
       })
       await refreshAuthorizedState()
     } catch (caught) {
-      setError(errorMessage(caught, 'تأیید رمز دومرحله‌ای انجام نشد.'))
+      if (!await recoverLoginResponse()) setError(errorMessage(caught, 'تأیید رمز دومرحله‌ای انجام نشد.'))
     } finally {
       setAuthBusy(false)
     }
@@ -1816,12 +1887,11 @@ function App() {
   }
 
   async function refreshProxySettings() {
-    const [transport, probes] = await Promise.all([
-      api<TransportStatus>('/api/telegram/transport'),
-      api<ProxyProbe[]>('/api/telegram/transport/probe')
-    ])
+    const transport = await api<TransportStatus>('/api/telegram/transport')
     setTransportStatus(transport)
-    setProxyProbes(probes)
+    void api<ProxyProbe[]>('/api/telegram/transport/probe')
+      .then(setProxyProbes)
+      .catch(() => undefined)
   }
 
   async function openProxySettings() {
@@ -1863,10 +1933,15 @@ function App() {
     setProxyBusy(true)
     setError('')
     try {
-      await api<{ index: number }>('/api/telegram/transport/add-link', {
+      const added = await api<{ index: number }>('/api/telegram/transport/add-link', {
         method: 'POST',
         body: JSON.stringify({ link: value })
       })
+      await api('/api/telegram/transport/select', {
+        method: 'POST',
+        body: JSON.stringify({ index: added.index })
+      })
+      setStatus(await api<Status>('/api/telegram/status'))
       setProxySettingsOpen(true)
       setShowProxyAdd(false)
       setProxyLinkDraft('')
@@ -1879,10 +1954,10 @@ function App() {
   }
 
   function renderMessageText(value: string) {
-    const pattern = /(tg:\/\/(?:proxy|socks)\?[^\s]+|https?:\/\/(?:t\.me|telegram\.me)\/(?:proxy|socks)\?[^\s]+|vless:\/\/[^\s]+)/gi
+    const pattern = /(tg:\/\/(?:proxy|socks)\?[^\s]+|https?:\/\/(?:t\.me|telegram\.me|telegram\.dog)\/(?:proxy|socks)\?[^\s]+|(?:vless|vmess|trojan|ss|socks5|socks4):\/\/[^\s]+)/gi
     const parts = value.split(pattern)
     return parts.map((part, index) => (
-      /^(?:tg:\/\/(?:proxy|socks)\?|https?:\/\/(?:t\.me|telegram\.me)\/(?:proxy|socks)\?|vless:\/\/)/i.test(part)
+      /^(?:tg:\/\/(?:proxy|socks)\?|https?:\/\/(?:t\.me|telegram\.me|telegram\.dog)\/(?:proxy|socks)\?|(?:vless|vmess|trojan|ss|socks5|socks4):\/\/)/i.test(part)
         ? <button className="proxy-link" type="button" key={index} onClick={() => void addProxyLink(part)}>{part}</button>
         : <Fragment key={index}>{part}</Fragment>
     ))
@@ -1903,6 +1978,154 @@ function App() {
       setError(errorMessage(caught, 'وضعیت مسیر اتصال دریافت نشد.'))
     } finally {
       setSettingsBusy(false)
+    }
+  }
+
+  async function loadRelayChannels() {
+    const [sources, destinations] = await Promise.all([
+      api<RelayChannel[]>('/api/telegram/relay/source-channels'),
+      api<RelayChannel[]>('/api/telegram/relay/destination-channels'),
+    ])
+    setRelaySources(sources)
+    setRelayDestinations(destinations)
+  }
+
+  async function refreshRelay() {
+    const [nextStatus, mappings] = await Promise.all([
+      api<RelayStatus>('/api/telegram/relay/status'),
+      api<RelayMapping[]>('/api/telegram/relay/mappings'),
+    ])
+    setRelayStatus(nextStatus)
+    setRelayMappings(mappings)
+    if (nextStatus.authorized) await loadRelayChannels()
+  }
+
+  async function openRelay() {
+    setMainMenuOpen(false)
+    setSettingsOpen(false)
+    setRelayOpen(true)
+    setRelayError('')
+    setRelayBusy(true)
+    try {
+      await refreshRelay()
+    } catch (caught) {
+      setRelayError(errorMessage(caught, 'وضعیت انتقال دریافت نشد.'))
+    } finally {
+      setRelayBusy(false)
+    }
+  }
+
+  async function relaySendCode(event: FormEvent) {
+    event.preventDefault()
+    setRelayBusy(true)
+    setRelayError('')
+    try {
+      await api<AuthResponse>('/api/telegram/relay/auth/send-code', {
+        method: 'POST', body: JSON.stringify({ phone: relayPhone.trim() }),
+      })
+      setRelayAuthStep('code')
+    } catch (caught) {
+      setRelayError(errorMessage(caught, 'ارسال کد اکانت دوم انجام نشد.'))
+    } finally {
+      setRelayBusy(false)
+    }
+  }
+
+  async function relayVerify(event: FormEvent) {
+    event.preventDefault()
+    setRelayBusy(true)
+    setRelayError('')
+    try {
+      const passwordStep = relayAuthStep === 'password'
+      const result = await api<AuthResponse>(
+        '/api/telegram/relay/auth/' + (passwordStep ? 'verify-password' : 'verify-code'),
+        { method: 'POST', body: JSON.stringify(passwordStep ? { password: relayPassword } : { code: relayCode.trim() }) },
+      )
+      if (result.requires_2fa) setRelayAuthStep('password')
+      if (result.authorized) {
+        setRelayCode('')
+        setRelayPassword('')
+        await refreshRelay()
+      }
+    } catch (caught) {
+      // The sign-in RPC can succeed even if its HTTP response was lost.
+      try {
+        const latest = await api<RelayStatus>('/api/telegram/relay/status')
+        if (latest.authorized) {
+          await refreshRelay()
+          setRelayCode('')
+          setRelayPassword('')
+          return
+        }
+      } catch { /* Keep the original login error. */ }
+      setRelayError(errorMessage(caught, 'ورود اکانت دوم انجام نشد.'))
+    } finally {
+      setRelayBusy(false)
+    }
+  }
+
+  async function addRelayMapping(event: FormEvent) {
+    event.preventDefault()
+    if (!relaySourceDraft || !relayDestinationDraft) return
+    setRelayBusy(true)
+    setRelayError('')
+    try {
+      await api<RelayMapping>('/api/telegram/relay/mappings', {
+        method: 'POST',
+        body: JSON.stringify({
+          source_chat_id: Number(relaySourceDraft),
+          destination_chat_id: Number(relayDestinationDraft),
+        }),
+      })
+      setRelayMappings(await api<RelayMapping[]>('/api/telegram/relay/mappings'))
+      setRelayAddOpen(false)
+      setRelaySourceDraft('')
+      setRelayDestinationDraft('')
+    } catch (caught) {
+      setRelayError(errorMessage(caught, 'افزودن انتقال انجام نشد.'))
+    } finally {
+      setRelayBusy(false)
+    }
+  }
+
+  async function removeRelayMapping(id: number) {
+    if (!window.confirm('این انتقال حذف شود؟')) return
+    setRelayBusy(true)
+    try {
+      await api('/api/telegram/relay/mappings/' + id, { method: 'DELETE' })
+      setRelayMappings(current => current.filter(item => item.id !== id))
+    } catch (caught) {
+      setRelayError(errorMessage(caught, 'حذف انتقال انجام نشد.'))
+    } finally {
+      setRelayBusy(false)
+    }
+  }
+
+  async function retryRelayFailed() {
+    setRelayBusy(true)
+    try {
+      await api('/api/telegram/relay/retry-failed', { method: 'POST' })
+      setRelayStatus(await api<RelayStatus>('/api/telegram/relay/status'))
+    } catch (caught) {
+      setRelayError(errorMessage(caught, 'تلاش دوباره انجام نشد.'))
+    } finally {
+      setRelayBusy(false)
+    }
+  }
+
+  async function logoutRelayAccount() {
+    if (!window.confirm('از اکانت دوم خارج شوید؟ نگاشت‌های انتقال هم پاک می‌شوند.')) return
+    setRelayBusy(true)
+    try {
+      setRelayStatus(await api<RelayStatus>('/api/telegram/relay/auth/logout', { method: 'POST' }))
+      setRelayMappings([])
+      setRelaySources([])
+      setRelayDestinations([])
+      setRelayAuthStep('phone')
+    } catch (caught) {
+      setRelayError(errorMessage(caught, 'خروج از اکانت دوم انجام نشد.'))
+    } finally {
+      setRelayBusy(false)
     }
   }
 
@@ -2509,11 +2732,12 @@ function App() {
     }
   }
 
-  if (!status) {
+  const showCachedWorkspace = canShowCachedWorkspace(status, dialogs.length)
+  if (!status || (shouldHoldAuthScreen(status) && !showCachedWorkspace)) {
     return <div className="loading-screen">در حال راه‌اندازی تلگرام…</div>
   }
 
-  if (!status.authorized) {
+  if (!status.authorized && !showCachedWorkspace) {
     return (
       <div className="auth-screen">
         <div className={'auth-card' + (status.state === 'PROXY_ERROR' ? ' proxy-recovery-card' : '')}>
@@ -2571,7 +2795,7 @@ function App() {
                 {runtimeConfigBusy ? 'در حال اتصال…' : 'ذخیره و اتصال'}
               </button>
             </form>
-          ) : status.state === 'PROXY_ERROR' ? (
+          ) : (status.state === 'PROXY_ERROR' || showAuthProxyManager) ? (
             <section className="auth-proxy-manager">
               <div className="auth-proxy-title">
                 <div>
@@ -2683,6 +2907,7 @@ function App() {
               </div>
 
               <div className="auth-proxy-footer">
+                <button type="button" onClick={() => { setShowProxyAdd(false); setShowAuthProxyManager(false) }}>بازگشت به ورود با شماره</button>
                 <button type="button" disabled={proxyBusy} onClick={() => void selectProxy(null)}>
                   {proxyBusy ? 'در حال اتصال…' : 'تلاش مجدد با همه مسیرها'}
                 </button>
@@ -2699,6 +2924,7 @@ function App() {
                   <button className="primary-action auth-submit" type="submit" disabled={authBusy}>
                     {authBusy ? 'در حال ارسال…' : 'دریافت کد تأیید'}
                   </button>
+                  <button className="text-button" type="button" onClick={() => { setShowProxyAdd(true); setShowAuthProxyManager(true) }}>افزودن پراکسی / V2Ray</button>
                 </>
               )}
 
@@ -2779,7 +3005,7 @@ function App() {
               <small dir="ltr">{status.phone ? '+' + status.phone : 'Telegram account'}</small>
               <span className="menu-chevron">⌃</span>
             </section>
-            <button className="menu-item" type="button" onClick={() => menuUnavailable('افزودن حساب')}><i>⊕</i><span>Add Account</span></button>
+            <button className="menu-item" type="button" onClick={() => void openRelay()}><i>⊕</i><span>Add Account</span></button>
             <hr />
             <button className="menu-item" type="button" onClick={openSelfChat}><i>⌑</i><span>Saved Messages</span></button>
             <button className="menu-item" type="button" onClick={openSelfChat}><i>◉</i><span>My Profile</span></button>
@@ -3358,6 +3584,12 @@ function App() {
               </section>
 
               <section className="settings-section">
+                <h3>انتقال به اکانت دوم</h3>
+                <div className="safe-note">اکانت دوم فقط برای ارسال به کانال‌های مقصد استفاده می‌شود؛ پیام‌های آن در این برنامه بارگیری نمی‌شوند.</div>
+                <button className="relay-action" type="button" onClick={() => void openRelay()}>افزودن حساب / مدیریت انتقال‌ها</button>
+              </section>
+
+              <section className="settings-section">
                 <h3>ظاهر</h3>
                 <label className="settings-select">
                   <span>پوسته</span>
@@ -3381,6 +3613,57 @@ function App() {
                 </label>
                 <div className="safe-note">پخش صوت و ویدئو همچنان غیرفعال است. دانلود فایل‌ها فقط با دکمه دانلود انجام می‌شود.</div>
               </section>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {relayOpen && (
+        <div className="settings-backdrop" onMouseDown={() => setRelayOpen(false)}>
+          <section className="settings-modal relay-modal" role="dialog" aria-modal="true" aria-label="انتقال کانال‌ها به اکانت دوم" onMouseDown={event => event.stopPropagation()}>
+            <header>
+              <div><strong>انتقال به اکانت دوم</strong><small>اکانت اول مبدأ · اکانت دوم فقط فرستنده</small></div>
+              <button className="icon-button" type="button" aria-label="بستن انتقال" onClick={() => setRelayOpen(false)}>×</button>
+            </header>
+            <div className="settings-scroll">
+              {relayError && <div className="relay-error" role="alert">{relayError}</div>}
+              {relayBusy && !relayStatus ? <div className="settings-muted">در حال دریافت وضعیت…</div> : null}
+              {relayStatus && !relayStatus.authorized ? (
+                <section className="settings-section">
+                  <h3>ورود اکانت دوم</h3>
+                  <div className="safe-note">سشن این اکانت جداگانه روی همین دستگاه ذخیره می‌شود. شماره، کد و رمز را فقط اینجا وارد کنید.</div>
+                  <form className="relay-form" onSubmit={relayAuthStep === 'phone' ? relaySendCode : relayVerify}>
+                    {relayAuthStep === 'phone' && <label>شماره اکانت دوم<input type="tel" dir="ltr" autoComplete="tel" value={relayPhone} onChange={event => setRelayPhone(event.target.value)} required placeholder="+98…" /></label>}
+                    {relayAuthStep === 'code' && <label>کد تأیید<input type="text" dir="ltr" autoComplete="one-time-code" value={relayCode} onChange={event => setRelayCode(event.target.value)} required /></label>}
+                    {relayAuthStep === 'password' && <label>رمز دومرحله‌ای<input type="password" dir="ltr" autoComplete="current-password" value={relayPassword} onChange={event => setRelayPassword(event.target.value)} required /></label>}
+                    <button className="relay-action" type="submit" disabled={relayBusy}>{relayBusy ? 'لطفاً صبر کنید…' : relayAuthStep === 'phone' ? 'دریافت کد' : 'تأیید و ورود'}</button>
+                    {relayAuthStep !== 'phone' && <button type="button" className="relay-secondary" onClick={() => setRelayAuthStep('phone')}>تغییر شماره</button>}
+                  </form>
+                </section>
+              ) : null}
+              {relayStatus?.authorized && (
+                <>
+                  <section className="settings-section">
+                    <h3>اکانت دوم: {relayStatus.display_name || 'متصل'}</h3>
+                    <div className="safe-note">فقط پیام‌های جدید گروه‌ها یا کانال‌های انتخاب‌شده از اکانت اول به کانال مقصد ارسال می‌شوند. حذف پیام منتقل‌شده نیز وقتی تلگرام رویداد حذف را به برنامه برساند در مقصد اعمال می‌شود. پیام‌های قدیمی منتقل نمی‌شوند.</div>
+                    <div className="relay-counts">در صف ارسال: {relayStatus.pending} · ارسال‌شده: {relayStatus.sent} · حذف‌شده در مقصد: {relayStatus.deleted} · در صف حذف: {relayStatus.delete_pending} · خطا: {relayStatus.failed + relayStatus.delete_failed} · مسدود: {relayStatus.blocked}</div>
+                    {relayStatus.last_delivery_ms != null && <div className="relay-counts">زمان آخرین انتقال از دریافت رویداد تا تأیید ارسال: {relayStatus.last_delivery_ms} میلی‌ثانیه</div>}
+                    {relayStatus.failed + relayStatus.delete_failed > 0 && <button type="button" className="relay-secondary" disabled={relayBusy} onClick={() => void retryRelayFailed()}>تلاش دوباره برای خطاها</button>}
+                    <button type="button" className="relay-secondary" disabled={relayBusy} onClick={() => void refreshRelay().catch(caught => setRelayError(errorMessage(caught, 'بازخوانی انجام نشد.')))}>بازخوانی وضعیت و کانال‌ها</button>
+                  </section>
+                  <section className="settings-section">
+                    <div className="relay-heading"><h3>انتقال‌ها</h3><button type="button" className="relay-plus" aria-label="افزودن انتقال" title="افزودن انتقال" onClick={() => setRelayAddOpen(true)}>+</button></div>
+                    {!relayMappings.length && <div className="settings-muted">هنوز انتقالی ثبت نشده است. با + یک جفت کانال انتخاب کنید.</div>}
+                    {relayMappings.map(mapping => <div className="relay-mapping" key={mapping.id}><span dir="auto">{mapping.source_title} ← {mapping.destination_title}</span><button type="button" disabled={relayBusy} aria-label={'حذف انتقال ' + mapping.source_title} onClick={() => void removeRelayMapping(mapping.id)}>×</button></div>)}
+                    {relayAddOpen && <form className="relay-form" onSubmit={addRelayMapping}>
+                      <label>گروه یا کانال مبدأ از اکانت اول<select value={relaySourceDraft} onChange={event => setRelaySourceDraft(event.target.value)} required><option value="">انتخاب گروه یا کانال مبدأ</option>{relaySources.map(channel => <option value={channel.chat_id} key={channel.chat_id}>{channel.dialog_type === 'channel' ? 'کانال' : 'گروه'} · {channel.title}</option>)}</select></label>
+                      <label>کانال مقصد از اکانت دوم<select value={relayDestinationDraft} onChange={event => setRelayDestinationDraft(event.target.value)} required><option value="">انتخاب کانال مقصد</option>{relayDestinations.map(channel => <option value={channel.chat_id} key={channel.chat_id}>{channel.title}</option>)}</select></label>
+                      <div className="relay-form-actions"><button className="relay-action" type="submit" disabled={relayBusy || !relaySourceDraft || !relayDestinationDraft}>ثبت انتقال</button><button className="relay-secondary" type="button" onClick={() => setRelayAddOpen(false)}>انصراف</button></div>
+                    </form>}
+                  </section>
+                  <section className="settings-section"><button className="danger-action" type="button" disabled={relayBusy} onClick={() => void logoutRelayAccount()}>خروج از اکانت دوم و حذف انتقال‌ها</button></section>
+                </>
+              )}
             </div>
           </section>
         </div>

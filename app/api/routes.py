@@ -14,6 +14,7 @@ from app.models import (
     LoginPhoneRequest,
     ProxyLinkRequest,
     ProxySelectRequest,
+    RelayMappingRequest,
     SendMessageRequest,
     SendRecentMediaRequest,
     SetReactionRequest,
@@ -28,6 +29,10 @@ def service(request: Request):
     return request.app.state.telegram_desktop
 
 
+def relay(request: Request):
+    return request.app.state.telegram_relay
+
+
 def error_response(error: Exception) -> HTTPException:
     return HTTPException(status_code=409, detail=str(error))
 
@@ -35,6 +40,11 @@ def error_response(error: Exception) -> HTTPException:
 @router.get("/api/telegram/status")
 async def status(request: Request):
     return service(request).status
+
+
+@router.get("/api/telegram/delivery-diagnostics")
+async def delivery_diagnostics(request: Request):
+    return service(request).delivery_diagnostics()
 
 
 @router.get("/api/cache/dialogs")
@@ -434,6 +444,82 @@ async def verify_password(values: LoginPasswordRequest, request: Request):
 async def logout(request: Request):
     await service(request).logout()
     return service(request).status
+
+
+@router.get("/api/telegram/relay/status")
+async def relay_status(request: Request):
+    return await relay(request).status()
+
+
+@router.post("/api/telegram/relay/auth/send-code")
+async def relay_send_code(values: LoginPhoneRequest, request: Request):
+    try:
+        return await relay(request).send_code(values.phone)
+    except DesktopError as exc:
+        raise error_response(exc) from None
+
+
+@router.post("/api/telegram/relay/auth/verify-code")
+async def relay_verify_code(values: LoginCodeRequest, request: Request):
+    try:
+        return await relay(request).verify_code(values.code)
+    except DesktopError as exc:
+        raise error_response(exc) from None
+
+
+@router.post("/api/telegram/relay/auth/verify-password")
+async def relay_verify_password(values: LoginPasswordRequest, request: Request):
+    try:
+        return await relay(request).verify_password(values.password)
+    except DesktopError as exc:
+        raise error_response(exc) from None
+
+
+@router.post("/api/telegram/relay/auth/logout")
+async def relay_logout(request: Request):
+    await relay(request).logout()
+    return await relay(request).status()
+
+
+@router.get("/api/telegram/relay/source-channels")
+async def relay_source_channels(request: Request):
+    try:
+        return await relay(request).source_channels()
+    except DesktopError as exc:
+        raise error_response(exc) from None
+
+
+@router.get("/api/telegram/relay/destination-channels")
+async def relay_destination_channels(request: Request):
+    try:
+        return await relay(request).destination_channels()
+    except DesktopError as exc:
+        raise error_response(exc) from None
+
+
+@router.get("/api/telegram/relay/mappings")
+async def relay_mappings(request: Request):
+    return await relay(request).store.mappings()
+
+
+@router.post("/api/telegram/relay/mappings")
+async def relay_add_mapping(values: RelayMappingRequest, request: Request):
+    try:
+        return await relay(request).add_mapping(values.source_chat_id, values.destination_chat_id)
+    except DesktopError as exc:
+        raise error_response(exc) from None
+
+
+@router.delete("/api/telegram/relay/mappings/{mapping_id}")
+async def relay_remove_mapping(mapping_id: int, request: Request):
+    if not await relay(request).remove_mapping(mapping_id):
+        raise HTTPException(status_code=404, detail="Mapping was not found")
+    return {"removed": True}
+
+
+@router.post("/api/telegram/relay/retry-failed")
+async def relay_retry_failed(request: Request):
+    return {"queued": await relay(request).retry_failed()}
 
 
 @router.websocket("/ws/telegram")
