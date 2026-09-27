@@ -247,6 +247,22 @@ button { border: 0; cursor: pointer; }
 .danger-action { margin-top: 10px; padding: 9px 12px; color: #ffb9c0; background: #d85b6822; border: 1px solid #d85b6844; border-radius: 8px; }
 .danger-action:hover { background: #d85b6838; }
 .danger-action:disabled { cursor: wait; opacity: .55; }
+.relay-modal { width: min(620px, 100%); }
+.relay-action { padding: 9px 14px; border: 0; border-radius: 8px; color: #fff; background: #2aabee; cursor: pointer; }
+.relay-action:disabled, .relay-secondary:disabled, .relay-plus:disabled { opacity: .55; cursor: wait; }
+.relay-secondary { padding: 8px 10px; border: 1px solid #365367; border-radius: 8px; color: inherit; background: transparent; cursor: pointer; }
+.relay-error { padding: 10px; border-radius: 8px; color: #fff; background: #b44855; }
+.relay-form { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
+.relay-form label { display: flex; flex-direction: column; gap: 6px; color: #9eb3c2; font-size: 11px; }
+.relay-form input, .relay-form select { width: 100%; min-height: 39px; padding: 8px; border: 1px solid #365367; border-radius: 8px; outline: 0; color: #e8edf5; background: #1d3140; }
+.relay-form input:focus, .relay-form select:focus { border-color: #2aabee; }
+.relay-form-actions, .relay-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.relay-heading h3 { margin: 0; }
+.relay-plus { width: 32px; height: 32px; border: 0; border-radius: 50%; color: #fff; background: #2aabee; font-size: 22px; line-height: 1; cursor: pointer; }
+.relay-mapping { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 0; border-bottom: 1px solid #ffffff16; font-size: 11px; }
+.relay-mapping span { min-width: 0; overflow-wrap: anywhere; }
+.relay-mapping button { border: 0; color: #ffb9c0; background: transparent; font-size: 20px; cursor: pointer; }
+.relay-counts { margin: 12px 0; color: #9eb3c2; font-size: 11px; }
 .settings-row, .settings-select, .settings-toggle { min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid #ffffff0b; }
 .settings-row:last-child, .settings-toggle:last-child { border-bottom: 0; }
 .settings-row span, .settings-select > span { color: #9eb1c0; font-size: 11px; }
@@ -279,6 +295,7 @@ html[data-theme='light'] .settings-modal, html[data-theme='light'] .forward-moda
 html[data-theme='light'] .settings-modal > header { background: #e2ebf0; border-color: #bdcad4; }
 html[data-theme='light'] .settings-section { background: #fff; border-color: #ccd8e0; }
 html[data-theme='light'] .settings-select select { color: #263a49; background: #fff; border-color: #bdcad4; }
+html[data-theme='light'] .relay-form input, html[data-theme='light'] .relay-form select { color: #263a49; background: #fff; border-color: #bdcad4; }
 html[data-theme='light'] .safe-note { color: #607687; background: #60768712; }
 @media (max-width: 1100px) {
   .telegram-shell { grid-template-columns: 280px minmax(0, 1fr); }

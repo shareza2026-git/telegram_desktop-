@@ -167,6 +167,27 @@ type AuthResponse = {
   authorized: boolean
 }
 
+type RelayStatus = {
+  configured: boolean
+  connected: boolean
+  authorized: boolean
+  display_name?: string | null
+  pending: number
+  sent: number
+  failed: number
+  blocked: number
+  last_error?: string | null
+}
+
+type RelayChannel = { chat_id: number; title: string }
+type RelayMapping = {
+  id: number
+  source_chat_id: number
+  destination_chat_id: number
+  source_title: string
+  destination_title: string
+}
+
 type AuthStep = 'phone' | 'code' | 'password'
 type FolderKey = 'all' | 'private' | 'unread' | 'groups' | 'channels' | 'archived' | `folder:${number}`
 type MediaState = 'loading' | 'ready' | 'downloading' | 'done' | 'error'
@@ -526,6 +547,20 @@ function App() {
   const [selectedMessageIds, setSelectedMessageIds] = useState<Set<number>>(() => new Set())
   const [bulkBusy, setBulkBusy] = useState<'delete' | 'forward' | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [relayOpen, setRelayOpen] = useState(false)
+  const [relayStatus, setRelayStatus] = useState<RelayStatus | null>(null)
+  const [relayMappings, setRelayMappings] = useState<RelayMapping[]>([])
+  const [relaySources, setRelaySources] = useState<RelayChannel[]>([])
+  const [relayDestinations, setRelayDestinations] = useState<RelayChannel[]>([])
+  const [relayAddOpen, setRelayAddOpen] = useState(false)
+  const [relaySourceDraft, setRelaySourceDraft] = useState('')
+  const [relayDestinationDraft, setRelayDestinationDraft] = useState('')
+  const [relayPhone, setRelayPhone] = useState('')
+  const [relayCode, setRelayCode] = useState('')
+  const [relayPassword, setRelayPassword] = useState('')
+  const [relayAuthStep, setRelayAuthStep] = useState<AuthStep>('phone')
+  const [relayBusy, setRelayBusy] = useState(false)
+  const [relayError, setRelayError] = useState('')
   const [proxySettingsOpen, setProxySettingsOpen] = useState(false)
   const [proxyProbes, setProxyProbes] = useState<ProxyProbe[]>([])
   const [proxyBusy, setProxyBusy] = useState(false)
@@ -1942,6 +1977,154 @@ function App() {
     }
   }
 
+  async function loadRelayChannels() {
+    const [sources, destinations] = await Promise.all([
+      api<RelayChannel[]>('/api/telegram/relay/source-channels'),
+      api<RelayChannel[]>('/api/telegram/relay/destination-channels'),
+    ])
+    setRelaySources(sources)
+    setRelayDestinations(destinations)
+  }
+
+  async function refreshRelay() {
+    const [nextStatus, mappings] = await Promise.all([
+      api<RelayStatus>('/api/telegram/relay/status'),
+      api<RelayMapping[]>('/api/telegram/relay/mappings'),
+    ])
+    setRelayStatus(nextStatus)
+    setRelayMappings(mappings)
+    if (nextStatus.authorized) await loadRelayChannels()
+  }
+
+  async function openRelay() {
+    setMainMenuOpen(false)
+    setSettingsOpen(false)
+    setRelayOpen(true)
+    setRelayError('')
+    setRelayBusy(true)
+    try {
+      await refreshRelay()
+    } catch (caught) {
+      setRelayError(errorMessage(caught, 'وضعیت انتقال دریافت نشد.'))
+    } finally {
+      setRelayBusy(false)
+    }
+  }
+
+  async function relaySendCode(event: FormEvent) {
+    event.preventDefault()
+    setRelayBusy(true)
+    setRelayError('')
+    try {
+      await api<AuthResponse>('/api/telegram/relay/auth/send-code', {
+        method: 'POST', body: JSON.stringify({ phone: relayPhone.trim() }),
+      })
+      setRelayAuthStep('code')
+    } catch (caught) {
+      setRelayError(errorMessage(caught, 'ارسال کد اکانت دوم انجام نشد.'))
+    } finally {
+      setRelayBusy(false)
+    }
+  }
+
+  async function relayVerify(event: FormEvent) {
+    event.preventDefault()
+    setRelayBusy(true)
+    setRelayError('')
+    try {
+      const passwordStep = relayAuthStep === 'password'
+      const result = await api<AuthResponse>(
+        '/api/telegram/relay/auth/' + (passwordStep ? 'verify-password' : 'verify-code'),
+        { method: 'POST', body: JSON.stringify(passwordStep ? { password: relayPassword } : { code: relayCode.trim() }) },
+      )
+      if (result.requires_2fa) setRelayAuthStep('password')
+      if (result.authorized) {
+        setRelayCode('')
+        setRelayPassword('')
+        await refreshRelay()
+      }
+    } catch (caught) {
+      // The sign-in RPC can succeed even if its HTTP response was lost.
+      try {
+        const latest = await api<RelayStatus>('/api/telegram/relay/status')
+        if (latest.authorized) {
+          await refreshRelay()
+          setRelayCode('')
+          setRelayPassword('')
+          return
+        }
+      } catch { /* Keep the original login error. */ }
+      setRelayError(errorMessage(caught, 'ورود اکانت دوم انجام نشد.'))
+    } finally {
+      setRelayBusy(false)
+    }
+  }
+
+  async function addRelayMapping(event: FormEvent) {
+    event.preventDefault()
+    if (!relaySourceDraft || !relayDestinationDraft) return
+    setRelayBusy(true)
+    setRelayError('')
+    try {
+      await api<RelayMapping>('/api/telegram/relay/mappings', {
+        method: 'POST',
+        body: JSON.stringify({
+          source_chat_id: Number(relaySourceDraft),
+          destination_chat_id: Number(relayDestinationDraft),
+        }),
+      })
+      setRelayMappings(await api<RelayMapping[]>('/api/telegram/relay/mappings'))
+      setRelayAddOpen(false)
+      setRelaySourceDraft('')
+      setRelayDestinationDraft('')
+    } catch (caught) {
+      setRelayError(errorMessage(caught, 'افزودن انتقال انجام نشد.'))
+    } finally {
+      setRelayBusy(false)
+    }
+  }
+
+  async function removeRelayMapping(id: number) {
+    if (!window.confirm('این انتقال حذف شود؟')) return
+    setRelayBusy(true)
+    try {
+      await api('/api/telegram/relay/mappings/' + id, { method: 'DELETE' })
+      setRelayMappings(current => current.filter(item => item.id !== id))
+    } catch (caught) {
+      setRelayError(errorMessage(caught, 'حذف انتقال انجام نشد.'))
+    } finally {
+      setRelayBusy(false)
+    }
+  }
+
+  async function retryRelayFailed() {
+    setRelayBusy(true)
+    try {
+      await api('/api/telegram/relay/retry-failed', { method: 'POST' })
+      setRelayStatus(await api<RelayStatus>('/api/telegram/relay/status'))
+    } catch (caught) {
+      setRelayError(errorMessage(caught, 'تلاش دوباره انجام نشد.'))
+    } finally {
+      setRelayBusy(false)
+    }
+  }
+
+  async function logoutRelayAccount() {
+    if (!window.confirm('از اکانت دوم خارج شوید؟ نگاشت‌های انتقال هم پاک می‌شوند.')) return
+    setRelayBusy(true)
+    try {
+      setRelayStatus(await api<RelayStatus>('/api/telegram/relay/auth/logout', { method: 'POST' }))
+      setRelayMappings([])
+      setRelaySources([])
+      setRelayDestinations([])
+      setRelayAuthStep('phone')
+    } catch (caught) {
+      setRelayError(errorMessage(caught, 'خروج از اکانت دوم انجام نشد.'))
+    } finally {
+      setRelayBusy(false)
+    }
+  }
+
   function menuUnavailable(label: string) {
     setMainMenuOpen(false)
     setError(label + ' در نسخهٔ فعلی هنوز فعال نشده است.')
@@ -2818,7 +3001,7 @@ function App() {
               <small dir="ltr">{status.phone ? '+' + status.phone : 'Telegram account'}</small>
               <span className="menu-chevron">⌃</span>
             </section>
-            <button className="menu-item" type="button" onClick={() => menuUnavailable('افزودن حساب')}><i>⊕</i><span>Add Account</span></button>
+            <button className="menu-item" type="button" onClick={() => void openRelay()}><i>⊕</i><span>Add Account</span></button>
             <hr />
             <button className="menu-item" type="button" onClick={openSelfChat}><i>⌑</i><span>Saved Messages</span></button>
             <button className="menu-item" type="button" onClick={openSelfChat}><i>◉</i><span>My Profile</span></button>
@@ -3397,6 +3580,12 @@ function App() {
               </section>
 
               <section className="settings-section">
+                <h3>انتقال به اکانت دوم</h3>
+                <div className="safe-note">اکانت دوم فقط برای ارسال به کانال‌های مقصد استفاده می‌شود؛ پیام‌های آن در این برنامه بارگیری نمی‌شوند.</div>
+                <button className="relay-action" type="button" onClick={() => void openRelay()}>افزودن حساب / مدیریت انتقال‌ها</button>
+              </section>
+
+              <section className="settings-section">
                 <h3>ظاهر</h3>
                 <label className="settings-select">
                   <span>پوسته</span>
@@ -3420,6 +3609,56 @@ function App() {
                 </label>
                 <div className="safe-note">پخش صوت و ویدئو همچنان غیرفعال است. دانلود فایل‌ها فقط با دکمه دانلود انجام می‌شود.</div>
               </section>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {relayOpen && (
+        <div className="settings-backdrop" onMouseDown={() => setRelayOpen(false)}>
+          <section className="settings-modal relay-modal" role="dialog" aria-modal="true" aria-label="انتقال کانال‌ها به اکانت دوم" onMouseDown={event => event.stopPropagation()}>
+            <header>
+              <div><strong>انتقال به اکانت دوم</strong><small>اکانت اول مبدأ · اکانت دوم فقط فرستنده</small></div>
+              <button className="icon-button" type="button" aria-label="بستن انتقال" onClick={() => setRelayOpen(false)}>×</button>
+            </header>
+            <div className="settings-scroll">
+              {relayError && <div className="relay-error" role="alert">{relayError}</div>}
+              {relayBusy && !relayStatus ? <div className="settings-muted">در حال دریافت وضعیت…</div> : null}
+              {relayStatus && !relayStatus.authorized ? (
+                <section className="settings-section">
+                  <h3>ورود اکانت دوم</h3>
+                  <div className="safe-note">سشن این اکانت جداگانه روی همین دستگاه ذخیره می‌شود. شماره، کد و رمز را فقط اینجا وارد کنید.</div>
+                  <form className="relay-form" onSubmit={relayAuthStep === 'phone' ? relaySendCode : relayVerify}>
+                    {relayAuthStep === 'phone' && <label>شماره اکانت دوم<input type="tel" dir="ltr" autoComplete="tel" value={relayPhone} onChange={event => setRelayPhone(event.target.value)} required placeholder="+98…" /></label>}
+                    {relayAuthStep === 'code' && <label>کد تأیید<input type="text" dir="ltr" autoComplete="one-time-code" value={relayCode} onChange={event => setRelayCode(event.target.value)} required /></label>}
+                    {relayAuthStep === 'password' && <label>رمز دومرحله‌ای<input type="password" dir="ltr" autoComplete="current-password" value={relayPassword} onChange={event => setRelayPassword(event.target.value)} required /></label>}
+                    <button className="relay-action" type="submit" disabled={relayBusy}>{relayBusy ? 'لطفاً صبر کنید…' : relayAuthStep === 'phone' ? 'دریافت کد' : 'تأیید و ورود'}</button>
+                    {relayAuthStep !== 'phone' && <button type="button" className="relay-secondary" onClick={() => setRelayAuthStep('phone')}>تغییر شماره</button>}
+                  </form>
+                </section>
+              ) : null}
+              {relayStatus?.authorized && (
+                <>
+                  <section className="settings-section">
+                    <h3>اکانت دوم: {relayStatus.display_name || 'متصل'}</h3>
+                    <div className="safe-note">فقط پیام‌های جدید کانال‌های انتخاب‌شده از اکانت اول خوانده و با اکانت دوم در مقصد ارسال می‌شوند. پیام‌های قدیمی منتقل نمی‌شوند.</div>
+                    <div className="relay-counts">در صف: {relayStatus.pending} · ارسال‌شده: {relayStatus.sent} · خطا: {relayStatus.failed} · مسدود: {relayStatus.blocked}</div>
+                    {relayStatus.failed > 0 && <button type="button" className="relay-secondary" disabled={relayBusy} onClick={() => void retryRelayFailed()}>تلاش دوباره برای خطاها</button>}
+                    <button type="button" className="relay-secondary" disabled={relayBusy} onClick={() => void refreshRelay().catch(caught => setRelayError(errorMessage(caught, 'بازخوانی انجام نشد.')))}>بازخوانی وضعیت و کانال‌ها</button>
+                  </section>
+                  <section className="settings-section">
+                    <div className="relay-heading"><h3>انتقال‌ها</h3><button type="button" className="relay-plus" aria-label="افزودن انتقال" title="افزودن انتقال" onClick={() => setRelayAddOpen(true)}>+</button></div>
+                    {!relayMappings.length && <div className="settings-muted">هنوز انتقالی ثبت نشده است. با + یک جفت کانال انتخاب کنید.</div>}
+                    {relayMappings.map(mapping => <div className="relay-mapping" key={mapping.id}><span dir="auto">{mapping.source_title} ← {mapping.destination_title}</span><button type="button" disabled={relayBusy} aria-label={'حذف انتقال ' + mapping.source_title} onClick={() => void removeRelayMapping(mapping.id)}>×</button></div>)}
+                    {relayAddOpen && <form className="relay-form" onSubmit={addRelayMapping}>
+                      <label>کانال مبدأ از اکانت اول<select value={relaySourceDraft} onChange={event => setRelaySourceDraft(event.target.value)} required><option value="">انتخاب کانال مبدأ</option>{relaySources.map(channel => <option value={channel.chat_id} key={channel.chat_id}>{channel.title}</option>)}</select></label>
+                      <label>کانال مقصد از اکانت دوم<select value={relayDestinationDraft} onChange={event => setRelayDestinationDraft(event.target.value)} required><option value="">انتخاب کانال مقصد</option>{relayDestinations.map(channel => <option value={channel.chat_id} key={channel.chat_id}>{channel.title}</option>)}</select></label>
+                      <div className="relay-form-actions"><button className="relay-action" type="submit" disabled={relayBusy || !relaySourceDraft || !relayDestinationDraft}>ثبت انتقال</button><button className="relay-secondary" type="button" onClick={() => setRelayAddOpen(false)}>انصراف</button></div>
+                    </form>}
+                  </section>
+                  <section className="settings-section"><button className="danger-action" type="button" disabled={relayBusy} onClick={() => void logoutRelayAccount()}>خروج از اکانت دوم و حذف انتقال‌ها</button></section>
+                </>
+              )}
             </div>
           </section>
         </div>

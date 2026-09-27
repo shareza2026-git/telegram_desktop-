@@ -92,6 +92,7 @@ class TelegramDesktopService:
         self.transfer_bundle = TransferBundle(settings, transport)
         self.sessions = SessionManager(settings)
         self.events = EventBroker()
+        self.relay = None
         self.client: TelegramClient | None = None
         self.route: ProxyRoute | None = None
         self.handlers: list[tuple[Any, Any]] = []
@@ -742,10 +743,14 @@ class TelegramDesktopService:
         if self._is_priority_chat(chat_id):
             await self.events.publish(packet)
             self._persist_message_background(message)
+            if self.relay is not None:
+                await self.relay.enqueue(chat_id, message.message_id)
             return
 
         self._persist_message_background(message)
         await self.events.publish(packet)
+        if self.relay is not None:
+            await self.relay.enqueue(chat_id, message.message_id)
 
     def delivery_diagnostics(self) -> dict:
         return {

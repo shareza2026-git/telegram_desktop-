@@ -171,5 +171,10 @@ class LoginPasswordRequest(BaseModel):
     password: str = Field(min_length=1, max_length=256)
 
 
+class RelayMappingRequest(BaseModel):
+    source_chat_id: int
+    destination_chat_id: int
+
+
 class DesktopError(Exception):
     """Safe application error intended for the local API."""

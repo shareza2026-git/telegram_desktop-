@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import Settings, get_settings
 from app.storage import ChatStore
 from app.telegram.service import TelegramDesktopService
+from app.telegram.relay import RelayService
 from app.telegram.transport import TransportCatalog
 from app.telegram.portable import apply_portable_config
 from app.api.routes import router
@@ -21,12 +22,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await store.initialize()
         transport = TransportCatalog(active_settings.telegram_proxy_config)
         desktop = TelegramDesktopService(active_settings, store, transport)
+        relay = RelayService(active_settings, desktop, transport)
+        desktop.relay = relay
         application.state.chat_store = store
         application.state.telegram_desktop = desktop
-        await desktop.start()
+        application.state.telegram_relay = relay
         try:
+            await relay.start()
+            await desktop.start()
             yield
         finally:
+            await relay.close()
             await desktop.close()
             await store.close()
 
@@ -40,7 +46,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "https://tauri.localhost",
             "tauri://localhost",
         ],
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "DELETE"],
         allow_headers=["Content-Type"],
     )
     application.include_router(router)
