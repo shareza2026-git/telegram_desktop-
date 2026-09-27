@@ -34,6 +34,11 @@ frontend/src-tauri/binaries/
 build/
 dist/
 *.spec
+.build-temp/
+release/
+frontend/src-tauri/tauri.private.conf.json
+telegram-api.env
+telegram-proxies.json
 
 # Local pytest run directories
 .pytest-devices/

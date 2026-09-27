@@ -300,6 +300,12 @@ class TelegramDesktopService:
                             "active_route": route.display_name if route else "direct",
                         }
                     )
+                # Retry the last working route first on the next launch, instead
+                # of paying the timeout of the same unavailable route again.
+                try:
+                    self.transport.set_selected_index(routes.index(route) + 1 if route else 0)
+                except OSError:
+                    logger.warning("Could not save the working route preference")
                 return
             except Exception as error:
                 route_name = route.display_name if route is not None else "direct"

@@ -4,7 +4,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 
 import { DRAFT_STORAGE_KEY, parseDraftMap, updateDraftMap } from './drafts'
 import { PREFERENCES_STORAGE_KEY, parsePreferences, resolvedTheme, type ClientPreferences } from './preferences'
-import { shouldHoldAuthScreen } from './startup'
+import { shouldHoldAuthScreen, canShowCachedWorkspace } from './startup'
 
 type Dialog = {
   chat_id: number
@@ -1037,7 +1037,7 @@ function App() {
       socket.onclose = () => {
         if (disposed) return
         void refreshStatus()
-        const delay = Math.min(1000 * 2 ** retryCount, 10000)
+        const delay = Math.min(250 * 2 ** Math.min(retryCount, 5), 5000)
         retryCount += 1
         retryTimer = window.setTimeout(connectSocket, delay)
       }
@@ -1186,7 +1186,7 @@ function App() {
       .catch(() => undefined)
 
     return () => controller.abort()
-  }, [selected?.chat_id])
+  }, [selected?.chat_id, status?.authorized])
 
   useEffect(() => {
     if (!selected || editing) return
@@ -2521,11 +2521,12 @@ function App() {
     }
   }
 
-  if (!status || shouldHoldAuthScreen(status)) {
+  const showCachedWorkspace = canShowCachedWorkspace(status, dialogs.length)
+  if (!status || (shouldHoldAuthScreen(status) && !showCachedWorkspace)) {
     return <div className="loading-screen">در حال راه‌اندازی تلگرام…</div>
   }
 
-  if (!status.authorized) {
+  if (!status.authorized && !showCachedWorkspace) {
     return (
       <div className="auth-screen">
         <div className={'auth-card' + (status.state === 'PROXY_ERROR' ? ' proxy-recovery-card' : '')}>
