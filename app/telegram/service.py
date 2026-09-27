@@ -251,12 +251,10 @@ class TelegramDesktopService:
             preferred = routes[selected - 1]
             candidates.append(preferred)
             candidates.extend(route for index, route in enumerate(routes, 1) if index != selected)
-            if self.settings.telegram_allow_direct:
-                candidates.append(None)
+            candidates.append(None)
         else:
             candidates.extend(routes)
-            if self.settings.telegram_allow_direct:
-                candidates.append(None)
+            candidates.append(None)
         if not candidates:
             self.status = self.status.model_copy(
                 update={"state": "PROXY_ERROR", "last_error": "No Telegram route is configured"}
@@ -334,7 +332,9 @@ class TelegramDesktopService:
 
         target = self.settings.data_root / "settings.env"
         target.parent.mkdir(parents=True, exist_ok=True)
-        direct_allowed = self.settings.telegram_allow_direct or not self.transport.load()
+        # Keep direct as a durable fallback after a proxy is configured. This
+        # avoids forcing users to re-enter a route when it is temporarily down.
+        direct_allowed = True
         target.write_text(
             f"TELEGRAM_API_ID={values.api_id}\n"
             f"TELEGRAM_API_HASH={key}\n"
@@ -1686,20 +1686,44 @@ class TelegramDesktopService:
         self.status = self.status.model_copy(update={"state": "AUTH_REQUIRED", "last_error": None})
         return {"code_sent": True, "requires_2fa": False}
 
+    async def _recover_authorized_account(self) -> Any | None:
+        """Recover when Telegram accepted login but the final RPC response was lost."""
+        if self.client is None:
+            return None
+        try:
+            authorized = await asyncio.wait_for(
+                self.client.is_user_authorized(),
+                timeout=8.0,
+            )
+            if not authorized:
+                return None
+            return await asyncio.wait_for(self.client.get_me(), timeout=8.0)
+        except Exception as error:
+            logger.warning(
+                "Telegram authentication recovery failed: %s",
+                type(error).__name__,
+            )
+            return None
+
     async def verify_code(self, code: str) -> dict:
         if self.client is None or not self.login_phone or not self.login_code_hash:
             raise DesktopError("Request a new login code")
         try:
-            account = await self.client.sign_in(
-                phone=self.login_phone,
-                code=code.strip(),
-                phone_code_hash=self.login_code_hash,
+            account = await asyncio.wait_for(
+                self.client.sign_in(
+                    phone=self.login_phone,
+                    code=code.strip(),
+                    phone_code_hash=self.login_code_hash,
+                ),
+                timeout=20.0,
             )
         except SessionPasswordNeededError:
             return {"code_sent": True, "requires_2fa": True, "authorized": False}
         except Exception as error:
             self._log_auth_error(error)
-            raise self._auth_error(error, "تأیید کد انجام نشد.") from None
+            account = await self._recover_authorized_account()
+            if account is None:
+                raise self._auth_error(error, "تأیید کد انجام نشد.") from None
         await self._mark_authorized(account=account, persist_session=True)
         self._clear_login_challenge()
         return {"code_sent": True, "requires_2fa": False, "authorized": True}
@@ -1708,10 +1732,15 @@ class TelegramDesktopService:
         if self.client is None:
             raise DesktopError("Request a new login code")
         try:
-            account = await self.client.sign_in(password=password)
+            account = await asyncio.wait_for(
+                self.client.sign_in(password=password),
+                timeout=20.0,
+            )
         except Exception as error:
             self._log_auth_error(error)
-            raise self._auth_error(error, "تأیید رمز دومرحله‌ای انجام نشد.") from None
+            account = await self._recover_authorized_account()
+            if account is None:
+                raise self._auth_error(error, "تأیید رمز دومرحله‌ای انجام نشد.") from None
         await self._mark_authorized(account=account, persist_session=True)
         self._clear_login_challenge()
         return {"code_sent": True, "requires_2fa": False, "authorized": True}

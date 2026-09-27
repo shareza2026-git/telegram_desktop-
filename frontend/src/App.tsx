@@ -4,6 +4,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 
 import { DRAFT_STORAGE_KEY, parseDraftMap, updateDraftMap } from './drafts'
 import { PREFERENCES_STORAGE_KEY, parsePreferences, resolvedTheme, type ClientPreferences } from './preferences'
+import { shouldHoldAuthScreen } from './startup'
 
 type Dialog = {
   chat_id: number
@@ -2520,7 +2521,7 @@ function App() {
     }
   }
 
-  if (!status) {
+  if (!status || shouldHoldAuthScreen(status)) {
     return <div className="loading-screen">در حال راه‌اندازی تلگرام…</div>
   }
 
