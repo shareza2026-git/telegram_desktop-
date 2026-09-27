@@ -37,6 +37,11 @@ async def status(request: Request):
     return service(request).status
 
 
+@router.get("/api/telegram/delivery-diagnostics")
+async def delivery_diagnostics(request: Request):
+    return service(request).delivery_diagnostics()
+
+
 @router.get("/api/cache/dialogs")
 async def cached_dialogs(request: Request):
     return await request.app.state.chat_store.list_dialogs()

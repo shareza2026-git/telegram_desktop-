@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.models import ClientStatus
-from app.telegram.service import TelegramDesktopService
+from app.telegram.service import EventBroker, TelegramDesktopService
 
 
 class SignedInClient:
@@ -39,6 +39,7 @@ async def test_login_does_not_wait_for_another_get_me(monkeypatch, method, crede
     service = TelegramDesktopService.__new__(TelegramDesktopService)
     service.client = client
     service.route = None
+    service.events = EventBroker()
     service.login_phone = "+10000000000"
     service.login_code_hash = "challenge"
     service.status = ClientStatus(configured=True, connected=True, state="AUTH_REQUIRED")
@@ -61,6 +62,7 @@ async def test_login_recovers_when_telegram_authorized_before_response_was_lost(
     service = TelegramDesktopService.__new__(TelegramDesktopService)
     service.client = client
     service.route = None
+    service.events = EventBroker()
     service.login_phone = "+10000000000"
     service.login_code_hash = "challenge"
     service.status = ClientStatus(configured=True, connected=True, state="AUTH_REQUIRED")

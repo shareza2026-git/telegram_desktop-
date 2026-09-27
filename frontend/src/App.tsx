@@ -531,6 +531,7 @@ function App() {
   const [proxyBusy, setProxyBusy] = useState(false)
   const [proxyLinkDraft, setProxyLinkDraft] = useState('')
   const [showProxyAdd, setShowProxyAdd] = useState(false)
+  const [showAuthProxyManager, setShowAuthProxyManager] = useState(false)
   const [mainMenuOpen, setMainMenuOpen] = useState(false)
   const [transportStatus, setTransportStatus] = useState<TransportStatus | null>(null)
   const [deviceSessions, setDeviceSessions] = useState<DeviceSession[]>([])
@@ -796,7 +797,7 @@ function App() {
   }, [totalUnread])
 
   useEffect(() => {
-    if (status?.state !== 'PROXY_ERROR') return
+    if (status?.state !== 'PROXY_ERROR' && !showAuthProxyManager) return
 
     let disposed = false
     const refresh = async () => {
@@ -816,7 +817,7 @@ function App() {
       disposed = true
       window.clearInterval(timer)
     }
-  }, [status?.state])
+  }, [status?.state, showAuthProxyManager])
 
   const forwardDialogs = useMemo(() => {
     const value = forwardQuery.trim().toLocaleLowerCase()
@@ -926,6 +927,10 @@ function App() {
       if (packet.type === 'READY') {
         const ready = packet.data as Status
         setStatus(ready)
+        if (ready.authorized) {
+          setError('')
+          setAuthBusy(false)
+        }
         if (ready.authorized && !lastFullSnapshotAt && !isPopoutWindow) {
           void refreshSnapshot()
         }
@@ -1647,6 +1652,22 @@ function App() {
     }
   }
 
+  async function recoverLoginResponse(): Promise<boolean> {
+    // A lost response must never trigger another code/password submission.
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      if (attempt) await new Promise(resolve => window.setTimeout(resolve, 300))
+      try {
+        const latest = await api<Status>('/api/telegram/status')
+        setStatus(latest)
+        if (latest.authorized) {
+          setError('')
+          return true
+        }
+      } catch { /* The local backend may briefly be reconnecting. */ }
+    }
+    return false
+  }
+
   async function importSession() {
     setImporting(true)
     setError('')
@@ -1733,7 +1754,9 @@ function App() {
       setStatus(await api<Status>('/api/telegram/status'))
       setProxyLinkDraft('')
       setShowProxyAdd(false)
-      await refreshProxySettings()
+      setShowAuthProxyManager(false)
+      setAuthNotice('پراکسی ذخیره شد؛ اتصال در پس‌زمینه بررسی می‌شود.')
+      void refreshProxySettings()
     } catch (caught) {
       setError(errorMessage(caught, 'پراکسی اضافه نشد.'))
     } finally {
@@ -1785,7 +1808,7 @@ function App() {
         await refreshAuthorizedState()
       }
     } catch (caught) {
-      setError(errorMessage(caught, 'تأیید کد انجام نشد.'))
+      if (!await recoverLoginResponse()) setError(errorMessage(caught, 'تأیید کد انجام نشد.'))
     } finally {
       setAuthBusy(false)
     }
@@ -1806,7 +1829,7 @@ function App() {
       })
       await refreshAuthorizedState()
     } catch (caught) {
-      setError(errorMessage(caught, 'تأیید رمز دومرحله‌ای انجام نشد.'))
+      if (!await recoverLoginResponse()) setError(errorMessage(caught, 'تأیید رمز دومرحله‌ای انجام نشد.'))
     } finally {
       setAuthBusy(false)
     }
@@ -1827,8 +1850,9 @@ function App() {
   async function refreshProxySettings() {
     const transport = await api<TransportStatus>('/api/telegram/transport')
     setTransportStatus(transport)
-    const probes = await api<ProxyProbe[]>('/api/telegram/transport/probe')
-    setProxyProbes(probes)
+    void api<ProxyProbe[]>('/api/telegram/transport/probe')
+      .then(setProxyProbes)
+      .catch(() => undefined)
   }
 
   async function openProxySettings() {
@@ -2584,7 +2608,7 @@ function App() {
                 {runtimeConfigBusy ? 'در حال اتصال…' : 'ذخیره و اتصال'}
               </button>
             </form>
-          ) : status.state === 'PROXY_ERROR' ? (
+          ) : (status.state === 'PROXY_ERROR' || showAuthProxyManager) ? (
             <section className="auth-proxy-manager">
               <div className="auth-proxy-title">
                 <div>
@@ -2696,6 +2720,7 @@ function App() {
               </div>
 
               <div className="auth-proxy-footer">
+                <button type="button" onClick={() => { setShowProxyAdd(false); setShowAuthProxyManager(false) }}>بازگشت به ورود با شماره</button>
                 <button type="button" disabled={proxyBusy} onClick={() => void selectProxy(null)}>
                   {proxyBusy ? 'در حال اتصال…' : 'تلاش مجدد با همه مسیرها'}
                 </button>
@@ -2712,6 +2737,7 @@ function App() {
                   <button className="primary-action auth-submit" type="submit" disabled={authBusy}>
                     {authBusy ? 'در حال ارسال…' : 'دریافت کد تأیید'}
                   </button>
+                  <button className="text-button" type="button" onClick={() => { setShowProxyAdd(true); setShowAuthProxyManager(true) }}>افزودن پراکسی / V2Ray</button>
                 </>
               )}
 

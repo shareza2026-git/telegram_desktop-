@@ -8,7 +8,7 @@ from typing import Any
 from pydantic import SecretStr
 
 from telethon import TelegramClient, events, functions, types, utils
-from telethon.sessions import MemorySession
+from telethon.sessions import MemorySession, SQLiteSession
 from telethon.errors import (
     FloodWaitError,
     PasswordHashInvalidError,
@@ -114,8 +114,12 @@ class TelegramDesktopService:
         self._message_persist_worker: asyncio.Task | None = None
         self._connection_monitor: asyncio.Task | None = None
         self._initial_connect_task: asyncio.Task | None = None
+        self._proxy_switch_task: asyncio.Task | None = None
+        self._proxy_switch_generation = 0
         self._recent_message_chat: dict[int, int] = {}
         self._session_metadata: dict = {}
+        self._incoming_messages = 0
+        self._last_telegram_lag_seconds: float | None = None
         info = self.sessions.info()
         self.status = ClientStatus(
             configured=settings.telegram_configured,
@@ -434,6 +438,8 @@ class TelegramDesktopService:
             account = await asyncio.wait_for(self.client.get_me(), timeout=8.0)
         if persist_session and isinstance(self.client.session, MemorySession):
             await asyncio.to_thread(self.sessions.persist_runtime_session, self.client.session)
+        elif isinstance(self.client.session, SQLiteSession):
+            await asyncio.to_thread(self.client.session.save)
         self._register_handlers()
         self.status = self.status.model_copy(
             update={
@@ -448,8 +454,10 @@ class TelegramDesktopService:
                 "client_session_exists": True,
             }
         )
+        await self.events.publish({"type": "READY", "data": self.status.model_dump(mode="json")})
         try:
-            sync_account_to_portable(
+            await asyncio.to_thread(
+                sync_account_to_portable,
                 self.settings,
                 user_id=int(account.id),
                 display_name=self.status.display_name,
@@ -457,7 +465,7 @@ class TelegramDesktopService:
             )
         except Exception:
             logger.warning("Portable account bundle could not be updated", exc_info=True)
-        self.transfer_bundle.sync(include_session=True)
+        await asyncio.to_thread(self.transfer_bundle.sync, include_session=True)
 
     def _register_handlers(self) -> None:
         if self.client is None or self.handlers:
@@ -720,6 +728,10 @@ class TelegramDesktopService:
             return
         chat_id = int(event.chat_id)
         message = self._message_model(event.message, chat_id)
+        self._incoming_messages += 1
+        self._last_telegram_lag_seconds = max(
+            0.0, (datetime.now(timezone.utc) - message.date).total_seconds()
+        )
         self._remember_message_chat(message.message_id, chat_id)
         self._update_dialog_snapshot_from_message(message)
         packet = {
@@ -734,6 +746,18 @@ class TelegramDesktopService:
 
         self._persist_message_background(message)
         await self.events.publish(packet)
+
+    def delivery_diagnostics(self) -> dict:
+        return {
+            "connected": self.status.connected,
+            "authorized": self.status.authorized,
+            "incoming_messages": self._incoming_messages,
+            "last_telegram_lag_seconds": (
+                round(self._last_telegram_lag_seconds, 1)
+                if self._last_telegram_lag_seconds is not None else None
+            ),
+            "frontend_connections": len(self.events._subscribers),
+        }
 
     async def _on_edit(self, event: Any) -> None:
         if event.chat_id is None:
@@ -865,7 +889,7 @@ class TelegramDesktopService:
     async def add_proxy_link(self, link: str) -> dict:
         try:
             result = self.transport.add_proxy_link(link)
-            self.transfer_bundle.sync(include_session=self.status.authorized)
+            await asyncio.to_thread(self.transfer_bundle.sync, include_session=False)
             return result
         except ValueError:
             raise
@@ -877,26 +901,31 @@ class TelegramDesktopService:
         if not self.settings.telegram_configured:
             self.transport.set_selected_index(index)
             return {"selected_index": index, "active_route": None, "connected": False}
-        async with self._lifecycle_lock:
-            self.transport.set_selected_index(index)
-            client = self.client
-            self._unregister_handlers()
-            if client is not None:
-                with suppress(Exception):
-                    await client.disconnect()
-            self.client = None
-            if self.route is not None:
-                with suppress(Exception):
-                    await self.route.deactivate()
-            self.route = None
-            await self._connect()
-            self.transfer_bundle.sync(include_session=self.status.authorized)
-            await self.events.publish({"type": "READY", "data": self.status.model_dump(mode="json")})
-        return {
-            "selected_index": index,
-            "active_route": self.status.active_route,
-            "connected": self.status.connected,
-        }
+        self.transport.set_selected_index(index)
+        self._proxy_switch_generation += 1
+        if self._proxy_switch_task is None or self._proxy_switch_task.done():
+            self._proxy_switch_task = asyncio.create_task(self._apply_proxy_selection())
+        return {"selected_index": index, "active_route": self.status.active_route, "connected": self.status.connected}
+
+    async def _apply_proxy_selection(self) -> None:
+        while True:
+            generation = self._proxy_switch_generation
+            async with self._lifecycle_lock:
+                client = self.client
+                self._unregister_handlers()
+                if client is not None:
+                    with suppress(Exception):
+                        await client.disconnect()
+                self.client = None
+                if self.route is not None:
+                    with suppress(Exception):
+                        await self.route.deactivate()
+                self.route = None
+                await self._connect()
+                await asyncio.to_thread(self.transfer_bundle.sync, include_session=False)
+                await self.events.publish({"type": "READY", "data": self.status.model_dump(mode="json")})
+            if self._proxy_switch_generation == generation:
+                return
 
     async def probe_proxies(self) -> list[dict]:
         routes = self.transport.load()
