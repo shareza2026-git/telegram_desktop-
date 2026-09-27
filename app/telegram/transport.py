@@ -125,7 +125,9 @@ class TransportCatalog:
     def selected_index(self) -> int | None:
         path = self._state_path()
         if not path.exists():
-            return None
+            # A copied installed folder has no AppData state yet. Restore the
+            # last working route from its portable proxy bundle on first run.
+            path = self.path
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
             raw = value.get("selected_index")

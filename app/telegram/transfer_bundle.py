@@ -36,7 +36,10 @@ class TransferBundle:
         (root / "telegram-api.env").write_text(text, encoding="utf-8")
 
     def _write_proxies(self, root: Path) -> None:
-        payload = {"proxies": self.transport.export_records()}
+        payload = {
+            "proxies": self.transport.export_records(),
+            "selected_index": self.transport.selected_index(),
+        }
         (root / "telegram-proxies.json").write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
