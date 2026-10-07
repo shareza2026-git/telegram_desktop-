@@ -14,6 +14,7 @@ import socket
 import subprocess
 import time
 from urllib.parse import parse_qs, unquote, urlsplit
+from typing import Any
 import uuid
 
 
@@ -40,6 +41,11 @@ class VlessRealityProfile:
     short_id: str = field(repr=False)
     flow: str = ""
     display_name: str = ""
+    transport: str = "raw"
+    xhttp_path: str = ""
+    xhttp_host: str = ""
+    xhttp_mode: str = ""
+    xhttp_extra: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
 def _required(query: dict[str, list[str]], name: str) -> str:
@@ -83,13 +89,31 @@ def parse_vless_uri(uri: str) -> VlessRealityProfile:
             or "none"
         )
         flow = (query.get("flow") or [""])[0].strip()
+        if network in {"tcp", "raw"}:
+            transport = "raw"
+        elif network in {"xhttp", "splithttp"}:
+            transport = "xhttp"
+        else:
+            raise VlessProfileError("PROFILE_UNSUPPORTED")
+
+        xhttp_path = (query.get("path") or [""])[0].strip()
+        xhttp_host = (query.get("host") or [""])[0].strip()
+        xhttp_mode = (query.get("mode") or [""])[0].strip()
+        xhttp_extra: dict[str, Any] = {}
+        raw_extra = (query.get("extra") or [""])[0].strip()
+        if raw_extra:
+            try:
+                parsed_extra = json.loads(raw_extra)
+            except json.JSONDecodeError:
+                raise VlessProfileError("PROFILE_INVALID") from None
+            if not isinstance(parsed_extra, dict):
+                raise VlessProfileError("PROFILE_INVALID")
+            xhttp_extra = parsed_extra
         if encryption != "none":
             raise VlessProfileError("PROFILE_UNSUPPORTED")
         if security != "reality":
             raise VlessProfileError("PROFILE_UNSUPPORTED")
-        if network not in {"tcp", "raw"}:
-            raise VlessProfileError("PROFILE_UNSUPPORTED")
-        if header_type != "none":
+        if transport == "raw" and header_type != "none":
             raise VlessProfileError("PROFILE_UNSUPPORTED")
         if flow not in {"", "xtls-rprx-vision"}:
             raise VlessProfileError("PROFILE_UNSUPPORTED")
@@ -112,6 +136,11 @@ def parse_vless_uri(uri: str) -> VlessRealityProfile:
             short_id=short_id.lower(),
             flow=flow,
             display_name=unquote(parts.fragment),
+            transport=transport,
+            xhttp_path=xhttp_path,
+            xhttp_host=xhttp_host,
+            xhttp_mode=xhttp_mode,
+            xhttp_extra=xhttp_extra,
         )
     except VlessProfileError:
         raise
@@ -126,6 +155,29 @@ def _allocate_local_port() -> int:
 
 
 def _xray_config(profile: VlessRealityProfile, port: int) -> dict:
+    stream_settings: dict[str, Any] = {
+        "method": profile.transport,
+        "security": "reality",
+        "realitySettings": {
+            "serverName": profile.sni,
+            "fingerprint": profile.fingerprint,
+            "password": profile.reality_public_key,
+            "shortId": profile.short_id,
+        },
+    }
+    if profile.transport == "xhttp":
+        xhttp_settings: dict[str, Any] = {
+            "path": profile.xhttp_path or "/",
+            "mode": profile.xhttp_mode or "auto",
+        }
+        if profile.xhttp_host:
+            xhttp_settings["host"] = profile.xhttp_host
+        if profile.xhttp_extra:
+            xhttp_settings["extra"] = profile.xhttp_extra
+        stream_settings["xhttpSettings"] = xhttp_settings
+    else:
+        stream_settings["rawSettings"] = {"header": {"type": "none"}}
+
     return {
         "log": {"loglevel": "warning"},
         "inbounds": [{
@@ -145,17 +197,7 @@ def _xray_config(profile: VlessRealityProfile, port: int) -> dict:
                     **({"flow": profile.flow} if profile.flow else {}),
                 }],
             }]},
-            "streamSettings": {
-                "method": "raw",
-                "security": "reality",
-                "rawSettings": {"header": {"type": "none"}},
-                "realitySettings": {
-                    "serverName": profile.sni,
-                    "fingerprint": profile.fingerprint,
-                    "password": profile.reality_public_key,
-                    "shortId": profile.short_id,
-                },
-            },
+            "streamSettings": stream_settings,
         }],
     }
 

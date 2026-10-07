@@ -242,6 +242,45 @@ class TransportCatalog:
                 return {"index": index, "name": route.display_name, "type": route.type, "host": record["host"], "port": route.port}
         raise ValueError("Proxy could not be added")
 
+    def add_proxy_bundle(self, text: str) -> dict:
+        links: list[str] = []
+        for raw_line in text.splitlines():
+            candidate = raw_line.strip()
+            while candidate.startswith(("`", "\\")):
+                candidate = candidate[1:].lstrip()
+            while candidate.endswith(("`", "\\")):
+                candidate = candidate[:-1].rstrip()
+            if not candidate:
+                continue
+            lowered = candidate.casefold()
+            if (
+                lowered.startswith("vless://")
+                or lowered.startswith("tg://proxy?")
+                or lowered.startswith("tg://socks?")
+                or lowered.startswith("https://t.me/proxy?")
+                or lowered.startswith("https://t.me/socks?")
+                or lowered.startswith("https://telegram.me/proxy?")
+                or lowered.startswith("https://telegram.me/socks?")
+            ):
+                links.append(candidate)
+
+        if not links:
+            single = text.strip().strip("`\\").strip()
+            if single:
+                links = [single]
+
+        added: list[dict] = []
+        failed = 0
+        for link in links:
+            try:
+                added.append(self.add_proxy_link(link))
+            except ValueError:
+                failed += 1
+
+        if not added:
+            raise ValueError("No supported proxy links could be added")
+        return {"added": added, "failed": failed}
+
     def load(self) -> list[ProxyRoute]:
         user_records = self._load_user_records()
         if not self.path.exists():

@@ -551,7 +551,7 @@ html, body, button, input, select, textarea {
 .chat-header {
   height: 47px;
   min-height: 47px;
-  padding: 0 10px;
+  padding: 9px 10px;
   gap: 9px;
 }
 .chat-header .avatar.large {
@@ -1047,11 +1047,11 @@ body.sidebar-resizing * {
   display: flex;
   gap: 7px;
 }
-.proxy-add-form input {
+.proxy-add-form textarea {
   min-width: 0;
-  height: 38px;
+  min-height: 92px;
   flex: 1;
-  padding: 0 10px;
+  padding: 9px 10px;
   border: 1px solid #cfd6da;
   border-radius: 4px;
   background: #fff;
@@ -1501,9 +1501,9 @@ body.sidebar-resizing * {
   gap: 7px;
   margin: 2px 0 4px;
 }
-.auth-proxy-add input {
+.auth-proxy-add textarea {
   min-width: 0;
-  height: 39px;
+  min-height: 86px;
   flex: 1;
   padding: 0 10px;
   outline: 0;
@@ -1513,7 +1513,7 @@ body.sidebar-resizing * {
   border-radius: 9px;
   font-size: 10px;
 }
-.auth-proxy-add input:focus {
+.auth-proxy-add textarea:focus {
   border-color: #2aabee;
   box-shadow: 0 0 0 3px #2aabee1f;
 }
@@ -1796,4 +1796,11 @@ html.popout-window #root {
   .popout-title-copy small {
     max-width: 150px;
   }
+}
+
+.auth-proxy-add textarea,
+.proxy-add-form textarea {
+  resize: vertical;
+  line-height: 1.45;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
 }

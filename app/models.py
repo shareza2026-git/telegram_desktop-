@@ -142,6 +142,10 @@ class ProxyLinkRequest(BaseModel):
     link: str
 
 
+class ProxyBundleRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=250_000)
+
+
 class ProxySelectRequest(BaseModel):
     index: int | None = None
 

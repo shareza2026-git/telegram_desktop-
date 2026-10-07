@@ -873,6 +873,14 @@ class TelegramDesktopService:
         except ValueError:
             raise
 
+    async def add_proxy_bundle(self, text: str) -> dict:
+        try:
+            result = self.transport.add_proxy_bundle(text)
+            self.transfer_bundle.sync(include_session=self.status.authorized)
+            return result
+        except ValueError:
+            raise
+
     async def select_proxy(self, index: int | None) -> dict:
         routes = self.transport.load()
         if index == 0 and not self.settings.telegram_allow_direct:

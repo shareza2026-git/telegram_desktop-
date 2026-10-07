@@ -12,6 +12,7 @@ from app.models import (
     LoginCodeRequest,
     LoginPasswordRequest,
     LoginPhoneRequest,
+    ProxyBundleRequest,
     ProxyLinkRequest,
     ProxySelectRequest,
     SendMessageRequest,
@@ -73,6 +74,14 @@ async def transport(request: Request):
 async def transport_add_link(values: ProxyLinkRequest, request: Request):
     try:
         return await service(request).add_proxy_link(values.link)
+    except (DesktopError, ValueError) as exc:
+        raise error_response(exc) from None
+
+
+@router.post("/api/telegram/transport/add-bundle")
+async def transport_add_bundle(values: ProxyBundleRequest, request: Request):
+    try:
+        return await service(request).add_proxy_bundle(values.text)
     except (DesktopError, ValueError) as exc:
         raise error_response(exc) from None
 
