@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 
 from app.telegram.transport import TransportCatalog
+from app.telegram.xray import parse_vless_uri
 
 
 def test_transport_snapshot_redacts_host_and_never_returns_secrets(tmp_path):
@@ -88,3 +89,21 @@ def test_add_proxy_link_accepts_vless_reality_and_rebinds_xray_paths(tmp_path):
     assert route.v2ray_name == "Portable"
     assert route.xray_core_path == Path(sys.executable).resolve().parent / "xray.exe"
     assert route.runtime_directory == path.parent / "runtime" / "xray"
+
+
+def test_vless_reality_tcp_accepts_blank_header_type():
+    link = (
+        "vless://11111111-1111-4111-8111-111111111111@example.com:443"
+        "?security=reality&type=tcp&headerType=&path=&host="
+        "&sni=example.com&fp=edge"
+        "&pbk=abcdefghijklmnopqrstuvwx1234567890ABCD"
+        "&sid=aabb#BlankHeader"
+    )
+
+    profile = parse_vless_uri(link)
+
+    assert profile.host == "example.com"
+    assert profile.port == 443
+    assert profile.sni == "example.com"
+    assert profile.fingerprint == "edge"
+    assert profile.display_name == "BlankHeader"

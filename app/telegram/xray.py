@@ -80,6 +80,7 @@ def parse_vless_uri(uri: str) -> VlessRealityProfile:
             (query.get("headerType") or query.get("headertype") or ["none"])[0]
             .strip()
             .lower()
+            or "none"
         )
         flow = (query.get("flow") or [""])[0].strip()
         if encryption != "none":
