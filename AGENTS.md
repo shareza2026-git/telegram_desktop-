@@ -1,283 +1,102 @@
-# AGENTS.md — Telegram Desktop Engineering & Release Contract
+# AGENTS.md — Telegram Desktop
 
-This file is the first operational reference for any engineer, coding agent, or automation working in this repository.
+This is the operational entry point for every future engineering session.
 
-Read it before changing code, creating tags, building releases, touching Telegram sessions, or using dashboard configuration.
+## Read first
 
----
+Before changing code, read:
 
-## 1. Project identity
+1. `docs/CURRENT_STATUS.md`
+2. `docs/PROJECT_CONTRACT.md`
+3. `docs/ARCHITECTURE.md`
+4. `docs/ENGINEERING_WORKFLOW.md`
+5. `docs/RELEASE_PROCESS.md`
+6. `docs/DECISIONS.md`
+7. `docs/KNOWN_ISSUES.md`
+8. `docs/ROADMAP.md`
 
-Repository:
+Read only the additional code/tests relevant to the current task.
 
-`https://github.com/shareza2026-git/telegram_desktop-.git`
+## Workspace model
 
-Primary development branch:
-
-`feature/telegram-desktop-foundation`
-
-Do not continue normal development from `main`.
-
-`main` is the early baseline. The active development branch is intentionally far ahead of it.
-
-The Telegram Desktop project and the trading dashboard are separate repositories.
-
----
-
-## 2. Product architecture
-
-- Frontend: React + TypeScript + Vite
-- Desktop shell: Tauri 2
-- Backend: Python 3.12 + FastAPI
-- Telegram client: Telethon
-- Live updates: WebSocket
-- Local persistence: SQLite
-- Windows installer: Tauri / NSIS
-- Packaged backend: PyInstaller sidecar
-
-Current product scope includes normal Telegram desktop messaging workflows such as dialogs, history, send, reply, edit, delete, forward, reactions, typing, read receipts, pinned messages, drafts, notifications, account settings, profiles, and Devices.
-
-Audio/video playback, calls, and Stories remain out of scope unless explicitly requested later.
-
----
-
-## 3. Git branch model
-
-### Development
-
-All normal development continues on:
-
-`feature/telegram-desktop-foundation`
-
-Feature/fix work may use temporary work branches, but the integration target is the development branch above.
-
-### Main
-
-Do not use `main` as the active development source.
-
-Do not push release work to `main`.
-
-### Release branches
-
-`release/v*` branches are not part of the normal release flow.
-
-Do not create release branches just to publish a version.
-
-### Release tags
-
-Official releases are tag-driven.
-
-The only supported official release tag format is:
-
-`vMAJOR.MINOR.PATCH`
-
-Examples:
-
-- `v0.1.26`
-- `v0.2.0`
-- `v1.0.0`
-
-A release tag must point to a commit that belongs to the history of:
-
-`feature/telegram-desktop-foundation`
-
----
-
-## 4. Release architecture
-
-The release flow is:
+Expected parent project layout on Windows:
 
 ```text
-feature/telegram-desktop-foundation
-        |
-        | normal development + commits
-        v
-release is ready
-        |
-        v
-scripts/tag-release.ps1
-        |
-        +-- verify correct branch
-        +-- verify clean working tree
-        +-- fetch current remote branch and tags
-        +-- refuse behind/diverged local state
-        +-- verify synchronized version manifests
-        +-- calculate next semantic version
-        +-- create annotated tag
-        +-- atomically push branch + tag
-                    |
-                    v
-GitHub Actions: Windows installer
-                    |
-                    +-- verify tag source
-                    +-- derive exact version from tag
-                    +-- synchronize release manifests in CI checkout
-                    +-- run backend tests
-                    +-- run frontend tests
-                    +-- build frontend
-                    +-- build backend sidecar
-                    +-- smoke-test packaged backend
-                    +-- build NSIS installer
-                    +-- publish GitHub Release
+Desktop Telegram/
+  live/      last user-approved runnable version
+  dev/       Git development working copy
+  review/    reports, patches, review ZIPs, Git bundles; outside repo
+  prompts/   reusable handoff/prompt material when needed
+  tools/     external project tools
+  launchers/ stable user-facing launchers when needed
 ```
 
-The release tag is the authoritative release version.
+Normal coding happens in `dev`, never in `live`.
 
-If the tag is:
+## Git model for this repository
 
-`v0.1.26`
+This project adapts the generic develop/main model to its established history:
 
-the release build must use:
+- `feature/telegram-desktop-foundation` = authoritative integration/development branch.
+- `work/*` = focused task/review branches.
+- `main` = old baseline; do not continue active development from it.
+- `release/v*` = not used by the current release flow.
+- `vMAJOR.MINOR.PATCH` = authoritative official release version.
 
-`0.1.26`
+Do not merge, tag, publish, or promote `live` without explicit user authorization.
 
-for the application/package manifests and the produced installer must be staged as:
+## Before modifying anything
 
-`Telegram-Desktop-Setup-v0.1.26.exe`
-
----
-
-## 5. Creating the next release
-
-Preferred command from a clean local checkout of `feature/telegram-desktop-foundation`:
+Verify:
 
 ```powershell
-.\scripts\tag-release.ps1
+git status
+git branch --show-current
+git log -1 --oneline
+git fetch
 ```
 
-Default behavior is a patch bump.
+Stop if the workspace is wrong, unexplained changes exist, secrets/runtime data are exposed, or continuing risks overwriting user work.
 
-Example:
+Never use destructive cleanup just to get a clean tree. Avoid `git reset --hard`, broad `git clean`, blanket stash, and broad restore unless explicitly authorized.
 
-`v0.1.25 -> v0.1.26`
+## Engineering rules
 
-Preview only:
+Understand before changing. Investigate broadly; change narrowly. Preserve correct existing behavior.
 
-```powershell
-.\scripts\tag-release.ps1 -Preview
-```
+Each task has one primary goal. Do not mix unrelated refactors, dependency upgrades, formatting sweeps, UX redesign, architecture rewrites, or cleanup.
 
-Minor bump:
+For persistence/networking/side effects, reason about retries, duplicate delivery, partial failure, restart/recovery, stale state, ordering, and isolation.
 
-```powershell
-.\scripts\tag-release.ps1 -Bump minor
-```
+Durable/authoritative state wins over UI or temporary state.
 
-Example:
+If important product semantics are ambiguous, stop and report the ambiguity.
 
-`v0.1.25 -> v0.2.0`
+## Security / privacy
 
-Major bump:
+Never print, commit, package, or place in review artifacts:
 
-```powershell
-.\scripts\tag-release.ps1 -Bump major
-```
+- `.env`
+- API hash / API secrets
+- Telegram login code or 2FA password
+- Telegram authorization/session keys or `*.session`
+- full V2Ray links or proxy passwords
+- runtime SQLite databases / WAL / SHM
+- private logs or real personal data
 
-Example:
+The trading dashboard is a separate repository. Its allowed proxy/V2Ray inputs are read-only. Do not modify dashboard files, DBs, sessions, settings, or runtime state.
 
-`v0.1.25 -> v1.0.0`
+`TELEGRAM_ALLOW_DIRECT` stays false unless the user explicitly asks for direct connectivity.
 
-Do not manually invent a different release numbering scheme.
+## Telegram session rule
 
----
+On a new computer, do not silently reuse/import a session from another machine.
 
-## 6. Release safety rules
+Prefer a new independent app session and normal phone/code/2FA login. Ask for phone, OTP, or 2FA only when the login flow actually reaches that step.
 
-The release helper must fail rather than guess.
+## Validation
 
-It must refuse release when:
-
-- the current branch is not `feature/telegram-desktop-foundation`;
-- the working tree is dirty;
-- the local development branch is behind or diverged from its remote branch;
-- release manifests disagree;
-- the next calculated tag already exists;
-- semantic version syntax is invalid.
-
-The helper uses an atomic push:
-
-`git push --atomic`
-
-The development branch update and release tag must either both reach the remote or neither should.
-
-Do not replace this with separate non-atomic pushes without a strong reason and explicit review.
-
-The helper must never:
-
-- push `main`;
-- run `git reset --hard`;
-- run broad `git clean`;
-- discard unrelated local changes;
-- silently rewrite an existing release tag.
-
----
-
-## 7. Version sources and synchronization
-
-Historically this repository had version drift across multiple files.
-
-Release-version manifests now must stay synchronized.
-
-The checked-in version is represented in:
-
-- `frontend/package.json`
-- `frontend/package-lock.json`
-- `frontend/src-tauri/tauri.conf.json`
-- `frontend/src-tauri/Cargo.toml`
-- `frontend/src-tauri/Cargo.lock`
-- `pyproject.toml`
-
-Check consistency with:
-
-```powershell
-python scripts/sync-version.py --check
-```
-
-Synchronize explicitly when needed with:
-
-```powershell
-python scripts/sync-version.py --set 1.2.3
-```
-
-Do not edit one version manifest and leave the others stale.
-
-Development CI checks manifest consistency before running the rest of the test suite.
-
-For an official tag build, CI derives the release version from the tag and synchronizes the release checkout before packaging.
-
----
-
-## 8. GitHub Actions behavior
-
-Development workflow:
-
-`.github/workflows/development-ci.yml`
-
-Normal pushes to:
-
-`feature/telegram-desktop-foundation`
-
-and pull requests run development checks.
-
-They must not publish an official release.
-
-Release workflow:
-
-`.github/workflows/windows-installer.yml`
-
-Official publishing is triggered by tags matching:
-
-`v*`
-
-A manually dispatched installer workflow may be used for build validation, but manual dispatch must not create an official GitHub Release.
-
-Official GitHub Release publishing is tag-only.
-
----
-
-## 9. Validation before integration
-
-At minimum, run or verify:
+At minimum, before integration:
 
 ```powershell
 python scripts/sync-version.py --check
@@ -287,229 +106,27 @@ npm.cmd test
 npm.cmd run build
 ```
 
-Use focused tests while implementing and the relevant full suite before handoff.
+Use focused tests during implementation. Do not claim PASS for skipped relevant validation.
 
-Do not claim success if a relevant validation step was skipped without saying why.
+## Release
 
----
+Read `docs/RELEASE_PROCESS.md` before creating a tag.
 
-## 10. Telegram session policy
-
-Telegram authorization is sensitive durable state.
-
-Never commit or expose:
-
-- API hash;
-- authorization/session keys;
-- login codes;
-- 2FA passwords;
-- phone numbers when not required for the immediate interactive step;
-- full V2Ray links;
-- proxy passwords;
-- `.session` files;
-- runtime databases;
-- private logs.
-
-On a new computer, do not assume a Telegram session from another machine is valid or authorized for automatic reuse.
-
-For a new machine, the intended safe flow is:
-
-1. use valid approved Telegram API credentials;
-2. create a new independent application session;
-3. perform normal Telegram login using phone number, OTP, and 2FA if enabled;
-4. keep the new session under the application's private data root;
-5. verify Telegram status and Devices after login.
-
-Do not silently import an old Telegram session, `telegram-portable.json`, or dashboard session unless the user explicitly requests that behavior.
-
-`TELEGRAM_AUTO_IMPORT_SOURCE=false` must remain the safe default.
-
----
-
-## 11. Dashboard isolation
-
-The trading dashboard is a separate repository and separate product.
-
-Telegram Desktop may only consume explicitly allowed dashboard connection configuration through read-only integration.
-
-Do not modify dashboard:
-
-- files;
-- database;
-- Telegram session;
-- settings;
-- runtime state.
-
-Proxy/V2Ray configuration from the dashboard is read-only input.
-
-If dashboard paths are used, verify that Telegram Desktop cannot write through them.
-
-Before final handoff of work that touches integration, verify the dashboard repository has no unexpected diff.
-
----
-
-## 12. Direct Telegram connectivity
-
-`TELEGRAM_ALLOW_DIRECT` must remain `false` by default.
-
-Do not automatically enable direct Telegram connectivity merely because proxy routes are unavailable.
-
-Direct connectivity may be enabled only when explicitly requested by the user.
-
----
-
-## 13. Local/runtime files that must not enter Git
-
-Do not commit:
-
-- `.env`
-- `*.session`
-- `telegram-portable.json`
-- `settings.env`
-- runtime databases
-- `data/` runtime state
-- private logs
-- generated credentials
-- packaged personal session bundles
-
-Before committing or releasing, inspect the staged filenames and diff for secrets/runtime artifacts.
-
----
-
-## 14. Message rendering invariant
-
-Displayed message text must be trimmed before rendering.
-
-Leading/trailing blank lines or whitespace must not enlarge message bubbles unnecessarily.
-
-Preserve the existing trim behavior unless the product contract explicitly changes.
-
----
-
-## 15. Working-tree discipline
-
-Before changing code, inspect:
+Normal release helper:
 
 ```powershell
-git status
-git log -1 --oneline
-git branch --show-current
-git fetch
+.\scripts\tag-release.ps1 -Preview
+.\scripts\tag-release.ps1
 ```
 
-Do not destroy unexplained user changes.
+The tag is the release version. Never rewrite an existing release tag.
 
-Do not use destructive cleanup merely to get a clean workspace.
+## Handoff
 
-Avoid unless explicitly authorized:
+For meaningful work, report exact branch/base/head, files changed, tests/results, skipped checks, known risks, unrelated issues, diff/status, and:
 
-- `git reset --hard`
-- broad `git clean`
-- blanket stash
-- broad restore
+`SAFE TO REVIEW: YES/NO`
 
-If unrelated user changes exist, preserve them and work around them safely.
+Update `docs/CURRENT_STATUS.md` only at meaningful checkpoints.
 
----
-
-## 16. Change discipline
-
-Understand before changing.
-
-Investigate broadly; change narrowly.
-
-Each task should have one primary goal.
-
-Do not mix unrelated:
-
-- refactors;
-- dependency upgrades;
-- formatting sweeps;
-- UX redesign;
-- cleanup;
-- architecture rewrites
-
-into a focused fix.
-
-Preserve durable/authoritative state over temporary UI state.
-
-For persistence/networking/side effects, reason about restart, retries, duplicate delivery, partial failure, stale state, and ordering.
-
----
-
-## 17. Release checklist
-
-Before creating a release tag:
-
-1. Be on `feature/telegram-desktop-foundation`.
-2. Fetch remote state.
-3. Confirm working tree is clean.
-4. Confirm no unrelated/uncommitted work.
-5. Run version-manifest check.
-6. Run backend tests.
-7. Run frontend tests.
-8. Run frontend build.
-9. Review diff.
-10. Verify no secrets/runtime state are staged.
-11. Use `tag-release.ps1 -Preview` if unsure which version will be created.
-12. Create the release tag with the release helper.
-13. Let GitHub Actions build and publish.
-14. Verify the release installer name and tag match exactly.
-
-Do not create a release merely to test whether the release workflow works. Use manual workflow dispatch for installer/build validation instead.
-
----
-
-## 18. Handoff expectations
-
-For a significant change, report:
-
-- task / goal;
-- behavior before;
-- behavior after;
-- root cause;
-- files changed;
-- tests added/updated;
-- exact validation commands;
-- exact results;
-- skipped checks and why;
-- invariants verified;
-- known risks;
-- unrelated issues found;
-- git diff summary;
-- git status;
-- `SAFE TO REVIEW: YES/NO`.
-
-Do not merge, push protected branches, or create official release tags unless the user explicitly authorizes that action.
-
----
-
-## 19. Current release contract summary
-
-Use this mental model:
-
-```text
-MAIN
-  = historical baseline, not active development
-
-FEATURE/TELEGRAM-DESKTOP-FOUNDATION
-  = authoritative development branch
-
-WORK/*
-  = temporary implementation/review branches when useful
-
-vMAJOR.MINOR.PATCH
-  = authoritative official release version
-
-release/v*
-  = deprecated / not required for release
-
-TAG
-  -> validates source
-  -> defines exact version
-  -> runs tests/build
-  -> creates versioned installer
-  -> publishes GitHub Release
-```
-
-If a future task conflicts with this contract, stop and explain the conflict before changing release or Git semantics.
+Protect `live`. Never make the user depend on a half-finished development state.

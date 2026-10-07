@@ -1,5 +1,7 @@
 # Telegram Desktop
 
+> Engineering sessions: read `AGENTS.md` first. Durable project rules, architecture, workflow, release process, decisions, current status, known issues, and roadmap live under `docs/`.
+
 A standalone Windows Telegram-style desktop client built independently from the trading terminal.
 
 ## Goals
