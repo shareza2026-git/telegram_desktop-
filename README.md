@@ -1,5 +1,7 @@
 # Telegram Desktop
 
+> Engineering sessions: read `AGENTS.md` first. Durable project rules, architecture, workflow, release process, decisions, current status, known issues, and roadmap live under `docs/`.
+
 A standalone Windows Telegram-style desktop client built independently from the trading terminal.
 
 ## Goals
@@ -239,7 +241,15 @@ The release path now includes:
 6. A Windows GitHub Actions workflow that runs all tests, builds and smoke-tests the packaged sidecar, creates an unsigned current-user NSIS installer and uploads it as a workflow artifact.
 7. A tag-driven release job that publishes the installer as a permanent GitHub Release asset for every `v*` tag.
 
-The installer workflow is `.github/workflows/windows-installer.yml`. During active development it runs only for release branches matching `release/v*`, version tags matching `v*`, or a deliberate manual run. A version tag or release branch creates the matching tag and a permanent GitHub Release containing the installer executable. Normal pushes to `feature/telegram-desktop-foundation` run only the backend/frontend checks in `.github/workflows/development-ci.yml`; they do not build another installer.
+The installer workflow is `.github/workflows/windows-installer.yml`. Release publishing is tag-only: a tag named `vMAJOR.MINOR.PATCH` is the authoritative release version. `release/v*` branches are no longer part of the release flow. Normal pushes to `feature/telegram-desktop-foundation` run only the backend/frontend checks in `.github/workflows/development-ci.yml`; they do not publish an installer.
+
+When a release is ready, keep the working tree clean on `feature/telegram-desktop-foundation` and run:
+
+```powershell
+.\scripts\tag-release.ps1
+```
+
+The helper defaults to the next patch version. Use `-Bump minor` or `-Bump major` when needed, and `-Preview` to inspect the next tag without changing Git. It fetches the development branch and tags, refuses a behind/diverged branch, validates all checked-in version manifests, computes the next SemVer tag, creates an annotated tag, and atomically pushes the development branch plus that tag. The tag workflow then derives the exact application version from the tag, synchronizes the Python/npm/Tauri/Cargo version manifests inside the CI checkout, reruns tests, builds the NSIS installer, names the artifact with that version, and publishes the matching GitHub Release.
 
 The packaged backend reads optional secrets from `settings.env` inside Tauri's private per-user application data directory. The file is never bundled or committed. It may contain the same `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_SOURCE_SESSION_PATH` and `TELEGRAM_PROXY_CONFIG` values already used locally; source-session and proxy catalog paths remain read-only.
 

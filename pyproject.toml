@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "telegram-desktop"
-version = "0.1.0"
+version = "0.1.25"
 description = "Standalone Telegram-style desktop client with an independent session"
 requires-python = ">=3.12"
 dependencies = [

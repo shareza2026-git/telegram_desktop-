@@ -3,31 +3,72 @@ name: Windows installer
 on:
   workflow_dispatch:
   push:
-    branches:
-      - "release/v*"
     tags:
       - "v*"
 
 permissions:
   contents: read
 
+concurrency:
+  group: windows-installer-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build-windows-installer:
     runs-on: windows-latest
     timeout-minutes: 45
+    outputs:
+      release_version: ${{ steps.release_version.outputs.version }}
+      artifact_name: ${{ steps.release_version.outputs.artifact_name }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
 
+      - name: Verify release tag source
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        run: |
+          git fetch origin +refs/heads/feature/telegram-desktop-foundation:refs/remotes/origin/feature/telegram-desktop-foundation --no-tags
+          if ($LASTEXITCODE -ne 0) { throw "Could not fetch development branch" }
+          git merge-base --is-ancestor $env:GITHUB_SHA origin/feature/telegram-desktop-foundation
+          if ($LASTEXITCODE -ne 0) {
+            throw "Release tags must point to a commit from feature/telegram-desktop-foundation"
+          }
+
+      - name: Resolve release version
+        id: release_version
+        shell: pwsh
+        run: |
+          if ("${{ github.ref_type }}" -eq "tag") {
+            $tag = "${{ github.ref_name }}"
+            if ($tag -notmatch '^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') {
+              throw "Release tag must be vMAJOR.MINOR.PATCH"
+            }
+            $version = $tag.Substring(1)
+            python scripts/sync-version.py --set $version
+            if ($LASTEXITCODE -ne 0) { throw "Could not synchronize release version" }
+          } else {
+            $version = (python scripts/sync-version.py --check).Trim()
+            if ($LASTEXITCODE -ne 0) { throw "Checked-in release versions are inconsistent" }
+          }
+          $verified = (python scripts/sync-version.py --check).Trim()
+          if ($LASTEXITCODE -ne 0 -or $verified -ne $version) {
+            throw "Release version verification failed"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "artifact_name=telegram-desktop-windows-v$version" >> $env:GITHUB_OUTPUT
+
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: frontend/package.json
+          cache-dependency-path: frontend/package-lock.json
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -105,15 +146,25 @@ jobs:
         working-directory: frontend
         run: npm run tauri build -- --config src-tauri/tauri.windows.conf.json
 
+      - name: Stage versioned installer
+        id: installer
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem "frontend/src-tauri/target/release/bundle/nsis/*.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $installer) { throw "NSIS installer was not produced" }
+          New-Item -ItemType Directory -Force release-artifact | Out-Null
+          $target = Join-Path "release-artifact" "Telegram-Desktop-Setup-v${{ steps.release_version.outputs.version }}.exe"
+          Copy-Item $installer.FullName $target -Force
+
       - uses: actions/upload-artifact@v4
         with:
-          name: telegram-desktop-windows-installer
-          path: frontend/src-tauri/target/release/bundle/nsis/*.exe
+          name: ${{ steps.release_version.outputs.artifact_name }}
+          path: release-artifact/*.exe
           if-no-files-found: error
           retention-days: 30
 
   publish-release:
-    if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/heads/release/v')
+    if: github.ref_type == 'tag'
     needs: build-windows-installer
     runs-on: ubuntu-latest
     permissions:
@@ -121,20 +172,20 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: telegram-desktop-windows-installer
+          name: ${{ needs.build-windows-installer.outputs.artifact_name }}
           path: release
 
       - name: Publish permanent GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
-            release_tag="$GITHUB_REF_NAME"
+          release_tag="$GITHUB_REF_NAME"
+          if gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$release_tag" release/*.exe --repo "$GITHUB_REPOSITORY" --clobber
           else
-            release_tag="${GITHUB_REF_NAME#release/}"
+            gh release create "$release_tag" release/*.exe \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --title "Telegram Desktop $release_tag" \
+              --generate-notes
           fi
-          gh release create "$release_tag" release/*.exe \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "Telegram Desktop $release_tag" \
-            --generate-notes

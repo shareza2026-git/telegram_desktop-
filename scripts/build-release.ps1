@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Version = "0.1.16"
+    [string]$Version
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,6 +9,7 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 $FrontendRoot = Join-Path $RepoRoot "frontend"
 $TauriRoot = Join-Path $FrontendRoot "src-tauri"
 $Python = Join-Path $RepoRoot ".venv\Scripts\python.exe"
+$VersionScript = Join-Path $RepoRoot "scripts\sync-version.py"
 $SessionSeed = Join-Path $RepoRoot "data\telegram_desktop\accounts\default\client.session"
 $ApiSeedSource = Join-Path $RepoRoot "data\telegram_desktop\settings.env"
 $LegacyPortableConfig = Join-Path $RepoRoot "telegram-portable.json"
@@ -22,6 +23,17 @@ $SessionSnapshotScript = Join-Path $RepoRoot "scripts\make-session-snapshot.py"
 
 if (-not (Test-Path $Python)) {
     throw "Python virtual environment is missing. Run .\scripts\setup-dev.ps1 first."
+}
+
+$VersionOutput = & $Python $VersionScript --check
+if ($LASTEXITCODE -ne 0) {
+    throw "Release version manifests are not synchronized."
+}
+$ManifestVersion = ([string]($VersionOutput | Select-Object -Last 1)).Trim()
+if (-not $Version) {
+    $Version = $ManifestVersion
+} elseif ($Version -ne $ManifestVersion) {
+    throw "Requested release version $Version does not match checked-in manifest version $ManifestVersion. Use the tag-driven release workflow for a new version."
 }
 if (-not (Test-Path $SessionSeed)) {
     throw "Authorized Telegram session is missing at data\telegram_desktop\accounts\default\client.session."
