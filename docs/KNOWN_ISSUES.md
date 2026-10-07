@@ -4,17 +4,17 @@ Only issues with evidence belong here. Unrelated findings are recorded rather th
 
 | ID | Summary | Status | Severity | Evidence | Target |
 |---|---|---|---|---|---|
-| K-001 | Packaged/portable startup paths can seed/restore prior Telegram authorization despite the fresh-machine policy. | OPEN | High | `app/main.py` applies portable config; `app/telegram/portable.py` can seed auth; packaged transfer paths can restore `telegram-session.session`. | Fresh-machine session hardening |
-| K-002 | Telegram device model is currently generic rather than the real Windows computer name. | OPEN | Medium | `app/telegram/client.py` sets `device_model="Desktop"`. | Fresh-machine session hardening |
-| K-003 | Runtime configuration may enable direct Telegram connectivity when no transport routes exist. | OPEN | High | `set_runtime_config()` derives direct allowance from existing routes instead of requiring explicit user opt-in. | Connectivity policy hardening |
-| K-004 | Sensitive local release/runtime filenames are not all explicitly ignored. | OPEN | High | `.gitignore` covers `.env`, sessions, DBs and `telegram-portable.json`, but needs review for `settings.env`, `telegram-api.env`, `telegram-proxies.json` and similar generated private files. | Secret-hygiene hardening |
-| K-005 | npm reports 4 vulnerabilities in the current dependency graph. | OPEN | High pending triage | Development CI reported 1 moderate, 1 high and 2 critical findings. Exposure/direct-vs-transitive status has not yet been classified. | Dependency/security audit before release |
-| K-006 | Exact approved version currently present in the local `live\` folder is not documented in the repository. | OPEN | Medium process risk | Local folder exists, but repo checkpoint does not identify its exact approved tag/commit. | Establish before first live promotion |
+| K-001 | Fresh packaged startup could silently seed/restore prior Telegram authorization. | RESOLVED ON `work/fresh-machine-bootstrap`; pending integration/local validation | High | Implicit executable-folder portable/session discovery and Tauri transfer bootstrap were removed; explicit opt-in paths remain. CI regression tests pass. | Local fresh-machine validation |
+| K-002 | Telegram device model was generic rather than the real Windows computer name. | RESOLVED ON `work/fresh-machine-bootstrap`; pending live Telegram validation | Medium | Telethon device model now uses `COMPUTERNAME` / `platform.node()`; verification script checks Telegram Devices. | Local login verification |
+| K-003 | API configuration/direct selection could enable or use direct Telegram connectivity without explicit opt-in. | RESOLVED ON `work/fresh-machine-bootstrap`; pending integration | High | API credential save no longer enables direct mode; stale direct selection is ignored and explicit direct selection is rejected while policy is false. | Local tunnel validation |
+| K-004 | Sensitive local runtime filenames were not all explicitly ignored. | RESOLVED ON `work/fresh-machine-bootstrap` | High | `settings.env`, `telegram-api.env`, `telegram-proxies.json`, session/database/runtime data are excluded from Git; private proxy catalog remains ignored under data. | Final secret review before release |
+| K-005 | npm reports 4 vulnerabilities in the current dependency graph. | OPEN | High pending triage | Development CI reports 1 moderate, 1 high and 2 critical findings. Exposure/direct-vs-transitive status has not yet been classified. | Dependency/security audit before release |
+| K-006 | Exact approved version currently present in the local `live\` folder is not documented. | OPEN | Medium process risk | Local folder exists, but its exact approved tag/commit has not been established. | Establish before first live promotion |
 
 ## Handling rules
 
-- Do not fix these automatically during unrelated work.
-- A known issue blocks a task only when it threatens correctness, security, data integrity, or the task's explicit exit criteria.
-- K-001/K-003 are blockers for claiming a safe fresh-machine login policy.
+- Do not fix unrelated issues automatically during another task.
+- A known issue blocks current work only when it threatens correctness, security, data integrity, or explicit exit criteria.
+- K-001 through K-004 require local validation/integration before they are considered released behavior.
 - K-005 must be triaged before an official release.
 - K-006 must be resolved before overwriting/promoting the local live installation.

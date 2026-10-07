@@ -44,7 +44,7 @@ def test_client_paths_cannot_escape_data_root(tmp_path: Path):
         )
 
 
-def test_missing_api_credentials_are_read_from_dashboard_env(tmp_path: Path):
+def test_missing_api_credentials_are_not_imported_from_dashboard_env(tmp_path: Path):
     dashboard = tmp_path / "DASHBOARD"
     catalog = dashboard / "data" / "config" / "connection_routes.json"
     catalog.parent.mkdir(parents=True)
@@ -58,7 +58,6 @@ def test_missing_api_credentials_are_read_from_dashboard_env(tmp_path: Path):
         TELEGRAM_CLIENT_DATA_ROOT=str(tmp_path / "client-data"),
     )
 
-    assert settings.telegram_api_id == 12345
-    assert settings.telegram_api_hash is not None
-    assert settings.telegram_api_hash.get_secret_value() == "dashboard-hash"
-    assert settings.telegram_configured is True
+    assert settings.telegram_api_id is None
+    assert settings.telegram_api_hash is None
+    assert settings.telegram_configured is False

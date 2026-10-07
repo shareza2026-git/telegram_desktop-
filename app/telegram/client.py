@@ -1,8 +1,17 @@
+import os
 import platform
 
 from telethon import TelegramClient
 
 from app.config import Settings
+
+
+def device_model() -> str:
+    return (
+        str(os.environ.get("COMPUTERNAME") or "").strip()
+        or platform.node().strip()
+        or "Windows PC"
+    )
 
 
 def build_client(settings: Settings, options: dict | None = None, session=None) -> TelegramClient:
@@ -11,7 +20,7 @@ def build_client(settings: Settings, options: dict | None = None, session=None) 
     session_path = settings.telegram_session_path
     session_path.parent.mkdir(parents=True, exist_ok=True)
     client_options = {
-        "device_model": "Desktop",
+        "device_model": device_model(),
         "system_version": f"{platform.system()} {platform.release()}",
         "app_version": "1.45.0",
         "sequential_updates": False,

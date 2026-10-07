@@ -1,7 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
 
-from dotenv import dotenv_values
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -45,6 +44,10 @@ class Settings(BaseSettings):
         default=Path("data/telegram/proxies.json"),
         validation_alias="TELEGRAM_PROXY_CONFIG",
     )
+    telegram_xray_core_path: Path | None = Field(
+        default=None,
+        validation_alias="TELEGRAM_XRAY_CORE",
+    )
     telegram_allow_direct: bool = Field(
         default=False,
         validation_alias="TELEGRAM_ALLOW_DIRECT",
@@ -70,6 +73,7 @@ class Settings(BaseSettings):
         "telegram_client_data_root",
         "telegram_transfer_dir",
         "telegram_source_session_path",
+        "telegram_xray_core_path",
         mode="before",
     )
     @classmethod
@@ -96,27 +100,6 @@ class Settings(BaseSettings):
 
         self.telegram_session_path = resolve(self.telegram_session_path)
         self.database_path = resolve(self.database_path)
-        return self
-
-    @model_validator(mode="after")
-    def reuse_dashboard_api_config_read_only(self):
-        if self.telegram_api_id and self.telegram_api_hash:
-            return self
-        catalog = self.telegram_proxy_config
-        if not catalog.is_absolute():
-            catalog = self.project_root / catalog
-        try:
-            catalog = catalog.resolve()
-            if not catalog.is_file():
-                return self
-            dashboard_env = catalog.parents[2] / ".env"
-            values = dotenv_values(dashboard_env) if dashboard_env.is_file() else {}
-            if self.telegram_api_id is None and str(values.get("TG_API_ID") or "").strip():
-                self.telegram_api_id = int(str(values["TG_API_ID"]).strip())
-            if self.telegram_api_hash is None and str(values.get("TG_API_HASH") or "").strip():
-                self.telegram_api_hash = SecretStr(str(values["TG_API_HASH"]).strip())
-        except (IndexError, TypeError, ValueError, OSError):
-            pass
         return self
 
     @property

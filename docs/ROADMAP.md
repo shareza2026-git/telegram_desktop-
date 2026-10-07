@@ -1,110 +1,97 @@
 # Roadmap
 
-This roadmap is intentionally high-level. Each implementation phase should still have one focused outcome.
-
 ## R0 — Release/documentation architecture
 
-Goal:
+State: IMPLEMENTED IN PR #2; CI PASS; awaiting integration authorization.
 
-Make release/version semantics deterministic and leave durable project instructions for future sessions.
+Outcome:
 
-Current state:
-
-In review on PR #2.
-
-Exit:
-
-- tag-driven release/versioning reviewed
-- manifest consistency enforced
-- `AGENTS.md` concise
-- durable `docs/` contract/workflow/release/status/decisions/issues established
-- CI passes
+- tag-driven SemVer release
+- synchronized manifests
+- concise `AGENTS.md` + durable `docs/`
+- explicit dev/live/review process
 
 ## S1 — Fresh-machine session hardening
 
-Goal:
+State: IMPLEMENTED IN PR #3; CI PASS; local Windows/Telegram validation pending.
 
-Guarantee that a new machine does not silently reuse an old Telegram authorization.
+Outcome:
 
-Design/implementation targets:
-
-- disable automatic portable/session authorization seeding for fresh-machine flow
-- preserve explicit user-authorized import paths only where intentionally supported
-- keep `TELEGRAM_AUTO_IMPORT_SOURCE=false`
-- ensure independent private session path
-- prevent secret exposure
-
-Exit:
-
-Automated tests prove no silent old-session reuse.
+- no implicit portable/session authorization seeding
+- explicit-only import paths
+- independent fresh-machine session location
+- approved API credentials are supplied independently
+- secret/runtime Git exclusions hardened
 
 ## S2 — Identity / connectivity correctness
 
-Goal:
+State: IMPLEMENTED IN PR #3; local tunnel/Telegram validation pending.
 
-Make new Telegram authorization accurately represent the new PC and obey route policy.
+Outcome:
+
+- real Windows computer name used as Telegram device model
+- `TELEGRAM_ALLOW_DIRECT=false` remains authoritative unless explicitly opted in
+- stale direct selection cannot bypass policy
+- Xray can be provided explicitly for managed VLESS routes
+- post-login verification checks current Telegram Device
+
+## LOGIN1 — New-machine local validation
+
+State: NEXT.
+
+Run from `Desktop Telegram\dev`:
+
+```powershell
+.\scripts\bootstrap-new-machine.ps1
+```
+
+Complete phone/code/2FA only inside the application when Telegram reaches that step.
+
+While the app is still running:
+
+```powershell
+.\scripts\verify-local-session.ps1
+```
+
+Also manually validate profile photo, dialogs/messages, and live/WebSocket behavior.
+
+## SEC1 — Dependency/security audit
+
+State: OPEN before release.
 
 Targets:
 
-- real Windows computer name in Telegram Devices
-- `TELEGRAM_ALLOW_DIRECT=false` unless explicitly opted in
-- status/devices validation after login
-- proxy catalog remains read-only
+- classify npm findings as direct/transitive and runtime/build-only
+- determine actual exposure
+- select safe fixes without blind force upgrades
+- re-check packaged artifact secret exclusions
 
-## SEC1 — Secret and dependency audit
+## REL1 — Pre-live gate
 
-Goal:
+State: READY FOR LOCAL USE after LOGIN1.
 
-Establish release security hygiene.
+Run:
 
-Targets:
+```powershell
+.\scripts\release-gate.ps1
+```
 
-- harden ignore/packaging rules for generated private config
-- classify npm vulnerability findings: direct/transitive, runtime/build-only, exposure, available fix
-- avoid blind force upgrades
-- verify release artifacts exclude secrets/runtime state
+This must not alter `live`, create a tag, or publish a release.
 
-## LOGIN1 — New-machine login validation
+Before promotion, identify and preserve the exact current `live` baseline and rollback path.
 
-Goal:
+## REL2 — Promotion and official version
 
-Perform actual approved Telegram login on the new machine after S1/S2 pass.
+State: BLOCKED ON USER APPROVAL + REL1 + security/live-baseline checks.
 
-Requires user interaction only when needed for:
+After explicit approval:
 
-- API credentials if absent
-- phone number
-- OTP
-- 2FA password
-
-Validate:
-
-- `/health`
-- Telegram configured/connected/authorized status
-- Devices/current device naming
-- avatar/profile
-- dialogs/messages
-- WebSocket/live updates
-
-## REL1 — Release gate
-
-Goal:
-
-Prepare the next approved release candidate.
-
-Gate:
-
-- full relevant backend/frontend tests
-- production frontend build
-- packaging validation
-- secret scan/review
-- dependency audit decision
-- known blockers resolved
-- live rollback/promotion plan known
-
-Then preview next tag with `tag-release.ps1 -Preview`.
-
-Creating the official tag still requires explicit user authorization.
+1. integrate reviewed branches in order;
+2. promote the approved candidate to `live` with rollback protection;
+3. validate the live copy;
+4. preview the next tag with `tag-release.ps1 -Preview`;
+5. create the official `vMAJOR.MINOR.PATCH` tag only after explicit authorization;
+6. verify GitHub Actions installer/release.
 
 ## Future product work
 

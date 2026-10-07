@@ -95,8 +95,9 @@ def _safe_host(value: str) -> str:
 
 
 class TransportCatalog:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, xray_core_path: Path | None = None) -> None:
         self.path = path
+        self.xray_core_path = xray_core_path.resolve() if xray_core_path else None
         self.last_error: str | None = None
 
     def _user_path(self) -> Path:
@@ -137,6 +138,8 @@ class TransportCatalog:
         path.write_text(json.dumps({"selected_index": index}, indent=2), encoding="utf-8")
 
     def _xray_core_path(self) -> Path:
+        if self.xray_core_path is not None:
+            return self.xray_core_path
         return Path(sys.executable).resolve().parent / "xray.exe"
 
     def _xray_runtime_directory(self) -> Path:
@@ -238,6 +241,45 @@ class TransportCatalog:
             if route.type == record["type"] and route.host.get_secret_value().casefold() == record["host"].casefold() and route.port == record["port"]:
                 return {"index": index, "name": route.display_name, "type": route.type, "host": record["host"], "port": route.port}
         raise ValueError("Proxy could not be added")
+
+    def add_proxy_bundle(self, text: str) -> dict:
+        links: list[str] = []
+        for raw_line in text.splitlines():
+            candidate = raw_line.strip()
+            while candidate.startswith(("`", "\\")):
+                candidate = candidate[1:].lstrip()
+            while candidate.endswith(("`", "\\")):
+                candidate = candidate[:-1].rstrip()
+            if not candidate:
+                continue
+            lowered = candidate.casefold()
+            if (
+                lowered.startswith("vless://")
+                or lowered.startswith("tg://proxy?")
+                or lowered.startswith("tg://socks?")
+                or lowered.startswith("https://t.me/proxy?")
+                or lowered.startswith("https://t.me/socks?")
+                or lowered.startswith("https://telegram.me/proxy?")
+                or lowered.startswith("https://telegram.me/socks?")
+            ):
+                links.append(candidate)
+
+        if not links:
+            single = text.strip().strip("`\\").strip()
+            if single:
+                links = [single]
+
+        added: list[dict] = []
+        failed = 0
+        for link in links:
+            try:
+                added.append(self.add_proxy_link(link))
+            except ValueError:
+                failed += 1
+
+        if not added:
+            raise ValueError("No supported proxy links could be added")
+        return {"added": added, "failed": failed}
 
     def load(self) -> list[ProxyRoute]:
         user_records = self._load_user_records()

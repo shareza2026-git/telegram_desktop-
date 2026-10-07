@@ -10,34 +10,69 @@ Authoritative development branch:
 
 `feature/telegram-desktop-foundation`
 
-Current approved/integrated development baseline before the pending release-architecture PR:
+Current integrated development baseline remains:
 
 `0243352dbd9b41175998d1ecbc5cf21e7050f851`
 
-Commit message:
+No pending work below has been merged into that branch without explicit approval.
 
-`Fix NSIS PowerShell hook line endings`
+## Pending release/documentation work
 
-## Current work
-
-Work branch:
+Branch:
 
 `work/release-tag-versioning`
 
-Review:
+PR #2:
 
-PR #2 — `Make releases tag-driven and version-safe`
+`Make releases tag-driven and version-safe`
+
+Head before the child fresh-machine work:
+
+`ee252a50100f644ec02b3f398b460c33c8a7087c`
 
 Status:
 
-- release/version architecture implemented on work branch
-- version manifests synchronized to baseline `0.1.25`
-- tag-driven release helper added
-- release CI made tag-authoritative
-- project operating documentation being normalized into `AGENTS.md` + `docs/`
-- development CI passing on the work branch
+- tag-driven SemVer release architecture implemented
+- release/version manifests synchronized at `0.1.25`
+- durable project docs established
+- CI passed
+- not merged; no official tag created
 
-Do not merge PR #2 or create an official tag without explicit user authorization.
+## Current fresh-machine work
+
+Branch:
+
+`work/fresh-machine-bootstrap`
+
+PR #3:
+
+`Harden fresh-machine Telegram bootstrap`
+
+Latest implementation/correction head before this documentation checkpoint:
+
+`b5534a141ff0a7b07eb8bc8e12085eecf9ce089b`
+
+Validated in CI:
+
+- PowerShell automation syntax: PASS
+- release version manifest check: PASS
+- backend suite: PASS
+- frontend tests: PASS
+- frontend production build: PASS
+
+Implemented:
+
+- no implicit old executable-folder session/API/proxy bootstrap
+- no automatic dashboard API credential import
+- independent fresh-machine session paths
+- real Windows computer name sent as Telegram device model
+- direct connectivity remains opt-in
+- explicit Xray path support
+- private VLESS configuration without echoing secrets
+- development desktop shortcut creation
+- local session verification script
+- pre-live release gate that does not modify `live`
+- secret/runtime ignore hardening
 
 ## Local directory model
 
@@ -45,51 +80,34 @@ Expected parent root:
 
 `C:\Users\<USER>\Desktop\Desktop Telegram\`
 
-Observed core directories:
+Observed:
 
-- `dev\` — development Git working copy
-- `live\` — intended last approved runnable version
+- `dev\`
+- `live\`
 
-The exact version currently present in `live\` has not been established in repository documentation. Do not infer it.
+The exact approved tag/commit currently represented by `live\` is still unknown. Do not overwrite it.
 
-## Completed foundation
+## Immediate next action
 
-Major implemented areas include:
+Local Windows validation is now required because repository CI cannot operate the user's desktop, Telegram account, or local tunnel.
 
-- independent Telegram desktop backend/frontend foundation
-- dialogs/history/send/live updates
-- media metadata/downloads and file sending
-- reply/edit/delete/forward/search
-- reactions/typing/read receipts/pins/unread navigation
-- notifications/dialog controls/drafts
-- multi-file attachments and recent expressive media
-- account/settings/devices/profile surfaces
-- recovery/packaged backend/Windows installer pipeline
-- multi-instance Windows packaging behavior
+The intended order is:
 
-## Current blockers / required follow-up
+1. clone `work/fresh-machine-bootstrap` into `Desktop Telegram\dev`;
+2. run `scripts\bootstrap-new-machine.ps1`;
+3. provide API_ID/API_HASH locally when requested;
+4. provide a VLESS/REALITY route locally or an explicitly chosen read-only proxy catalog;
+5. let the app open and perform phone/code/2FA login inside the app;
+6. while it is running, run `scripts\verify-local-session.ps1`;
+7. review real UI/dialog/WebSocket behavior;
+8. only after approval, run `scripts\release-gate.ps1`;
+9. establish the current `live` baseline before any promotion;
+10. promote/tag only with explicit user approval.
 
-Before normal login on a new machine, session bootstrap paths need hardening so old portable/session state cannot be silently reused.
+## Known release blockers
 
-Before an official release, current npm vulnerability findings must be audited and classified.
-
-See `docs/KNOWN_ISSUES.md`.
-
-## Next intended phase
-
-1. complete review/approval of PR #2;
-2. integrate release/documentation architecture when authorized;
-3. harden fresh-machine Telegram session behavior;
-4. validate device naming/direct-connect policy;
-5. perform dependency/security audit before release;
-6. run release gate;
-7. only then create the next version tag when explicitly authorized.
-
-Expected next patch tag after `0.1.25`, if no newer valid tag exists:
-
-`v0.1.26`
-
-This is a target, not an authorization to publish.
+- npm vulnerability findings still require classification.
+- current local `live` baseline must be identified before replacement/promotion.
 
 ## Deferred product scope
 
@@ -97,5 +115,3 @@ This is a target, not an authorization to publish.
 - calls
 - Stories
 - automatic updater
-
-These remain deferred unless explicitly requested.

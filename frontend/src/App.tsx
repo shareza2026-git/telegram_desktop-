@@ -160,6 +160,11 @@ type ProxyProbe = {
   active?: boolean
 }
 
+type ProxyBundleResponse = {
+  added: Array<{ index: number }>
+  failed: number
+}
+
 type AuthResponse = {
   code_sent: boolean
   requires_2fa: boolean
@@ -1677,14 +1682,17 @@ function App() {
     setError('')
     try {
       if (proxyLinkDraft.trim()) {
-        const added = await api<{ index: number }>('/api/telegram/transport/add-link', {
+        const bundle = await api<ProxyBundleResponse>('/api/telegram/transport/add-bundle', {
           method: 'POST',
-          body: JSON.stringify({ link: proxyLinkDraft.trim() })
+          body: JSON.stringify({ text: proxyLinkDraft.trim() })
         })
-        await api('/api/telegram/transport/select', {
-          method: 'POST',
-          body: JSON.stringify({ index: added.index })
-        })
+        const first = bundle.added[0]
+        if (first) {
+          await api('/api/telegram/transport/select', {
+            method: 'POST',
+            body: JSON.stringify({ index: first.index })
+          })
+        }
       }
 
       const nextStatus = await api<Status>('/api/telegram/runtime-config', {
@@ -1709,8 +1717,8 @@ function App() {
 
   async function addProxyFromAuth(event: FormEvent) {
     event.preventDefault()
-    const link = proxyLinkDraft.trim()
-    if (!link) {
+    const text = proxyLinkDraft.trim()
+    if (!text) {
       setError('لینک پراکسی را وارد کنید.')
       return
     }
@@ -1718,10 +1726,13 @@ function App() {
     setProxyBusy(true)
     setError('')
     try {
-      await api<{ index: number }>('/api/telegram/transport/add-link', {
+      const result = await api<ProxyBundleResponse>('/api/telegram/transport/add-bundle', {
         method: 'POST',
-        body: JSON.stringify({ link })
+        body: JSON.stringify({ text })
       })
+      if (result.failed > 0) {
+        setError(new Intl.NumberFormat('fa-IR').format(result.failed) + ' مسیر پشتیبانی‌نشده بود و رد شد.')
+      }
       setProxyLinkDraft('')
       setShowProxyAdd(false)
       await refreshProxySettings()
@@ -1863,17 +1874,20 @@ function App() {
     setProxyBusy(true)
     setError('')
     try {
-      await api<{ index: number }>('/api/telegram/transport/add-link', {
+      const result = await api<ProxyBundleResponse>('/api/telegram/transport/add-bundle', {
         method: 'POST',
-        body: JSON.stringify({ link: value })
+        body: JSON.stringify({ text: value })
       })
       setProxySettingsOpen(true)
       setShowProxyAdd(false)
       setProxyLinkDraft('')
       await refreshProxySettings()
-      setProxyBusy(false)
+      if (result.failed > 0) {
+        setError(new Intl.NumberFormat('fa-IR').format(result.failed) + ' مسیر پشتیبانی‌نشده بود و رد شد.')
+      }
     } catch (caught) {
       setError(errorMessage(caught, 'لینک پراکسی معتبر نیست یا اضافه نشد.'))
+    } finally {
       setProxyBusy(false)
     }
   }
@@ -2559,12 +2573,13 @@ function App() {
               </label>
               <label className="auth-field">
                 <span>Proxy Link <small>(اختیاری)</small></span>
-                <input
+                <textarea
                   value={proxyLinkDraft}
                   onChange={event => setProxyLinkDraft(event.target.value)}
-                  placeholder="tg://proxy?... or vless://..."
+                  placeholder="Paste one or multiple proxy / VLESS links, one per line"
                   dir="ltr"
                   autoComplete="off"
+                  rows={4}
                 />
               </label>
               <button className="primary-action auth-submit" type="submit" disabled={runtimeConfigBusy}>
@@ -2611,7 +2626,7 @@ function App() {
                   </span>
                 </button>
 
-                <button className="auth-proxy-row" type="button" disabled={proxyBusy} onClick={() => void selectProxy(0)}>
+                <button className={'auth-proxy-row' + (!transportStatus?.allow_direct ? ' disabled' : '')} type="button" disabled={proxyBusy || !transportStatus?.allow_direct} onClick={() => void selectProxy(0)}>
                   <span className={'proxy-radio ' + (status.active_route === 'direct' ? 'selected' : '')} />
                   <span className="auth-proxy-copy">
                     <strong>Direct connection</strong>
@@ -2629,13 +2644,14 @@ function App() {
 
                 {showProxyAdd && (
                   <form className="auth-proxy-add" onSubmit={addProxyFromAuth}>
-                    <input
+                    <textarea
                       value={proxyLinkDraft}
                       onChange={event => setProxyLinkDraft(event.target.value)}
-                      placeholder="https://t.me/proxy?... or vless://..."
+                      placeholder="Paste one or multiple proxy / VLESS links, one per line"
                       dir="ltr"
                       autoComplete="off"
                       autoFocus
+                      rows={5}
                     />
                     <button type="submit" disabled={proxyBusy || !proxyLinkDraft.trim()}>
                       {proxyBusy ? '…' : 'Add'}
@@ -3235,7 +3251,7 @@ function App() {
               <strong>Proxy Settings</strong>
             </header>
             <div className="proxy-settings-scroll">
-              <button className="proxy-choice" type="button" disabled={proxyBusy} onClick={() => void selectProxy(0)}>
+              <button className={'proxy-choice' + (!transportStatus?.allow_direct ? ' disabled' : '')} type="button" disabled={proxyBusy || !transportStatus?.allow_direct} onClick={() => void selectProxy(0)}>
                 <span className={'proxy-radio ' + (transportStatus?.routes.every(route => !route.selected) && status.active_route === 'direct' ? 'selected' : '')} />
                 <span>Disable Proxy</span>
               </button>
@@ -3250,12 +3266,13 @@ function App() {
               </button>
               {showProxyAdd && (
                 <form className="proxy-add-form" onSubmit={event => { event.preventDefault(); void addProxyLink(proxyLinkDraft) }}>
-                  <input
+                  <textarea
                     value={proxyLinkDraft}
                     onChange={event => setProxyLinkDraft(event.target.value)}
-                    placeholder="tg://proxy?... or vless://..."
+                    placeholder="Paste one or multiple proxy / VLESS links, one per line"
                     dir="ltr"
                     autoFocus
+                    rows={5}
                   />
                   <button type="submit" disabled={proxyBusy || !proxyLinkDraft.trim()}>Add</button>
                 </form>
