@@ -2,7 +2,6 @@
 
 #[cfg(not(debug_assertions))]
 use std::sync::Mutex;
-#[cfg(not(debug_assertions))]
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 #[cfg(not(debug_assertions))]
 use tauri::RunEvent;
@@ -194,6 +193,9 @@ fn main() {
         .expect("error while building Telegram Desktop");
 
     app.run(|app_handle, event| {
+        #[cfg(debug_assertions)]
+        let _ = (&app_handle, &event);
+
         #[cfg(not(debug_assertions))]
         if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
             let state = app_handle.state::<BackendProcess>();

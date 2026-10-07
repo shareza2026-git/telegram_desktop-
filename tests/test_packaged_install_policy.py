@@ -91,3 +91,14 @@ def test_installer_updates_only_selected_instance_and_clears_locked_binaries():
     assert 'parser.add_argument("--parent-pid"' in desktop
     assert "desktop-parent-watchdog" in desktop
     assert "server.should_exit = True" in desktop
+
+
+def test_tauri_debug_window_imports_are_not_release_only():
+    main_rs = (ROOT / "frontend" / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
+
+    assert "use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};" in main_rs
+    assert (
+        '#[cfg(not(debug_assertions))]\nuse tauri::{Manager, WebviewUrl, WebviewWindowBuilder};'
+        not in main_rs
+    )
+    assert "#[tauri::command]\nasync fn open_chat_window" in main_rs
