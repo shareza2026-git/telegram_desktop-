@@ -42,3 +42,4 @@ dist/
 .pytest-devices/
 .pytest-run-final/
 .pytest-run/
+.pytest-live-gate/

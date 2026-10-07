@@ -18,6 +18,9 @@ try {
     $Branch = (& git branch --show-current).Trim()
     $Head = (& git rev-parse HEAD).Trim()
     $StatusBefore = @(& git status --short)
+    if ($StatusBefore.Count -gt 0) {
+        throw "Release gate requires a clean Git working tree before validation."
+    }
 
     & $Python scripts\sync-version.py --check
     if ($LASTEXITCODE -ne 0) { throw "Version manifest check failed." }
@@ -25,6 +28,8 @@ try {
     Remove-Item $PytestTemp -Recurse -Force -ErrorAction SilentlyContinue
     & $Python -m pytest -q --basetemp=$PytestTemp
     if ($LASTEXITCODE -ne 0) { throw "Backend test suite failed." }
+
+    Remove-Item $PytestTemp -Recurse -Force -ErrorAction SilentlyContinue
 
     Push-Location $Frontend
     try {
@@ -71,5 +76,6 @@ Live promotion and release tagging require explicit user approval.
     Write-Host "Report: $(Join-Path $ReviewRoot 'RELEASE_GATE_RESULTS.txt')" -ForegroundColor Green
     Write-Host "No live files, tags, or releases were changed." -ForegroundColor Yellow
 } finally {
+    Remove-Item $PytestTemp -Recurse -Force -ErrorAction SilentlyContinue
     Pop-Location
 }

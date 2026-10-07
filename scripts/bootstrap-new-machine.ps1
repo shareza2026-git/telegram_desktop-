@@ -67,6 +67,26 @@ function SecureString-ToPlainText {
     }
 }
 
+function Ensure-Xray {
+    $ToolsRoot = Join-Path $ProjectRoot "tools\xray"
+    $Xray = Join-Path $ToolsRoot "xray.exe"
+    if (-not (Test-Path $Xray)) {
+        New-Item -ItemType Directory -Force $ToolsRoot | Out-Null
+        $Zip = Join-Path $env:TEMP "Xray-windows-64-v26.9.9.zip"
+        $Extract = Join-Path $env:TEMP "telegram-desktop-xray-v26.9.9"
+        Remove-Item $Extract -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "Downloading the pinned Xray core used by the release workflow..." -ForegroundColor Cyan
+        Invoke-WebRequest `
+            -Uri "https://github.com/XTLS/Xray-core/releases/download/v26.9.9/Xray-windows-64.zip" `
+            -OutFile $Zip
+        Expand-Archive -Path $Zip -DestinationPath $Extract -Force
+        Copy-Item (Join-Path $Extract "xray.exe") $Xray -Force
+    }
+    & $Xray version | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "xray.exe failed its version check." }
+    return $Xray
+}
+
 $ActualDev = Normalize-PathString $RepoRoot
 $ExpectedDevNormalized = Normalize-PathString $ExpectedDev
 if ($ActualDev -ne $ExpectedDevNormalized) {
@@ -135,29 +155,19 @@ try {
     Set-EnvValue "TELEGRAM_PORTABLE_CONFIG" ""
     Set-EnvValue "TELEGRAM_PORTABLE_MIRROR_CONFIG" ""
 
+    $ApiHash = $null
+    $SecureApiHash = $null
+
     if ($ProxyCatalogPath) {
         $ResolvedCatalog = (Resolve-Path $ProxyCatalogPath).Path
+        $Xray = Ensure-Xray
         Set-EnvValue "TELEGRAM_PROXY_CONFIG" $ResolvedCatalog
+        Set-EnvValue "TELEGRAM_XRAY_CORE" $Xray
         Write-Host "Using the selected read-only proxy catalog. It will not be copied into Git." -ForegroundColor Green
     } else {
         $Answer = (Read-Host "Configure a private VLESS/REALITY tunnel now? [Y/n]").Trim()
         if (-not $Answer -or $Answer -match '^(?i:y|yes)$') {
-            $ToolsRoot = Join-Path $ProjectRoot "tools\xray"
-            $Xray = Join-Path $ToolsRoot "xray.exe"
-            if (-not (Test-Path $Xray)) {
-                New-Item -ItemType Directory -Force $ToolsRoot | Out-Null
-                $Zip = Join-Path $env:TEMP "Xray-windows-64-v26.9.9.zip"
-                $Extract = Join-Path $env:TEMP "telegram-desktop-xray-v26.9.9"
-                Remove-Item $Extract -Recurse -Force -ErrorAction SilentlyContinue
-                Write-Host "Downloading the pinned Xray core used by the release workflow..." -ForegroundColor Cyan
-                Invoke-WebRequest `
-                    -Uri "https://github.com/XTLS/Xray-core/releases/download/v26.9.9/Xray-windows-64.zip" `
-                    -OutFile $Zip
-                Expand-Archive -Path $Zip -DestinationPath $Extract -Force
-                Copy-Item (Join-Path $Extract "xray.exe") $Xray -Force
-            }
-            & $Xray version | Out-Host
-            if ($LASTEXITCODE -ne 0) { throw "xray.exe failed its version check." }
+            $Xray = Ensure-Xray
 
             $LocalCatalog = Join-Path $RepoRoot "data\telegram_desktop\proxies.json"
             Set-EnvValue "TELEGRAM_PROXY_CONFIG" "data/telegram_desktop/proxies.json"
