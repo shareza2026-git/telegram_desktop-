@@ -165,30 +165,29 @@ try {
         Set-EnvValue "TELEGRAM_XRAY_CORE" $Xray
         Write-Host "Using the selected read-only proxy catalog. It will not be copied into Git." -ForegroundColor Green
     } else {
-        $Answer = (Read-Host "Configure a private VLESS/REALITY tunnel now? [Y/n]").Trim()
-        if (-not $Answer -or $Answer -match '^(?i:y|yes)$') {
-            $Xray = Ensure-Xray
+        # Direct Telegram connectivity is disabled by policy, so a route is
+        # required. Ask for the private VLESS/REALITY URI directly through
+        # hidden input instead of a redundant Y/n prompt that could expose a
+        # secret if the link is pasted into the wrong prompt.
+        $Xray = Ensure-Xray
 
-            $LocalCatalog = Join-Path $RepoRoot "data\telegram_desktop\proxies.json"
-            Set-EnvValue "TELEGRAM_PROXY_CONFIG" "data/telegram_desktop/proxies.json"
-            Set-EnvValue "TELEGRAM_XRAY_CORE" $Xray
+        $LocalCatalog = Join-Path $RepoRoot "data\telegram_desktop\proxies.json"
+        Set-EnvValue "TELEGRAM_PROXY_CONFIG" "data/telegram_desktop/proxies.json"
+        Set-EnvValue "TELEGRAM_XRAY_CORE" $Xray
 
-            $SecureVless = Read-Host "Paste the VLESS/REALITY link (input hidden; never printed)" -AsSecureString
-            $Vless = SecureString-ToPlainText $SecureVless
-            if ([string]::IsNullOrWhiteSpace($Vless)) {
-                throw "No tunnel link was provided."
-            }
-            $Vless | & $Python (Join-Path $RepoRoot "scripts\configure-private-proxy.py") `
-                --catalog $LocalCatalog `
-                --xray-core $Xray | Out-Host
-            if ($LASTEXITCODE -ne 0) {
-                throw "Private tunnel configuration failed."
-            }
-            $Vless = $null
-            $SecureVless = $null
-        } else {
-            throw "No Telegram route was configured. Direct connectivity remains disabled by policy."
+        $SecureVless = Read-Host "Paste the VLESS/REALITY link (input hidden; never printed)" -AsSecureString
+        $Vless = SecureString-ToPlainText $SecureVless
+        if ([string]::IsNullOrWhiteSpace($Vless)) {
+            throw "No tunnel link was provided. Direct connectivity remains disabled by policy."
         }
+        $Vless | & $Python (Join-Path $RepoRoot "scripts\configure-private-proxy.py") `
+            --catalog $LocalCatalog `
+            --xray-core $Xray | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            throw "Private tunnel configuration failed."
+        }
+        $Vless = $null
+        $SecureVless = $null
     }
 
     & (Join-Path $RepoRoot "scripts\create-dev-shortcut.ps1")
