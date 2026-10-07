@@ -160,35 +160,11 @@ fn main() {
             instance_id: instance_id.clone(),
         });
 
-        // Portable state is deliberately tied to the actual executable folder.
-        // Do not inspect the working directory, Desktop, Downloads, or shortcut
-        // locations. Moving the application folder to another Windows machine
-        // therefore moves exactly the same API/proxy/session state with it.
-        let account_dir = data_root.join("accounts").join("default");
-        std::fs::create_dir_all(&account_dir)?;
-
-        let portable_files = [
-            (
-                executable_dir.join("telegram-api.env"),
-                data_root.join("settings.env"),
-            ),
-            (
-                executable_dir.join("telegram-proxies.json"),
-                data_root.join("proxies.json"),
-            ),
-            (
-                executable_dir.join("telegram-session.session"),
-                account_dir.join("client.session"),
-            ),
-        ];
-        for (source, target) in portable_files {
-            if !target.is_file() && source.is_file() {
-                std::fs::copy(source, target)?;
-            }
-        }
+        // Fresh packaged installs never copy API credentials, proxy secrets, or
+        // Telegram authorization from files beside the executable. Existing
+        // private AppData state remains authoritative for upgrades.
 
         let data_root_arg = data_root.to_string_lossy().into_owned();
-        let transfer_dir_arg = executable_dir.to_string_lossy().into_owned();
         let backend_port_arg = backend_port.to_string();
         let parent_pid_arg = std::process::id().to_string();
 
@@ -198,8 +174,6 @@ fn main() {
             .args([
                 "--data-root",
                 data_root_arg.as_str(),
-                "--transfer-dir",
-                transfer_dir_arg.as_str(),
                 "--port",
                 backend_port_arg.as_str(),
                 "--parent-pid",

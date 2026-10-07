@@ -236,27 +236,37 @@ class TelegramDesktopService:
             )
             return self.status.connected
 
-    async def _connect(self) -> None:
-        routes = self.transport.load()
-        selected = self.transport.selected_index()
-
-        # Always keep a fallback chain. A stale saved selection (for example
-        # direct=0 from an older install) must not prevent healthy proxies from
-        # being tried.
+    def _connection_candidates(
+        self,
+        routes: list[ProxyRoute],
+        selected: int | None,
+    ) -> list[ProxyRoute | None]:
         candidates: list[ProxyRoute | None] = []
         if selected == 0:
-            candidates.append(None)
+            if self.settings.telegram_allow_direct:
+                candidates.append(None)
             candidates.extend(routes)
         elif selected is not None and 1 <= selected <= len(routes):
             preferred = routes[selected - 1]
             candidates.append(preferred)
-            candidates.extend(route for index, route in enumerate(routes, 1) if index != selected)
+            candidates.extend(
+                route for index, route in enumerate(routes, 1) if index != selected
+            )
             if self.settings.telegram_allow_direct:
                 candidates.append(None)
         else:
             candidates.extend(routes)
             if self.settings.telegram_allow_direct:
                 candidates.append(None)
+        return candidates
+
+    async def _connect(self) -> None:
+        routes = self.transport.load()
+        selected = self.transport.selected_index()
+
+        # Always keep a fallback chain, but never let a stale saved
+        # direct selection bypass the explicit direct-connect policy.
+        candidates = self._connection_candidates(routes, selected)
         if not candidates:
             self.status = self.status.model_copy(
                 update={"state": "PROXY_ERROR", "last_error": "No Telegram route is configured"}
@@ -334,7 +344,9 @@ class TelegramDesktopService:
 
         target = self.settings.data_root / "settings.env"
         target.parent.mkdir(parents=True, exist_ok=True)
-        direct_allowed = self.settings.telegram_allow_direct or not self.transport.load()
+        # Saving API credentials must never silently opt into a direct
+        # Telegram connection. Direct connectivity is an explicit user policy.
+        direct_allowed = self.settings.telegram_allow_direct
         target.write_text(
             f"TELEGRAM_API_ID={values.api_id}\n"
             f"TELEGRAM_API_HASH={key}\n"
@@ -863,6 +875,8 @@ class TelegramDesktopService:
 
     async def select_proxy(self, index: int | None) -> dict:
         routes = self.transport.load()
+        if index == 0 and not self.settings.telegram_allow_direct:
+            raise ValueError("Direct Telegram connection is disabled")
         if index is not None and index != 0 and not (1 <= index <= len(routes)):
             raise ValueError("Proxy selection is invalid")
         async with self._lifecycle_lock:

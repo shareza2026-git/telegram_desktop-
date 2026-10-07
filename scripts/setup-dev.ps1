@@ -93,5 +93,5 @@ if (-not $SkipTests) {
 }
 
 Write-Host "Development setup is ready." -ForegroundColor Green
-Write-Host "Before the first run, open .env and fill TELEGRAM_API_ID, TELEGRAM_API_HASH and the read-only proxy/source paths." -ForegroundColor Yellow
+Write-Host "For a fresh machine, run .\scripts\bootstrap-new-machine.ps1 to configure approved API credentials and a private tunnel without importing an old session." -ForegroundColor Yellow
 Write-Host "Then run: .\scripts\run-dev.ps1" -ForegroundColor Green

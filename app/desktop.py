@@ -11,7 +11,7 @@ from pathlib import Path
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Telegram Desktop local backend")
     parser.add_argument("--data-root", required=True, help="Writable private client data directory")
-    parser.add_argument("--transfer-dir", help="Directory for portable transfer files")
+    parser.add_argument("--transfer-dir", help="Explicit opt-in directory for portable transfer files")
     parser.add_argument("--port", type=int, default=8110, help="Loopback backend port for this instance")
     parser.add_argument("--parent-pid", type=int, help="Desktop parent process to monitor")
     parser.add_argument("--portable-config", help="Canonical writable portable Telegram bundle")
@@ -122,8 +122,9 @@ def main() -> None:
         else None
     )
 
-    # The executable-folder portable bundle is authoritative. Restore it before
-    # loading settings or creating Telethon's private session.
+    # Portable transfer restore is explicit-only. Packaged Tauri startup does
+    # not supply --transfer-dir, so a fresh machine cannot silently inherit an
+    # authorization/session from files beside the executable.
     _restore_portable_state(data_root, transfer_dir)
 
     # Load secrets from a user-owned file outside the installed application.

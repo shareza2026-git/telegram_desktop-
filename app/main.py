@@ -19,7 +19,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(application: FastAPI):
         store = ChatStore(active_settings.database_path)
         await store.initialize()
-        transport = TransportCatalog(active_settings.telegram_proxy_config)
+        transport = TransportCatalog(
+            active_settings.telegram_proxy_config,
+            xray_core_path=active_settings.telegram_xray_core_path,
+        )
         desktop = TelegramDesktopService(active_settings, store, transport)
         application.state.chat_store = store
         application.state.telegram_desktop = desktop

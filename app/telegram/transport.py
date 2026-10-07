@@ -95,8 +95,9 @@ def _safe_host(value: str) -> str:
 
 
 class TransportCatalog:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, xray_core_path: Path | None = None) -> None:
         self.path = path
+        self.xray_core_path = xray_core_path.resolve() if xray_core_path else None
         self.last_error: str | None = None
 
     def _user_path(self) -> Path:
@@ -137,6 +138,8 @@ class TransportCatalog:
         path.write_text(json.dumps({"selected_index": index}, indent=2), encoding="utf-8")
 
     def _xray_core_path(self) -> Path:
+        if self.xray_core_path is not None:
+            return self.xray_core_path
         return Path(sys.executable).resolve().parent / "xray.exe"
 
     def _xray_runtime_directory(self) -> Path:
