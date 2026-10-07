@@ -6,7 +6,7 @@ A standalone Windows Telegram-style desktop client built independently from the 
 
 ## Goals
 
-- Reuse the trading terminal's Telegram API configuration and proxy/V2Ray routes through a read-only local adapter.
+- Use independently supplied, approved Telegram API credentials. Existing dashboard proxy/V2Ray route catalogs may be referenced explicitly through the read-only adapter.
 - Keep an independent Telegram session and local chat/message database.
 - Present accessible private chats, groups, channels, archived chats and folders in a Telegram Desktop-like interface.
 - Load message history lazily and receive live updates.
@@ -290,15 +290,33 @@ notepad .env
 The `.env` file must keep `TELEGRAM_SESSION_PATH` and `TELEGRAM_DATABASE_PATH` under this client's `data/telegram_desktop` directory. Dashboard session, proxy and V2Ray paths are read-only inputs and must never be copied into Git.
 
 
-## Update-safe portable account state
+## Fresh-machine bootstrap and persistent account state
 
-Packaged Windows builds separate replaceable application binaries from persistent Telegram state.
+A new Windows machine must create its own independent Telegram authorization. A file merely existing beside the executable is not allowed to seed API credentials, proxy secrets, or Telegram session authorization automatically.
 
-1. Tauri's stable identifier `local.telegram.desktop` keeps the same per-user AppData directory across upgrades.
-2. Sessions, the local message database, downloads, runtime files and the canonical portable account bundle live under that AppData directory rather than beside replaceable program binaries.
-3. If `telegram-portable.json` exists beside the installed executable on the first run for a Windows profile, it is imported into `AppData/portable/telegram-portable.json`.
-4. The AppData copy becomes authoritative after bootstrap, so installing a newer NSIS build over the old version does not replace Telegram authorization or account state.
-5. When the external `telegram-portable.json` remains beside the executable, account additions/removals are mirrored back to it as well.
-6. A clean reinstall on another machine can bootstrap from the same external portable file as long as the contained Telegram authorization is still valid.
+For the development machine, clone this repository into `Desktop Telegram\dev` and run:
 
-Installing a newer signed/unsigned NSIS build over the existing current-user installation is therefore the supported manual upgrade path. A future in-app automatic updater can replace only the application binaries while reusing the same AppData contract; it must never package or overwrite the portable account bundle.
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\bootstrap-new-machine.ps1
+```
+
+The bootstrap verifies the development workspace, runs setup/tests, requests approved API credentials locally when missing, keeps `TELEGRAM_ALLOW_DIRECT=false`, configures an explicit tunnel route, creates the `Telegram Desktop DEV` desktop shortcut, and starts development mode. VLESS/API secret input is hidden and must never be committed or pasted into reports.
+
+After phone/code/2FA login is completed inside the application, keep the app running and verify the new authorization with:
+
+```powershell
+.\scripts\verify-local-session.ps1
+```
+
+That check verifies backend health, configured/connected/authorized status, the current Telegram Device name against the real Windows computer name, and dialog access without printing account secrets.
+
+Packaged upgrades preserve this application's own private AppData state. Fresh packaged installs do not copy `telegram-session.session`, `telegram-api.env`, `telegram-proxies.json`, or `telegram-portable.json` from the executable directory automatically. Portable/session import remains an explicit opt-in path only.
+
+Before touching `Desktop Telegram\live`, run:
+
+```powershell
+.\scripts\release-gate.ps1
+```
+
+The gate validates versions, backend tests, frontend tests/build, and Git cleanliness and writes a sanitized result under the parent `review\LIVE_GATE` directory. It does not modify `live`, create a tag, or publish a release.
