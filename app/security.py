@@ -13,6 +13,7 @@ shell:
 """
 
 import hmac
+import logging
 from urllib.parse import parse_qs
 
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -92,3 +93,45 @@ class DesktopGuard:
             }
         )
         await send({"type": "http.response.body", "body": b'{"detail":"Forbidden"}'})
+
+
+logger = logging.getLogger(__name__)
+
+
+class ErrorEnvelope:
+    """Turn an unexpected exception into a JSON 500.
+
+    Installed inside CORSMiddleware so the error still carries CORS headers;
+    otherwise the webview only sees an opaque "Failed to fetch".
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        started = False
+
+        async def tracking_send(message) -> None:
+            nonlocal started
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, receive, tracking_send)
+        except Exception:
+            logger.exception("Unhandled error for %s", scope.get("path"))
+            if started:
+                raise
+            body = '{"detail":"خطای داخلی برنامه؛ دوباره تلاش کنید."}'.encode("utf-8")
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 500,
+                    "headers": [(b"content-type", b"application/json; charset=utf-8")],
+                }
+            )
+            await send({"type": "http.response.body", "body": body})

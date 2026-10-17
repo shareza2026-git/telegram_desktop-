@@ -118,3 +118,40 @@
 .tg-viewer-media { max-width: 100%; max-height: 100%; object-fit: contain; user-select: none; }
 .tg-viewer-caption { max-height: 22vh; padding: 10px 24px 20px; overflow: auto; color: #fff; text-align: center; white-space: pre-wrap; }
 @keyframes tg-fade { from { opacity: 0; } to { opacity: 1; } }
+
+
+/* Login, styled after Telegram Desktop's intro screens. */
+.auth-screen.tg-login { background: #fff; color: #000; }
+.tg-login .auth-card { width: 360px; padding: 0; color: #000; background: transparent; box-shadow: none; text-align: center; }
+.tg-login .tg-login-logo { width: 120px; height: 120px; margin: 0 auto 28px; background: #40a7e3; transform: none; }
+.tg-login .paper-plane { width: 62px; height: 62px; margin-inline-start: -6px; background: center / contain no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23fff' d='M2.6 11.2 19.9 4.5c.8-.3 1.5.2 1.3 1.4l-2.9 13.8c-.2 1-.8 1.2-1.6.8l-4.5-3.3-2.2 2.1c-.2.2-.5.4-.9.4l.3-4.6 8.4-7.6c.4-.3-.1-.5-.6-.2L6.8 13.9 2.4 12.5c-1-.3-1-.9.2-1.3Z'/%3E%3C/svg%3E"); }
+.tg-login .auth-card h1 { margin: 0 0 10px; color: #000; font-size: 20px; font-weight: 600; direction: ltr; unicode-bidi: plaintext; }
+.tg-login .tg-login-lead { margin: 0 auto 26px; max-width: 300px; color: #999; font-size: 13.5px; line-height: 1.5; }
+.tg-login .tg-login-connecting { margin: -14px 0 18px; color: #40a7e3; font-size: 12px; }
+.tg-login .auth-form { gap: 0; text-align: left; }
+.tg-login-country { padding: 6px 0 7px; border-bottom: 1px solid #e0e0e0; color: #000; font-size: 15px; text-align: left; }
+.tg-login-phone { display: flex; gap: 14px; margin-top: 12px; }
+.tg-login-phone input, .tg-login-single { min-width: 0; height: 40px; padding: 0; color: #000; background: transparent; border: 0; border-bottom: 1px solid #e0e0e0; border-radius: 0; outline: 0; font-size: 15px; transition: border-color .15s; }
+.tg-login-phone input { flex: 1; }
+.tg-login-phone input.tg-login-code { flex: 0 0 64px; width: 64px; }
+.tg-login-phone input:focus, .tg-login-single:focus { border-bottom: 2px solid #40a7e3; }
+.tg-login-single { width: 100%; text-align: center; letter-spacing: 2px; }
+.tg-login-single::placeholder { letter-spacing: 0; }
+.tg-login-error { margin: 10px 0 0 !important; color: #d14e4e; font-size: 12.5px; text-align: center; }
+.tg-login-next { width: 100%; height: 44px; margin-top: 34px; display: grid; place-items: center; color: #fff; background: #40a7e3; border-radius: 8px; font-size: 14px; font-weight: 600; letter-spacing: .3px; transition: background .15s; }
+.tg-login-next:hover { background: #3a9bd4; }
+.tg-login-next:disabled { cursor: default; background: #40a7e3; }
+.tg-login-link { margin: 16px auto 0; padding: 4px; color: #168acd; background: transparent; font-size: 13px; }
+.tg-login-link:hover { text-decoration: underline; }
+.tg-login-spinner { width: 18px; height: 18px; border: 2px solid #ffffff66; border-top-color: #fff; border-radius: 50%; animation: tg-spin .8s linear infinite; }
+@keyframes tg-spin { to { transform: rotate(360deg); } }
+.tg-login .auth-divider { color: #999; }
+.tg-login .auth-divider::before, .tg-login .auth-divider::after { background: #e0e0e0; }
+.tg-login .muted { color: #999; }
+
+/* Proxy shield on the login screen (top corner, as in Telegram Desktop). */
+.tg-login-proxy { position: absolute; top: 14px; right: 16px; width: 36px; height: 36px; display: grid; place-items: center; background: transparent; border-radius: 50%; }
+.tg-login-proxy:hover { background: #f1f1f1; }
+.tg-login-proxy.active .proxy-shield-icon::before { border-color: #40a7e3; }
+.auth-screen .proxy-settings-backdrop { inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, .35); }
+.auth-screen .proxy-settings-panel { height: min(600px, calc(100vh - 40px)); margin: 0; border-radius: 10px; box-shadow: 0 10px 40px rgba(0, 0, 0, .25); }

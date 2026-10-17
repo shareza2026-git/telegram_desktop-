@@ -11,7 +11,7 @@ from typing import Any
 from pydantic import SecretStr
 
 from telethon import TelegramClient, events, functions, types, utils
-from telethon.sessions import MemorySession
+from telethon.sessions import MemorySession, SQLiteSession
 from telethon.errors import (
     FileReferenceExpiredError,
     FloodWaitError,
@@ -59,6 +59,10 @@ AVATAR_MAX_AGE_SECONDS = 24 * 60 * 60
 # In-chat photos use the smallest Telegram size at least this wide, the same
 # one Telegram Desktop shows in a bubble; the original is only for downloads.
 CHAT_PHOTO_PREVIEW_SIDE = 800
+
+
+CONNECTION_UNAVAILABLE = "اتصال به تلگرام برقرار نیست؛ تنظیمات پراکسی را بررسی کنید."
+CONNECTION_DROPPED = "اتصال به تلگرام قطع شد؛ دوباره تلاش کنید یا پراکسی دیگری انتخاب کنید."
 
 
 class MediaUnavailable(DesktopError):
@@ -248,7 +252,7 @@ class TelegramDesktopService:
             )
             return self.status.connected
 
-    async def _connect(self) -> None:
+    async def _connect(self, avoid: str | None = None) -> None:
         routes = self.transport.load()
         selected = self.transport.selected_index()
 
@@ -274,6 +278,15 @@ class TelegramDesktopService:
                 update={"state": "PROXY_ERROR", "last_error": "No Telegram route is configured"}
             )
             return
+        if avoid is not None:
+            # The route that just dropped a request goes to the back of the
+            # line; the others get a chance first.
+            def name(route: ProxyRoute | None) -> str:
+                return route.display_name if route is not None else "direct"
+
+            candidates = [item for item in candidates if name(item) != avoid] + [
+                item for item in candidates if name(item) == avoid
+            ]
 
         runtime_session, session_metadata = self.sessions.open_runtime_session()
         self._session_metadata = session_metadata
@@ -306,6 +319,7 @@ class TelegramDesktopService:
                 if authorized:
                     await self._mark_authorized()
                 else:
+                    self._clear_update_state(runtime_session)
                     self.status = self.status.model_copy(
                         update={
                             "connected": True,
@@ -315,7 +329,12 @@ class TelegramDesktopService:
                         }
                     )
                 return
-            except Exception as error:
+            except (Exception, asyncio.CancelledError) as error:
+                task = asyncio.current_task()
+                if isinstance(error, asyncio.CancelledError) and task is not None and task.cancelling():
+                    raise
+                # A proxy that drops the connection mid-handshake cancels
+                # Telethon's pending request; treat it as a failed route.
                 route_name = route.display_name if route is not None else "direct"
                 message = str(error).strip().replace("\n", " ")
                 short = f"{type(error).__name__}: {message}" if message else type(error).__name__
@@ -338,6 +357,38 @@ class TelegramDesktopService:
                 "last_error": "All Telegram routes failed" + (f" ({detail})" if detail else ""),
             }
         )
+
+    @staticmethod
+    def _clear_update_state(session: Any) -> None:
+        """Drop pts/qts saved by an earlier login; they are wrong for a new one."""
+        if not isinstance(session, SQLiteSession):
+            return
+        try:
+            session._execute("delete from update_state")
+            session.save()
+        except Exception:
+            logger.warning("Stale update state could not be cleared", exc_info=True)
+
+    async def _catch_up_missed(self, client: TelegramClient) -> None:
+        """Fetch what arrived while the app was closed, from the saved pts/qts."""
+        try:
+            from telethon._updates import ChannelState, SessionState
+
+            box = client._message_box
+            if box.is_empty():
+                account = SessionState(0, 0, False, 0, 0, 0, 0, None)
+                channels = []
+                for entity_id, state in await utils.maybe_async(client.session.get_update_states()):
+                    if entity_id == 0:
+                        account = SessionState(
+                            0, 0, False, state.pts, state.qts, int(state.date.timestamp()), state.seq, None
+                        )
+                    else:
+                        channels.append(ChannelState(entity_id, state.pts))
+                box.load(account, channels)
+            await client.catch_up()
+        except Exception:
+            logger.warning("Catching up on missed updates failed", exc_info=True)
 
     async def set_runtime_config(self, values: ApiConfigRequest) -> ClientStatus:
         key = values.api_hash.strip()
@@ -438,6 +489,7 @@ class TelegramDesktopService:
         account = await self.client.get_me()
         self._remember_entity(account)
         self._register_handlers()
+        self._spawn(self._catch_up_missed(self.client))
         self.status = self.status.model_copy(
             update={
                 "connected": True,
@@ -1102,7 +1154,7 @@ class TelegramDesktopService:
                         raise MediaUnavailable("Media is not available for this message") from None
             if downloaded is None or not partial.is_file():
                 partial.unlink(missing_ok=True)
-                raise DesktopError("Media download failed")
+                raise MediaUnavailable("Media is no longer available")
             partial.replace(target)
             return DownloadedMedia(
                 path=target,
@@ -1632,20 +1684,65 @@ class TelegramDesktopService:
         await self.store.mark_dialog_read(chat_id)
         return {"chat_id": chat_id, "read": True}
 
-    async def send_login_code(self, phone: str) -> dict:
+    async def _reconnect_unauthorized(self) -> None:
+        """Rebuild the login connection (the monitor only heals logged-in ones)."""
         async with self._lifecycle_lock:
-            if self.client is None or not self.status.connected:
-                await self._connect()
+            client = self.client
+            if client is not None:
+                with suppress(Exception):
+                    await client.disconnect()
+            self.client = None
+            failed = self.route.display_name if self.route is not None else "direct"
+            if self.route is not None:
+                with suppress(Exception):
+                    await self.route.deactivate()
+            self.route = None
+            await self._connect(avoid=failed if client is not None else None)
+            await self.events.publish({"type": "READY", "data": self.status.model_dump(mode="json")})
+
+    async def _ensure_login_connection(self) -> TelegramClient:
+        if self.client is None or not self.status.connected or not self.client.is_connected():
+            # A proxy can drop an idle login connection without notice.
+            await self._reconnect_unauthorized()
         if self.client is None or not self.status.connected:
-            raise DesktopError("Telegram connection is unavailable")
+            raise DesktopError(CONNECTION_UNAVAILABLE)
+        return self.client
+
+    async def _login_call(self, call, fallback: str):
+        """Run a login request, reconnecting once if the proxy drops it.
+
+        When the connection breaks mid-request Telethon cancels the pending
+        request, which surfaces as CancelledError rather than ConnectionError.
+        """
+        for attempt in range(2):
+            client = await self._ensure_login_connection()
+            try:
+                return await call(client)
+            except (ConnectionError, asyncio.CancelledError) as error:
+                task = asyncio.current_task()
+                if isinstance(error, asyncio.CancelledError) and task is not None and task.cancelling():
+                    raise  # the request itself was cancelled, not the connection
+                self._log_auth_error(error)
+                if attempt:
+                    raise DesktopError(CONNECTION_DROPPED) from None
+                await self._reconnect_unauthorized()
+            except (SessionPasswordNeededError, DesktopError):
+                raise
+            except Exception as error:
+                self._log_auth_error(error)
+                raise self._auth_error(error, fallback) from None
+        raise DesktopError(CONNECTION_DROPPED)
+
+    async def send_login_code(self, phone: str) -> dict:
+        await self._ensure_login_connection()
         if self.status.authorized:
             raise DesktopError("Log out before authorizing another account")
-        try:
-            sent = await self.client.send_code_request(phone.strip())
-        except Exception as error:
-            self._log_auth_error(error)
-            raise self._auth_error(error, "ارسال کد تأیید انجام نشد.") from None
-        self.login_phone = phone.strip()
+        number = phone.strip()
+        sent = await self._login_call(
+            lambda client: client.send_code_request(number),
+            "ارسال کد تأیید انجام نشد.",
+        )
+        self.login_phone = number
         self.login_code_hash = sent.phone_code_hash
         self.status = self.status.model_copy(update={"state": "AUTH_REQUIRED", "last_error": None})
         return {"code_sent": True, "requires_2fa": False}
@@ -1653,17 +1750,14 @@ class TelegramDesktopService:
     async def verify_code(self, code: str) -> dict:
         if self.client is None or not self.login_phone or not self.login_code_hash:
             raise DesktopError("Request a new login code")
+        phone, code_hash = self.login_phone, self.login_code_hash
         try:
-            await self.client.sign_in(
-                phone=self.login_phone,
-                code=code.strip(),
-                phone_code_hash=self.login_code_hash,
+            await self._login_call(
+                lambda client: client.sign_in(phone=phone, code=code.strip(), phone_code_hash=code_hash),
+                "تأیید کد انجام نشد.",
             )
         except SessionPasswordNeededError:
             return {"code_sent": True, "requires_2fa": True, "authorized": False}
-        except Exception as error:
-            self._log_auth_error(error)
-            raise self._auth_error(error, "تأیید کد انجام نشد.") from None
         await self._mark_authorized()
         self._clear_login_challenge()
         return {"code_sent": True, "requires_2fa": False, "authorized": True}
@@ -1671,11 +1765,10 @@ class TelegramDesktopService:
     async def verify_password(self, password: str) -> dict:
         if self.client is None:
             raise DesktopError("Request a new login code")
-        try:
-            await self.client.sign_in(password=password)
-        except Exception as error:
-            self._log_auth_error(error)
-            raise self._auth_error(error, "تأیید رمز دومرحله‌ای انجام نشد.") from None
+        await self._login_call(
+            lambda client: client.sign_in(password=password),
+            "تأیید رمز دومرحله‌ای انجام نشد.",
+        )
         await self._mark_authorized()
         self._clear_login_challenge()
         return {"code_sent": True, "requires_2fa": False, "authorized": True}

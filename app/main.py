@@ -10,7 +10,7 @@ from app.telegram.service import TelegramDesktopService
 from app.telegram.transport import TransportCatalog
 from app.telegram.portable import apply_portable_config
 from app.api.routes import router
-from app.security import DESKTOP_ORIGINS, TOKEN_HEADER, DesktopGuard
+from app.security import DESKTOP_ORIGINS, TOKEN_HEADER, DesktopGuard, ErrorEnvelope
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -38,6 +38,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await store.close()
 
     application = FastAPI(title="Telegram Desktop", lifespan=lifespan)
+    # Innermost: unexpected errors become JSON that still gets CORS headers.
+    application.add_middleware(ErrorEnvelope)
     application.add_middleware(
         CORSMiddleware,
         allow_origins=sorted(DESKTOP_ORIGINS),

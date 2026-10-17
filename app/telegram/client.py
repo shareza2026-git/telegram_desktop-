@@ -19,9 +19,11 @@ def build_client(settings: Settings, options: dict | None = None, session=None) 
         "connection_retries": 2,
         "request_retries": 2,
         "flood_sleep_threshold": 60,
-        # Fetch updates missed while the app was closed (needs the persistent
-        # SQLite session, which stores the update state).
-        "catch_up": True,
+        # Never catch up during connect: with a logged-out key and update state
+        # left from an earlier login, Telethon treats the account as logged out
+        # and disconnects itself, cancelling the login request. The service
+        # catches up explicitly once authorization is confirmed.
+        "catch_up": False,
     }
     client_options.update(options or {})
     return TelegramClient(

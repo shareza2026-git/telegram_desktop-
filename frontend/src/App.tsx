@@ -81,6 +81,16 @@ function useStableHandlers<T extends object>(handlers: T): T {
   }, [])
 }
 
+const COUNTRY_NAMES: Record<string, string> = {
+  '+98': 'Iran', '+1': 'USA / Canada', '+44': 'United Kingdom', '+49': 'Germany', '+90': 'Turkey',
+  '+971': 'United Arab Emirates', '+7': 'Russia', '+93': 'Afghanistan', '+964': 'Iraq', '+33': 'France',
+  '+39': 'Italy', '+31': 'Netherlands', '+46': 'Sweden', '+61': 'Australia', '+91': 'India', '+86': 'China'
+}
+
+function countryName(code: string) {
+  return COUNTRY_NAMES[code] || 'Country'
+}
+
 function isGroupType(value: string) {
   return value === 'group' || value === 'supergroup'
 }
@@ -105,6 +115,7 @@ function App() {
   const [importing, setImporting] = useState(false)
   const [authStep, setAuthStep] = useState<AuthStep>('phone')
   const [phone, setPhone] = useState('')
+  const [countryCode, setCountryCode] = useState('+98')
   const [code, setCode] = useState('')
   const [password, setPassword] = useState('')
   const [authBusy, setAuthBusy] = useState(false)
@@ -371,6 +382,8 @@ function App() {
       if (packet.type === 'READY') {
         const ready = packet.data as Status
         setStatus(ready)
+        // A fresh connection (e.g. after switching proxy) makes old login errors stale.
+        if (!ready.authorized && ready.connected) setError('')
         if (ready.authorized) {
           void refreshSnapshot()
           void resyncActiveChat()
@@ -1167,7 +1180,7 @@ function App() {
 
   async function sendCode(event: FormEvent) {
     event.preventDefault()
-    const value = phone.trim()
+    const value = phone.trim() ? countryCode + phone.replace(/\D/g, '') : ''
     if (!value) {
       setError('شماره تلفن را وارد کنید.')
       return
@@ -1872,15 +1885,96 @@ function App() {
     status.client_session_exists && status.state === 'CONNECTING' && dialogs.length > 0
   )
 
+  const proxyPanel = proxySettingsOpen ? (
+        <div className="proxy-settings-backdrop" onMouseDown={() => setProxySettingsOpen(false)}>
+          <section className="proxy-settings-panel" role="dialog" aria-modal="true" aria-label="Proxy Settings" onMouseDown={event => event.stopPropagation()}>
+            <header className="proxy-settings-header">
+              <button type="button" aria-label="بازگشت" onClick={() => setProxySettingsOpen(false)}>‹</button>
+              <strong>Proxy Settings</strong>
+            </header>
+            <div className="proxy-settings-scroll">
+              <button className="proxy-choice" type="button" disabled={proxyBusy} onClick={() => void selectProxy(0)}>
+                <span className={'proxy-radio ' + (transportStatus?.routes.every(route => !route.selected) && status.active_route === 'direct' ? 'selected' : '')} />
+                <span>Disable Proxy</span>
+              </button>
+              <button className="proxy-choice disabled" type="button" disabled title="Telethon MTProto does not use Windows system proxy automatically">
+                <span className="proxy-radio" />
+                <span>Use System Proxy Settings</span>
+                <small>Not available for MTProto</small>
+              </button>
+              <button className="proxy-choice add" type="button" onClick={() => setShowProxyAdd(value => !value)}>
+                <span className="proxy-plus">＋</span>
+                <span>Add Proxy</span>
+              </button>
+              {showProxyAdd && (
+                <form className="proxy-add-form" onSubmit={event => { event.preventDefault(); void addProxyLink(proxyLinkDraft) }}>
+                  <input
+                    value={proxyLinkDraft}
+                    onChange={event => setProxyLinkDraft(event.target.value)}
+                    placeholder="tg://proxy?... or https://t.me/proxy?..."
+                    dir="ltr"
+                    autoFocus
+                  />
+                  <button type="submit" disabled={proxyBusy || !proxyLinkDraft.trim()}>Add</button>
+                </form>
+              )}
+              <h3>Connections</h3>
+              <div className="proxy-connections">
+                {transportStatus?.routes.map(route => {
+                  const probe = proxyProbes.find(item => item.index === route.index)
+                  return (
+                    <button className="proxy-route" type="button" key={route.index} disabled={proxyBusy} onClick={() => void selectProxy(route.index)}>
+                      <span className={'proxy-radio ' + (route.selected ? 'selected' : '')} />
+                      <span className="proxy-route-copy">
+                        <strong dir="ltr">{route.name}</strong>
+                        <small className={probe?.available === false ? 'unavailable' : ''}>
+                          {probe?.available
+                            ? 'Connected, Ping: ' + Math.round(probe.latency_ms || 0) + ' ms'
+                            : probe
+                              ? 'Unavailable'
+                              : 'Checking…'}
+                          {route.managed_v2ray ? ' · V2Ray' : ''}
+                        </small>
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          </section>
+        </div>
+  ) : null
+
+  const loginMode = status.state !== 'UNCONFIGURED' && status.state !== 'PROXY_ERROR'
+  const loginTitle = authStep === 'phone'
+    ? 'شماره تلفن شما'
+    : authStep === 'code'
+      ? countryCode + ' ' + phone
+      : 'رمز ابری'
+  const loginLead = authStep === 'phone'
+    ? 'لطفاً کد کشور را تأیید و شماره تلفن خود را وارد کنید.'
+    : authStep === 'code'
+      ? 'کد ورود را به اپ تلگرام روی دستگاه دیگرتان فرستادیم.'
+      : 'حساب شما با یک رمز اضافه محافظت می‌شود.'
+
   if (!showMain) {
     return (
-      <div className="auth-screen">
+      <div className={'auth-screen' + (loginMode ? ' tg-login' : '')}>
         <div className={'auth-card' + (status.state === 'PROXY_ERROR' ? ' proxy-recovery-card' : '')}>
-          <div className="brand-mark">✈</div>
-          <h1>Telegram Desktop</h1>
-          <p>ورود به کلاینت مستقل</p>
-          <span className="status-pill">{statusLabel(status.state)}</span>
-          {status.last_error && <small className="auth-error">{status.last_error}</small>}
+          <div className="brand-mark tg-login-logo"><span className="paper-plane" aria-hidden="true" /></div>
+          {loginMode ? (
+            <>
+              <h1>{loginTitle}</h1>
+              <p className="tg-login-lead">{loginLead}</p>
+              {status.state === 'CONNECTING' && <small className="tg-login-connecting">در حال اتصال…</small>}
+            </>
+          ) : (
+            <>
+              <h1>Telegram Desktop</h1>
+              <span className="status-pill">{statusLabel(status.state)}</span>
+              {status.last_error && <small className="auth-error">{status.last_error}</small>}
+            </>
+          )}
 
           {status.state === 'IMPORT_READY' && status.source_session_available && (
             <>
@@ -2049,47 +2143,103 @@ function App() {
             <form className="auth-form" onSubmit={authStep === 'phone' ? sendCode : authStep === 'code' ? verifyCode : verifyPassword}>
               {authStep === 'phone' && (
                 <>
-                  <label className="auth-field">
-                    <span>شماره تلفن</span>
-                    <input value={phone} onChange={event => setPhone(event.target.value)} placeholder="+98..." autoComplete="tel" dir="ltr" />
-                  </label>
-                  <button className="primary-action auth-submit" type="submit" disabled={authBusy}>
-                    {authBusy ? 'در حال ارسال…' : 'دریافت کد تأیید'}
-                  </button>
+                  <div className="tg-login-country" dir="ltr">
+                    <span>{countryName(countryCode)}</span>
+                  </div>
+                  <div className="tg-login-phone" dir="ltr">
+                    <input
+                      className="tg-login-code"
+                      value={countryCode}
+                      onChange={event => setCountryCode('+' + event.target.value.replace(/\D/g, '').slice(0, 4))}
+                      inputMode="numeric"
+                      aria-label="کد کشور"
+                    />
+                    <input
+                      value={phone}
+                      onChange={event => {
+                        const raw = event.target.value.trim()
+                        if (raw.startsWith('+')) {
+                          // Full international number pasted: split off the country code.
+                          const digits = raw.replace(/\D/g, '')
+                          const code = Object.keys(COUNTRY_NAMES)
+                            .filter(item => digits.startsWith(item.slice(1)))
+                            .sort((a, b) => b.length - a.length)[0]
+                          if (code) {
+                            setCountryCode(code)
+                            setPhone(digits.slice(code.length - 1))
+                            return
+                          }
+                        }
+                        // Local format (0918...) drops the trunk zero, as Telegram does.
+                        setPhone(event.target.value.replace(/[^\d ]/g, '').replace(/^0+/, ''))
+                      }}
+                      placeholder="--- --- ----"
+                      inputMode="tel"
+                      autoComplete="tel-national"
+                      aria-label="شماره تلفن"
+                      autoFocus
+                    />
+                  </div>
                 </>
               )}
 
               {authStep === 'code' && (
-                <>
-                  <p className="auth-notice">{authNotice || 'کد تأیید را وارد کنید.'}</p>
-                  <label className="auth-field">
-                    <span>کد تأیید</span>
-                    <input value={code} onChange={event => setCode(event.target.value)} placeholder="12345" inputMode="numeric" autoComplete="one-time-code" dir="ltr" />
-                  </label>
-                  <button className="primary-action auth-submit" type="submit" disabled={authBusy}>
-                    {authBusy ? 'در حال بررسی…' : 'تأیید و ورود'}
-                  </button>
-                  <button className="text-button" type="button" onClick={resetAuth}>تغییر شماره</button>
-                </>
+                <input
+                  className="tg-login-single"
+                  value={code}
+                  onChange={event => {
+                    const value = event.target.value.replace(/\D/g, '').slice(0, 6)
+                    setCode(value)
+                    // Telegram submits on its own once the 5-digit code is in.
+                    if (value.length === 5 && !authBusy) window.setTimeout(() => event.target.form?.requestSubmit(), 0)
+                  }}
+                  placeholder="کد"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  dir="ltr"
+                  autoFocus
+                />
               )}
 
               {authStep === 'password' && (
-                <>
-                  <p className="auth-notice">{authNotice || 'رمز دومرحله‌ای را وارد کنید.'}</p>
-                  <label className="auth-field">
-                    <span>رمز دومرحله‌ای</span>
-                    <input value={password} onChange={event => setPassword(event.target.value)} type="password" autoComplete="current-password" dir="ltr" />
-                  </label>
-                  <button className="primary-action auth-submit" type="submit" disabled={authBusy}>
-                    {authBusy ? 'در حال بررسی…' : 'تأیید رمز و ورود'}
-                  </button>
-                  <button className="text-button" type="button" onClick={resetAuth}>شروع دوباره</button>
-                </>
+                <input
+                  className="tg-login-single"
+                  value={password}
+                  onChange={event => setPassword(event.target.value)}
+                  type="password"
+                  placeholder="رمز عبور"
+                  autoComplete="current-password"
+                  dir="ltr"
+                  autoFocus
+                />
+              )}
+
+              {error && <small className="tg-login-error">{error}</small>}
+
+              <button className="tg-login-next" type="submit" disabled={authBusy}>
+                {authBusy ? <span className="tg-login-spinner" aria-label="در حال انجام" /> : 'بعدی'}
+              </button>
+              {authStep !== 'phone' && (
+                <button className="tg-login-link" type="button" onClick={resetAuth}>
+                  {authStep === 'code' ? 'شماره اشتباه است؟' : 'شروع دوباره'}
+                </button>
               )}
             </form>
           )}
         </div>
-        {error && <button className="error-toast" onClick={() => setError('')}>{error}</button>}
+        {error && !loginMode && <button className="error-toast" onClick={() => setError('')}>{error}</button>}
+        {loginMode && (
+          <button
+            type="button"
+            className={'tg-login-proxy' + (status.active_route && status.active_route !== 'direct' ? ' active' : '')}
+            onClick={() => void openProxySettings()}
+            title="Proxy Settings"
+            aria-label="تنظیمات پراکسی"
+          >
+            <span className="proxy-shield-icon" aria-hidden="true" />
+          </button>
+        )}
+        {proxyPanel}
       </div>
     )
   }
@@ -2611,65 +2761,7 @@ function App() {
         </div>
       )}
 
-      {proxySettingsOpen && (
-        <div className="proxy-settings-backdrop" onMouseDown={() => setProxySettingsOpen(false)}>
-          <section className="proxy-settings-panel" role="dialog" aria-modal="true" aria-label="Proxy Settings" onMouseDown={event => event.stopPropagation()}>
-            <header className="proxy-settings-header">
-              <button type="button" aria-label="بازگشت" onClick={() => setProxySettingsOpen(false)}>‹</button>
-              <strong>Proxy Settings</strong>
-            </header>
-            <div className="proxy-settings-scroll">
-              <button className="proxy-choice" type="button" disabled={proxyBusy} onClick={() => void selectProxy(0)}>
-                <span className={'proxy-radio ' + (transportStatus?.routes.every(route => !route.selected) && status.active_route === 'direct' ? 'selected' : '')} />
-                <span>Disable Proxy</span>
-              </button>
-              <button className="proxy-choice disabled" type="button" disabled title="Telethon MTProto does not use Windows system proxy automatically">
-                <span className="proxy-radio" />
-                <span>Use System Proxy Settings</span>
-                <small>Not available for MTProto</small>
-              </button>
-              <button className="proxy-choice add" type="button" onClick={() => setShowProxyAdd(value => !value)}>
-                <span className="proxy-plus">＋</span>
-                <span>Add Proxy</span>
-              </button>
-              {showProxyAdd && (
-                <form className="proxy-add-form" onSubmit={event => { event.preventDefault(); void addProxyLink(proxyLinkDraft) }}>
-                  <input
-                    value={proxyLinkDraft}
-                    onChange={event => setProxyLinkDraft(event.target.value)}
-                    placeholder="tg://proxy?... or https://t.me/proxy?..."
-                    dir="ltr"
-                    autoFocus
-                  />
-                  <button type="submit" disabled={proxyBusy || !proxyLinkDraft.trim()}>Add</button>
-                </form>
-              )}
-              <h3>Connections</h3>
-              <div className="proxy-connections">
-                {transportStatus?.routes.map(route => {
-                  const probe = proxyProbes.find(item => item.index === route.index)
-                  return (
-                    <button className="proxy-route" type="button" key={route.index} disabled={proxyBusy} onClick={() => void selectProxy(route.index)}>
-                      <span className={'proxy-radio ' + (route.selected ? 'selected' : '')} />
-                      <span className="proxy-route-copy">
-                        <strong dir="ltr">{route.name}</strong>
-                        <small className={probe?.available === false ? 'unavailable' : ''}>
-                          {probe?.available
-                            ? 'Connected, Ping: ' + Math.round(probe.latency_ms || 0) + ' ms'
-                            : probe
-                              ? 'Unavailable'
-                              : 'Checking…'}
-                          {route.managed_v2ray ? ' · V2Ray' : ''}
-                        </small>
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          </section>
-        </div>
-      )}
+      {proxyPanel}
 
       {settingsOpen && (
         <div className="settings-backdrop" onMouseDown={() => setSettingsOpen(false)}>

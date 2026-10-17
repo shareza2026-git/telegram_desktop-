@@ -52,7 +52,13 @@ async function failure(response: Response, fallback: string) {
 export async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const headers = new Headers(options?.headers)
   if (!(options?.body instanceof FormData)) headers.set('Content-Type', 'application/json')
-  const response = await backendFetch(path, { ...options, headers })
+  let response: Response
+  try {
+    response = await backendFetch(path, { ...options, headers })
+  } catch {
+    // The browser hides the real reason; the backend is down or restarting.
+    throw new Error('ارتباط با سرویس محلی برنامه برقرار نشد؛ چند لحظه بعد دوباره تلاش کنید.')
+  }
   if (response.ok) return response.json() as Promise<T>
   throw await failure(response, 'درخواست انجام نشد.')
 }

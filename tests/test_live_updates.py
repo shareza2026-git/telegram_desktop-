@@ -129,3 +129,35 @@ async def test_concurrent_media_requests_share_one_download():
 
     assert results == ["done"] * 5
     assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_login_code_retries_after_proxy_drops_the_request():
+    class DroppingClient:
+        calls = 0
+
+        def is_connected(self):
+            return True
+
+        async def send_code_request(self, phone):
+            DroppingClient.calls += 1
+            if DroppingClient.calls == 1:
+                # What Telethon raises when the connection dies mid-request.
+                raise asyncio.CancelledError()
+            return SimpleNamespace(phone_code_hash="hash")
+
+    service = build_service(None)
+    service.client = DroppingClient()
+    service.status = ClientStatus(configured=True, connected=True, authorized=False, state="AUTH_REQUIRED")
+    reconnects = []
+
+    async def reconnect():
+        reconnects.append(True)
+
+    service._reconnect_unauthorized = reconnect
+
+    result = await service.send_login_code("+989120000000")
+
+    assert result["code_sent"] is True
+    assert service.login_code_hash == "hash"
+    assert reconnects == [True]
