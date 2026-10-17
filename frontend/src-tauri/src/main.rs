@@ -6,10 +6,58 @@ use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 #[cfg(not(debug_assertions))]
 use tauri::RunEvent;
 #[cfg(not(debug_assertions))]
-use tauri_plugin_shell::{process::CommandChild, ShellExt};
+use tauri_plugin_shell::process::CommandChild;
+use tauri_plugin_shell::ShellExt;
 
 #[cfg(not(debug_assertions))]
 struct BackendProcess(Mutex<Option<CommandChild>>);
+
+/// Per-launch secret shared with the backend sidecar. Every API request from
+/// the webview carries it, so websites and other local programs cannot use
+/// the backend on 127.0.0.1.
+struct BackendToken(String);
+
+/// 256 bits from the OS-seeded SipHash keys of std's RandomState, so no extra
+/// crate is needed. Each RandomState draws fresh per-process random keys.
+#[cfg_attr(debug_assertions, allow(dead_code))]
+fn generate_token() -> String {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_nanos())
+        .unwrap_or_default();
+    let mut token = String::with_capacity(64);
+    for round in 0u64..4 {
+        let mut hasher = RandomState::new().build_hasher();
+        hasher.write_u64(round);
+        hasher.write_u128(nanos);
+        hasher.write_u32(std::process::id());
+        token.push_str(&format!("{:016x}", hasher.finish()));
+    }
+    token
+}
+
+/// Open a link from a message in the default browser. Only web and mail
+/// links are allowed, so a message cannot launch local programs or files.
+#[tauri::command]
+#[allow(deprecated)]
+fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    let lower = url.to_ascii_lowercase();
+    let allowed = ["https://", "http://", "mailto:"]
+        .iter()
+        .any(|scheme| lower.starts_with(scheme));
+    if !allowed || url.chars().any(|c| c.is_control()) {
+        return Err("unsupported link".into());
+    }
+    app.shell().open(url, None).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn backend_token(token: tauri::State<'_, BackendToken>) -> String {
+    token.0.clone()
+}
 
 #[tauri::command]
 async fn open_chat_window(
@@ -45,9 +93,17 @@ async fn open_chat_window(
 }
 
 fn main() {
+    // In development the backend is started by scripts/run-dev.ps1, which
+    // exports the same token to both processes.
+    #[cfg(debug_assertions)]
+    let token = std::env::var("TELEGRAM_DESKTOP_TOKEN").unwrap_or_default();
+    #[cfg(not(debug_assertions))]
+    let token = generate_token();
+
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![open_chat_window]);
+        .manage(BackendToken(token))
+        .invoke_handler(tauri::generate_handler![open_chat_window, backend_token, open_external]);
 
     #[cfg(not(debug_assertions))]
     let builder = builder.setup(|app| {
@@ -159,9 +215,11 @@ fn main() {
             });
         let transfer_dir_arg = transfer_dir.to_string_lossy().into_owned();
 
+        let token = app.state::<BackendToken>().0.clone();
         let sidecar = app
             .shell()
             .sidecar("telegram-desktop-backend")?
+            .env("TELEGRAM_DESKTOP_TOKEN", token)
             .args([
                 "--data-root",
                 data_root_arg.as_str(),

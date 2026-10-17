@@ -19,6 +19,9 @@ def build_client(settings: Settings, options: dict | None = None, session=None) 
         "connection_retries": 2,
         "request_retries": 2,
         "flood_sleep_threshold": 60,
+        # Fetch updates missed while the app was closed (needs the persistent
+        # SQLite session, which stores the update state).
+        "catch_up": True,
     }
     client_options.update(options or {})
     return TelegramClient(

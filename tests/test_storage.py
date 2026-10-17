@@ -96,3 +96,46 @@ async def test_outgoing_read_receipts_are_persisted_by_max_id(tmp_path):
         (11, False),
         (12, False),
     ]
+
+
+@pytest.mark.asyncio
+async def test_extra_message_fields_survive_storage_roundtrip(tmp_path):
+    from app.models import LinkPreview, MessageEntity
+
+    store = ChatStore(tmp_path / "client.db")
+    await store.initialize()
+    await store.upsert_messages(
+        [
+            Message(
+                chat_id=7,
+                message_id=1,
+                text="bold link",
+                date=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                entities=[MessageEntity(type="bold", offset=0, length=4)],
+                forward_from="Channel",
+                grouped_id=55,
+                views=10,
+                link_preview=LinkPreview(url="https://example.com", title="Example"),
+            )
+        ]
+    )
+
+    value = (await store.history(7, limit=1))[0]
+
+    assert value.entities[0].type == "bold"
+    assert value.forward_from == "Channel"
+    assert value.grouped_id == 55
+    assert value.views == 10
+    assert value.link_preview.title == "Example"
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_replace_dialogs_drops_chats_that_were_left(tmp_path):
+    store = ChatStore(tmp_path / "client.db")
+    await store.initialize()
+    await store.replace_dialogs([Dialog(chat_id=1, title="a", dialog_type="user"), Dialog(chat_id=2, title="b", dialog_type="user")])
+    await store.replace_dialogs([Dialog(chat_id=2, title="b", dialog_type="user")])
+
+    assert [item.chat_id for item in await store.list_dialogs()] == [2]
+    await store.close()

@@ -1,407 +1,92 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type FormEvent, type MouseEvent as ReactMouseEvent } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type FormEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 
+import { api, apiBlob, authedUrl, backendBase, backendFetch, chatPath, socketBase } from './backend'
+import { DialogRow, type DialogActions } from './DialogRow'
 import { DRAFT_STORAGE_KEY, parseDraftMap, updateDraftMap } from './drafts'
+import {
+  chatActionLabel,
+  dialogTypeLabel,
+  errorMessage,
+  formatBytes,
+  formatMessageDate,
+  formatNumber,
+  formatTime,
+  isChannelId,
+  mediaKindLabel,
+  messageDayKey,
+  messageSnippet,
+  presenceLabel,
+  statusLabel
+} from './format'
+import { ChatAvatar, MediaViewer } from './media'
+import { MessageBubble, type BubbleActions } from './MessageBubble'
+import { buildMessageRows, mergeMessage } from './messageList'
 import { PREFERENCES_STORAGE_KEY, parsePreferences, resolvedTheme, type ClientPreferences } from './preferences'
-
-type Dialog = {
-  chat_id: number
-  title: string
-  dialog_type: string
-  username?: string | null
-  unread_count: number
-  pinned: boolean
-  archived: boolean
-  muted: boolean
-  last_message_at?: string | null
-  last_message_preview?: string | null
-}
-
-type DialogFolder = {
-  id: number
-  title: string
-  chat_ids: number[]
-  unread_count: number
-}
-
-type DialogPatch = {
-  chat_id: number
-  pinned?: boolean
-  archived?: boolean
-  muted?: boolean
-}
-
-type MessageContextMenu = {
-  message: Message
-  x: number
-  y: number
-}
-
-type DialogContextMenu = {
-  dialog: Dialog
-  x: number
-  y: number
-}
-
-type ChatInfo = {
-  chat_id: number
-  title: string
-  dialog_type: string
-  username?: string | null
-  participants_count?: number | null
-  status?: string | null
-  is_bot: boolean
-  verified: boolean
-  scam: boolean
-  fake: boolean
-  photo_available: boolean
-}
-
-type MediaInfo = {
-  kind: 'photo' | 'video' | 'audio' | 'file' | 'other'
-  name?: string | null
-  size?: number | null
-  mime_type?: string | null
-  playable: boolean
-  downloadable: boolean
-}
-
-type ReactionSummary = {
-  emoji: string
-  count: number
-  chosen: boolean
-}
-
-type Message = {
-  chat_id: number
-  message_id: number
-  text: string
-  date: string
-  sender_id?: number | null
-  sender_name?: string | null
-  outgoing: boolean
-  edited: boolean
-  reply_to_message_id?: number | null
-  media?: MediaInfo | null
-  reactions: ReactionSummary[]
-  read: boolean
-  deleted: boolean
-}
-
-type Status = {
-  configured: boolean
-  connected: boolean
-  authorized: boolean
-  state: string
-  user_id?: number | null
-  display_name?: string | null
-  phone?: string | null
-  active_route?: string | null
-  source_session_available: boolean
-  client_session_exists: boolean
-  session_dc_id?: number | null
-  session_auth_key_present?: boolean
-  session_auth_key_bytes?: number
-  runtime_session_cloned?: boolean
-  last_error?: string | null
-}
-
-type ChatAction = {
-  chat_id: number
-  user_id?: number | null
-  user_name?: string | null
-  action: 'typing' | 'uploading' | 'recording' | 'cancel'
-  active: boolean
-  expires_at?: number
-}
-
-type ReadReceipt = {
-  chat_id: number
-  max_id: number
-}
-
-type PendingAttachment = {
-  id: string
-  file: File
-  previewUrl: string | null
-}
-
-type RecentMediaItem = {
-  media_id: string
-  kind: 'sticker' | 'gif'
-  label: string
-  mime_type?: string | null
-}
-
-type RecentMediaCatalog = {
-  stickers: RecentMediaItem[]
-  gifs: RecentMediaItem[]
-}
-
-type TransportStatus = {
-  routes: Array<{
-    index: number
-    type: string
-    host: string
-    port: number
-    managed_v2ray: boolean
-    name: string
-    selected?: boolean
-  }>
-  allow_direct: boolean
-}
-
-type ProxyProbe = {
-  index: number
-  available: boolean
-  latency_ms?: number | null
-  detail?: string | null
-}
-
-type AuthResponse = {
-  code_sent: boolean
-  requires_2fa: boolean
-  authorized: boolean
-}
-
-type AuthStep = 'phone' | 'code' | 'password'
-type FolderKey = 'all' | 'private' | 'unread' | 'groups' | 'channels' | 'archived' | `folder:${number}`
-type MediaState = 'loading' | 'ready' | 'downloading' | 'done' | 'error'
+import type {
+  AuthResponse,
+  AuthStep,
+  ChatAction,
+  ChatInfo,
+  DeviceSession,
+  Dialog,
+  DialogContextMenu,
+  DialogFolder,
+  DialogPatch,
+  FolderKey,
+  MediaState,
+  Message,
+  MessageContextMenu,
+  PendingAttachment,
+  ProxyProbe,
+  ReactionUpdate,
+  ReadReceipt,
+  RecentMediaCatalog,
+  RecentMediaItem,
+  Status,
+  TransportStatus
+} from './types'
 
 const HISTORY_PAGE_SIZE = 80
-const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🔥']
+// Recently opened chats stay in memory so switching back is instant.
+const CHAT_CACHE_LIMIT = 40
 const COMPOSER_EMOJIS = [
   '😀', '😃', '😄', '😁', '😆', '😅', '😂', '🙂', '🙃', '😉',
   '😊', '😍', '🥰', '😘', '😎', '🤔', '😮', '😢', '😭', '😡',
   '👍', '👎', '👏', '🙏', '🤝', '💪', '❤️', '💔', '🔥', '✨',
   '🎉', '✅', '❌', '⚡', '💯', '👀', '📌', '📎', '🚀', '🌹'
 ]
-const backendBase = (import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8110').replace(/\/$/, '')
-const socketBase = backendBase.replace(/^http/, 'ws')
-const appWindow = getCurrentWindow()
+// Null when the UI runs in a plain browser (vite dev without the Tauri shell).
+const appWindow = '__TAURI_INTERNALS__' in window ? getCurrentWindow() : null
 const startupParams = new URLSearchParams(window.location.search)
 const popoutChatId = startupParams.get('popout') === '1'
   ? Number(startupParams.get('chat') || 0)
   : 0
 const isPopoutWindow = Boolean(popoutChatId)
-const mediaLabels: Record<MediaInfo['kind'], string> = {
-  photo: 'تصویر',
-  video: 'ویدئو',
-  audio: 'صدا',
-  file: 'فایل',
-  other: 'رسانه'
-}
 
-async function api<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(backendBase + path, {
-    ...options,
-    headers: { 'Content-Type': 'application/json', ...(options?.headers || {}) }
-  })
-  if (response.ok) return response.json() as Promise<T>
-
-  const body = await response.text()
-  let message = body || 'درخواست انجام نشد.'
-  try {
-    const parsed = JSON.parse(body) as { detail?: string }
-    if (parsed.detail) message = parsed.detail
-  } catch {
-    // Keep the plain response body when the backend did not return JSON.
-  }
-  throw new Error(message)
-}
-
-function formatTime(value: string) {
-  return new Intl.DateTimeFormat('fa-IR', { hour: '2-digit', minute: '2-digit' }).format(new Date(value))
-}
-
-type DeviceSession = {
-  hash: number
-  current: boolean
-  device_model: string
-  platform: string
-  system_version: string
-  app_name: string
-  app_version: string
-  date_active: string
-  country?: string | null
-  region?: string | null
-}
-
-function formatDialogTime(value?: string | null) {
-  if (!value) return ''
-  const date = new Date(value)
-  const now = new Date()
-  if (date.toDateString() === now.toDateString()) {
-    return new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' }).format(date)
-  }
-  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(date)
-}
-
-function messageDayKey(value: string) {
-  const date = new Date(value)
-  return [date.getFullYear(), date.getMonth(), date.getDate()].join('-')
-}
-
-function formatMessageDate(value: string) {
-  return new Intl.DateTimeFormat('fa-IR', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric'
-  }).format(new Date(value))
-}
-
-function formatBytes(value: number | null | undefined) {
-  if (value == null || value < 0) return 'اندازه نامشخص'
-  if (value < 1024) return value + ' B'
-
-  const units = ['KB', 'MB', 'GB']
-  let amount = value
-  let index = -1
-  while (amount >= 1024 && index < units.length - 1) {
-    amount /= 1024
-    index += 1
-  }
-  const digits = amount >= 10 || index === 0 ? 0 : 1
-  return amount.toFixed(digits) + ' ' + units[index]
-}
-
-function mediaKindLabel(kind: MediaInfo['kind']) {
-  return mediaLabels[kind]
-}
-
-function statusLabel(value: string) {
-  const labels: Record<string, string> = {
-    UNCONFIGURED: 'تنظیمات ناقص',
-    IMPORT_READY: 'آماده انتقال سشن',
-    CONNECTING: 'در حال اتصال',
-    CONNECTED: 'متصل',
-    AUTH_REQUIRED: 'نیاز به ورود',
-    PROXY_ERROR: 'خطای مسیر اتصال',
-    STOPPED: 'متوقف'
-  }
-  return labels[value] || value
-}
-
-function errorMessage(error: unknown, fallback: string) {
-  return error instanceof Error && error.message ? error.message : fallback
-}
-
-function dialogTypeLabel(value: string) {
-  const labels: Record<string, string> = {
-    user: 'گفت‌وگوی شخصی',
-    group: 'گروه',
-    supergroup: 'سوپرگروه',
-    channel: 'کانال'
-  }
-  return labels[value] || value
-}
-
-function chatActionLabel(value: ChatAction['action']) {
-  const labels: Record<ChatAction['action'], string> = {
-    typing: 'در حال نوشتن…',
-    uploading: 'در حال ارسال فایل…',
-    recording: 'در حال ضبط…',
-    cancel: ''
-  }
-  return labels[value]
-}
-
-function presenceLabel(value: string | null | undefined) {
-  const labels: Record<string, string> = {
-    online: 'آنلاین',
-    offline: 'آفلاین',
-    recently: 'اخیراً آنلاین',
-    last_week: 'آخرین بازدید این هفته',
-    last_month: 'آخرین بازدید این ماه'
-  }
-  return value ? labels[value] || value : ''
-}
-
-function avatarUrl(chatId: number) {
-  return backendBase + '/api/telegram/chats/' + encodeURIComponent(String(chatId)) + '/photo'
-}
-
-
-function BackendImage({
-  src,
-  className = '',
-  alt = '',
-  loading = 'lazy',
-  onLoad,
-  onError
-}: {
-  src: string
-  className?: string
-  alt?: string
-  loading?: 'lazy' | 'eager'
-  onLoad?: () => void
-  onError?: () => void
-}) {
-  const [objectUrl, setObjectUrl] = useState<string | null>(null)
-
-  useEffect(() => {
-    let disposed = false
-    let currentUrl: string | null = null
-
-    async function load() {
-      try {
-        const response = await fetch(src, { cache: 'no-store' })
-        if (!response.ok) throw new Error('HTTP ' + response.status)
-        const blob = await response.blob()
-        if (!blob.size) throw new Error('Empty image')
-        currentUrl = URL.createObjectURL(blob)
-        if (disposed) {
-          URL.revokeObjectURL(currentUrl)
-          return
-        }
-        setObjectUrl(currentUrl)
-      } catch {
-        if (!disposed) onError?.()
-      }
+/**
+ * Stable callbacks that always run the latest render's handler. Memoized rows
+ * receive these, so typing in the composer does not re-render every message.
+ */
+function useStableHandlers<T extends object>(handlers: T): T {
+  const ref = useRef(handlers)
+  ref.current = handlers
+  return useMemo(() => {
+    const stable: Record<string, unknown> = {}
+    for (const key of Object.keys(handlers)) {
+      stable[key] = (...args: unknown[]) => (ref.current as Record<string, (...values: unknown[]) => unknown>)[key](...args)
     }
-
-    setObjectUrl(null)
-    void load()
-    return () => {
-      disposed = true
-      if (currentUrl) URL.revokeObjectURL(currentUrl)
-    }
-  }, [src])
-
-  if (!objectUrl) return null
-  return (
-    <img
-      className={className}
-      src={objectUrl}
-      alt={alt}
-      loading={loading}
-      onLoad={onLoad}
-      onError={onError}
-    />
-  )
+    return stable as T
+  }, [])
 }
 
-function ChatAvatar({ chatId, title, className = '' }: { chatId: number; title: string; className?: string }) {
-  const [failed, setFailed] = useState(false)
+function isGroupType(value: string) {
+  return value === 'group' || value === 'supergroup'
+}
 
-  useEffect(() => {
-    setFailed(false)
-  }, [chatId])
-
-  return (
-    <span className={'avatar ' + className}>
-      <span className="avatar-fallback">{title.slice(0, 1)}</span>
-      {!failed && (
-        <BackendImage
-          src={avatarUrl(chatId)}
-          alt=""
-          loading="lazy"
-          onError={() => setFailed(true)}
-        />
-      )}
-    </span>
-  )
+function firstName(value?: string | null) {
+  return (value || '').trim().split(/\s+/)[0] || null
 }
 
 function App() {
@@ -454,7 +139,8 @@ function App() {
   const [messageActionBusy, setMessageActionBusy] = useState<string | null>(null)
   const [reactionPickerFor, setReactionPickerFor] = useState<number | null>(null)
   const [reactionBusy, setReactionBusy] = useState<string | null>(null)
-  const [selectedChatAction, setSelectedChatAction] = useState<ChatAction | null>(null)
+  const [chatActions, setChatActions] = useState<Record<number, ChatAction>>({})
+  const [viewerMessage, setViewerMessage] = useState<Message | null>(null)
   const typingTimerRef = useRef<number | null>(null)
   const typingSentRef = useRef<{ chatId: number; active: boolean; at: number } | null>(null)
   const [messageSearchOpen, setMessageSearchOpen] = useState(false)
@@ -497,6 +183,10 @@ function App() {
   const draftSwitchRef = useRef<number | null>(null)
   const draftBeforeEditRef = useRef('')
   const pendingAttachmentsRef = useRef<PendingAttachment[]>([])
+  const messagesRef = useRef<Message[]>([])
+  const chatCacheRef = useRef(new Map<number, Message[]>())
+  const dialogRefreshTimerRef = useRef<number | null>(null)
+  const selectedChatAction = selected ? chatActions[selected.chat_id] || null : null
 
   const visibleDialogs = useMemo(() => {
     let values = dialogs
@@ -517,13 +207,17 @@ function App() {
     const value = query.trim().toLocaleLowerCase()
     if (value) values = values.filter(item => item.title.toLocaleLowerCase().includes(value))
 
+    const order = new Map(dialogs.map((item, index) => [item.chat_id, index]))
+    const time = (item: Dialog) => (item.last_message_at ? Date.parse(item.last_message_at) : 0)
     return [...values].sort((a, b) => {
       if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
-      const aTime = a.last_message_at ? new Date(a.last_message_at).getTime() : 0
-      const bTime = b.last_message_at ? new Date(b.last_message_at).getTime() : 0
-      return bTime - aTime
+      if (a.pinned) return (order.get(a.chat_id) || 0) - (order.get(b.chat_id) || 0)
+      return time(b) - time(a)
     })
   }, [activeFolder, dialogs, query, telegramFolders])
+
+  const messageRows = useMemo(() => buildMessageRows(messages), [messages])
+  const messagesById = useMemo(() => new Map(messages.map(item => [item.message_id, item])), [messages])
 
   const totalUnread = useMemo(
     () => dialogs.reduce((total, dialog) => total + dialog.unread_count, 0),
@@ -543,6 +237,16 @@ function App() {
   useEffect(() => {
     dialogsRef.current = dialogs
   }, [dialogs])
+
+  useEffect(() => {
+    messagesRef.current = messages
+    const chatId = messages.find(item => !item.pending)?.chat_id
+    if (chatId === undefined) return
+    const cache = chatCacheRef.current
+    cache.delete(chatId)
+    cache.set(chatId, messages.filter(item => !item.pending).slice(-200))
+    while (cache.size > CHAT_CACHE_LIMIT) cache.delete(cache.keys().next().value as number)
+  }, [messages])
 
 
   useEffect(() => {
@@ -579,7 +283,7 @@ function App() {
 
   useEffect(() => {
     document.title = totalUnread > 0
-      ? '(' + new Intl.NumberFormat('fa-IR').format(totalUnread) + ') Telegram'
+      ? '(' + formatNumber(totalUnread) + ') Telegram'
       : 'Telegram Desktop'
     const badgeNavigator = navigator as Navigator & {
       setAppBadge?: (count?: number) => Promise<void>
@@ -638,127 +342,196 @@ function App() {
         const nextStatus = await api<Status>('/api/telegram/status')
         if (disposed) return
         setStatus(nextStatus)
-        if (nextStatus.authorized) {
-          const [nextDialogs, nextFolders] = await Promise.all([
-            api<Dialog[]>('/api/telegram/dialogs'),
-            api<DialogFolder[]>('/api/telegram/dialog-folders')
-          ])
-          setDialogs(nextDialogs)
-          setTelegramFolders(nextFolders)
+        if (nextStatus.client_session_exists && !dialogsRef.current.length) {
+          // Show the chat list from the local cache at once, like Telegram,
+          // while the live list is fetched (or the proxy is still connecting).
+          const cached = await api<Dialog[]>('/api/telegram/dialogs?cached=true').catch(() => [] as Dialog[])
+          if (!disposed && !dialogsRef.current.length && cached.length) setDialogs(cached)
         }
+        if (nextStatus.authorized) await loadLiveDialogs()
       } catch {
         // The packaged backend can need a moment to start. WebSocket retry handles recovery.
       }
     }
 
     async function resyncActiveChat() {
-      await refreshSnapshot()
       const chatId = selectedChatIdRef.current
       if (!chatId || disposed) return
       try {
-        const current = await api<Message[]>('/api/telegram/chats/' + chatId + '/messages?limit=' + HISTORY_PAGE_SIZE)
-        if (!disposed && selectedChatIdRef.current === chatId) setMessages(current.filter(item => !item.deleted))
+        const current = await api<Message[]>(chatPath(chatId) + '/messages?limit=' + HISTORY_PAGE_SIZE)
+        if (!disposed && selectedChatIdRef.current === chatId) {
+          setMessages(previous => [...current.filter(item => !item.deleted), ...previous.filter(item => item.pending)])
+        }
       } catch {
         // A later reconnect or explicit refresh will retry the snapshot.
       }
     }
 
-    function connectSocket() {
-      if (disposed) return
-      socket = new WebSocket(socketBase + '/ws/telegram')
-      socket.onopen = () => {
-        retryCount = 0
-      }
-      socket.onmessage = event => {
-      const packet = JSON.parse(event.data) as {
-        type: string
-        data: Status | Message | ChatAction | ReadReceipt | DialogPatch
-      }
+    function handlePacket(packet: { type: string; data: unknown }) {
       if (packet.type === 'READY') {
         const ready = packet.data as Status
         setStatus(ready)
-        if (ready.authorized) void refreshSnapshot()
+        if (ready.authorized) {
+          void refreshSnapshot()
+          void resyncActiveChat()
+        }
+        return
       }
-      if (packet.type === 'RESYNC') void resyncActiveChat()
+      if (packet.type === 'RESYNC') {
+        void refreshSnapshot()
+        void resyncActiveChat()
+        return
+      }
       if (packet.type === 'MESSAGE_NEW' || packet.type === 'MESSAGE_EDITED') {
         const message = packet.data as Message
-        setDialogs(current => current.map(dialog => {
-          if (dialog.chat_id !== message.chat_id) return dialog
-          const activeAndVisible = (
-            selectedChatIdRef.current === message.chat_id
-            && document.visibilityState === 'visible'
-          )
+        const isNew = packet.type === 'MESSAGE_NEW'
+        const activeAndVisible = (
+          selectedChatIdRef.current === message.chat_id
+          && document.visibilityState === 'visible'
+        )
+        const dialog = dialogsRef.current.find(item => item.chat_id === message.chat_id)
+        if (isNew && !dialog) scheduleDialogRefresh()
+        setDialogs(current => current.map(item => {
+          if (item.chat_id !== message.chat_id) return item
+          const isLatest = isNew || item.last_message_id === message.message_id
+          if (!isLatest) return item
           return {
-            ...dialog,
-            last_message_at: message.date,
-            last_message_preview: message.text || dialog.last_message_preview,
-            unread_count: packet.type === 'MESSAGE_NEW' && !message.outgoing && !activeAndVisible
-              ? dialog.unread_count + 1
-              : dialog.unread_count
+            ...item,
+            last_message_id: message.message_id,
+            last_message_at: isNew ? message.date : item.last_message_at,
+            last_message_preview: messageSnippet(message),
+            last_message_sender: isGroupType(item.dialog_type) && !message.action
+              ? (message.outgoing ? 'شما' : firstName(message.sender_name))
+              : null,
+            last_message_outgoing: message.outgoing,
+            last_message_read: isNew ? false : item.last_message_read,
+            unread_count: isNew && !message.outgoing && !activeAndVisible
+              ? item.unread_count + 1
+              : item.unread_count
           }
         }))
-        if (packet.type === 'MESSAGE_NEW' && !message.outgoing) {
-          const activeAndVisible = (
-            selectedChatIdRef.current === message.chat_id
-            && document.visibilityState === 'visible'
-          )
-          if (!activeAndVisible) {
-            showDesktopNotification(message)
-          }
-        }
+        if (isNew && !message.outgoing && !activeAndVisible) showDesktopNotification(message)
+
         if (selectedChatIdRef.current === message.chat_id) {
           const shouldFollow = message.outgoing || isNearBottom()
+          const exists = messagesRef.current.some(item => item.message_id === message.message_id)
+          if (isNew && !message.outgoing && !shouldFollow && !exists) setNewBelowCount(count => count + 1)
           setMessages(current => {
-            const exists = current.some(item => item.message_id === message.message_id)
-            if (packet.type === 'MESSAGE_NEW' && !message.outgoing && !shouldFollow && !exists) {
-              setNewBelowCount(count => count + 1)
+            let next = current
+            if (isNew && message.outgoing) {
+              // Our own message came back from Telegram before the send call
+              // returned: retire the matching optimistic copy.
+              const pendingIndex = next.findIndex(item => item.pending && item.text === message.text)
+              if (pendingIndex >= 0) next = next.filter((_, index) => index !== pendingIndex)
             }
-            const without = current.filter(item => item.message_id !== message.message_id)
-            return [...without, message].sort((a, b) => a.message_id - b.message_id)
+            return mergeMessage(next, message)
           })
-          if (shouldFollow) {
-            window.requestAnimationFrame(() => scrollToBottom(message.outgoing ? 'smooth' : 'auto'))
-          }
+          if (shouldFollow) window.requestAnimationFrame(() => scrollToBottom(message.outgoing ? 'smooth' : 'auto'))
+        } else {
+          const cached = chatCacheRef.current.get(message.chat_id)
+          if (cached) chatCacheRef.current.set(message.chat_id, mergeMessage(cached, message))
         }
+        return
+      }
+      if (packet.type === 'MESSAGE_REACTIONS') {
+        const update = packet.data as ReactionUpdate
+        const apply = (list: Message[]) => list.map(item => {
+          if (item.message_id !== update.message_id) return item
+          const reactions = update.min
+            ? update.reactions.map(reaction => ({
+              ...reaction,
+              chosen: item.reactions.some(own => own.emoji === reaction.emoji && own.chosen)
+            }))
+            : update.reactions
+          return { ...item, reactions }
+        })
+        if (selectedChatIdRef.current === update.chat_id) setMessages(apply)
+        const cached = chatCacheRef.current.get(update.chat_id)
+        if (cached) chatCacheRef.current.set(update.chat_id, apply(cached))
+        return
+      }
+      if (packet.type === 'USER_STATUS') {
+        const value = packet.data as { user_id: number; status: string | null }
+        setChatInfo(current => (current && current.chat_id === value.user_id ? { ...current, status: value.status } : current))
+        return
       }
       if (packet.type === 'DIALOG_UPDATED') {
         applyDialogPatch(packet.data as DialogPatch)
+        return
       }
       if (packet.type === 'CHAT_ACTION') {
         const action = packet.data as ChatAction
-        if (selectedChatIdRef.current === action.chat_id) {
-          if (!action.active || action.action === 'cancel') {
-            setSelectedChatAction(null)
-          } else {
-            const expiresAt = Date.now() + 6000
-            setSelectedChatAction({ ...action, expires_at: expiresAt })
-            window.setTimeout(() => {
-              setSelectedChatAction(current => (
-                current && current.expires_at === expiresAt ? null : current
-              ))
-            }, 6100)
-          }
+        if (!action.active || action.action === 'cancel') {
+          setChatActions(current => {
+            if (!current[action.chat_id]) return current
+            const next = { ...current }
+            delete next[action.chat_id]
+            return next
+          })
+        } else {
+          const expiresAt = Date.now() + 6000
+          setChatActions(current => ({ ...current, [action.chat_id]: { ...action, expires_at: expiresAt } }))
+          window.setTimeout(() => {
+            setChatActions(current => {
+              if (current[action.chat_id]?.expires_at !== expiresAt) return current
+              const next = { ...current }
+              delete next[action.chat_id]
+              return next
+            })
+          }, 6100)
         }
+        return
       }
       if (packet.type === 'MESSAGES_READ') {
         const receipt = packet.data as ReadReceipt
+        setDialogs(current => current.map(item => (
+          item.chat_id === receipt.chat_id && item.last_message_outgoing && (item.last_message_id || 0) <= receipt.max_id
+            ? { ...item, last_message_read: true }
+            : item
+        )))
         if (selectedChatIdRef.current === receipt.chat_id) {
           setMessages(current => current.map(item => (
-            item.outgoing && item.message_id <= receipt.max_id
+            item.outgoing && !item.pending && item.message_id <= receipt.max_id
               ? { ...item, read: true }
               : item
           )))
         }
+        return
       }
       if (packet.type === 'MESSAGE_DELETED') {
-        const deleted = packet.data as { chat_id: number; message_id: number }
-        if (selectedChatIdRef.current === deleted.chat_id) {
+        const deleted = packet.data as { chat_id: number | null; message_id: number }
+        const openChat = selectedChatIdRef.current
+        // Deletions in private chats and basic groups may arrive without a
+        // chat id; their message ids are account-wide, so it is safe to drop
+        // the id from whichever non-channel chat is open.
+        const affectsOpen = openChat !== null && (
+          deleted.chat_id === openChat || (deleted.chat_id === null && !isChannelId(openChat))
+        )
+        if (affectsOpen) {
           setMessages(current => current.filter(item => item.message_id !== deleted.message_id))
           setPinnedMessage(current => current?.message_id === deleted.message_id ? null : current)
           setReplyingTo(current => current?.message_id === deleted.message_id ? null : current)
           setEditing(current => current?.message_id === deleted.message_id ? null : current)
         }
+        if (deleted.chat_id !== null) {
+          const cached = chatCacheRef.current.get(deleted.chat_id)
+          if (cached) chatCacheRef.current.set(deleted.chat_id, cached.filter(item => item.message_id !== deleted.message_id))
+        }
       }
+    }
+
+    function connectSocket() {
+      if (disposed) return
+      socket = new WebSocket(authedUrl(socketBase + '/ws/telegram'))
+      socket.onopen = () => {
+        retryCount = 0
+      }
+      socket.onmessage = event => {
+        try {
+          handlePacket(JSON.parse(event.data) as { type: string; data: unknown })
+        } catch {
+          // One malformed packet must not stop live updates.
+        }
       }
       socket.onclose = () => {
         if (disposed) return
@@ -770,11 +543,12 @@ function App() {
       socket.onerror = () => socket?.close()
     }
 
-    void refreshSnapshot()
-    connectSocket()
+    // refreshSnapshot waits for the backend token; the socket needs it too.
+    void refreshSnapshot().finally(connectSocket)
     return () => {
       disposed = true
       if (retryTimer !== undefined) window.clearTimeout(retryTimer)
+      if (dialogRefreshTimerRef.current !== null) window.clearTimeout(dialogRefreshTimerRef.current)
       socket?.close()
     }
   }, [])
@@ -806,12 +580,13 @@ function App() {
       setReactionPickerFor(null)
       setMessageContextMenu(null)
       setSelectedMessageIds(new Set())
-      setSelectedChatAction(null)
       return
     }
+    const chatId = selected.chat_id
     const unreadCount = selected.unread_count
-    setMessages([])
-    setHasOlder(false)
+    const remembered = chatCacheRef.current.get(chatId)
+    setMessages(remembered || [])
+    setHasOlder(Boolean(remembered && remembered.length >= HISTORY_PAGE_SIZE))
     setChatInfo(null)
     setPinnedMessage(null)
     setUnreadBoundaryId(null)
@@ -820,7 +595,7 @@ function App() {
     stickToBottomRef.current = true
     setReplyingTo(null)
     setEditing(null)
-    setDraft(draftsRef.current[String(selected.chat_id)] || '')
+    setDraft(draftsRef.current[String(chatId)] || '')
     setMessageSearchOpen(false)
     setMessageQuery('')
     setSearchResults([])
@@ -834,33 +609,56 @@ function App() {
     setReactionPickerFor(null)
     setMessageContextMenu(null)
     setSelectedMessageIds(new Set())
-    setSelectedChatAction(null)
-    api<ChatInfo>('/api/telegram/chats/' + selected.chat_id)
-      .then(setChatInfo)
-      .catch(() => setChatInfo(null))
+    if (remembered) window.requestAnimationFrame(() => scrollToBottom('auto'))
 
-    api<Message | null>('/api/telegram/chats/' + selected.chat_id + '/pinned')
-      .then(setPinnedMessage)
-      .catch(() => setPinnedMessage(null))
+    // Every response below checks the chat is still open: switching chats
+    // quickly must never show one chat's data inside another.
+    const stillOpen = () => selectedChatIdRef.current === chatId
+    let liveArrived = false
 
-    api<Message[]>('/api/telegram/chats/' + selected.chat_id + '/messages?limit=' + HISTORY_PAGE_SIZE)
+    if (!remembered) {
+      api<Message[]>(chatPath(chatId) + '/messages?cached=true&limit=' + HISTORY_PAGE_SIZE)
+        .then(items => {
+          if (!stillOpen() || liveArrived || !items.length) return
+          setMessages(items)
+          setHasOlder(items.length === HISTORY_PAGE_SIZE)
+          window.requestAnimationFrame(() => scrollToBottom('auto'))
+        })
+        .catch(() => undefined)
+    }
+
+    api<ChatInfo>(chatPath(chatId))
+      .then(info => { if (stillOpen()) setChatInfo(info) })
+      .catch(() => undefined)
+
+    api<Message | null>(chatPath(chatId) + '/pinned')
+      .then(message => { if (stillOpen()) setPinnedMessage(message) })
+      .catch(() => undefined)
+
+    api<Message[]>(chatPath(chatId) + '/messages?limit=' + HISTORY_PAGE_SIZE)
       .then(items => {
+        if (!stillOpen()) return
+        liveArrived = true
         const visibleItems = items.filter(item => !item.deleted)
-        setMessages(visibleItems)
+        setMessages(current => [...visibleItems, ...current.filter(item => item.pending)])
         setHasOlder(items.length === HISTORY_PAGE_SIZE)
-        const incoming = items.filter(item => !item.outgoing && !item.deleted)
+        const incoming = items.filter(item => !item.outgoing && !item.deleted && !item.action)
         const unreadIndex = Math.max(0, incoming.length - unreadCount)
         setUnreadBoundaryId(unreadCount > 0 && incoming.length > 0 ? incoming[unreadIndex].message_id : null)
-        window.requestAnimationFrame(() => scrollToBottom('auto'))
+        if (stickToBottomRef.current) window.requestAnimationFrame(() => scrollToBottom('auto'))
       })
-      .catch(error => setError(errorMessage(error, 'تاریخچه این گفتگو دریافت نشد.')))
+      .catch(error => {
+        if (stillOpen() && !messagesRef.current.length) setError(errorMessage(error, 'تاریخچه این گفتگو دریافت نشد.'))
+      })
 
-    api<{ chat_id: number; read: boolean }>('/api/telegram/chats/' + selected.chat_id + '/read', { method: 'POST' })
-      .then(() => {
-        setDialogs(current => current.map(item => item.chat_id === selected.chat_id ? { ...item, unread_count: 0 } : item))
-        setSelected(current => current && current.chat_id === selected.chat_id ? { ...current, unread_count: 0 } : current)
-      })
-      .catch(() => undefined)
+    if (unreadCount > 0) {
+      api<{ chat_id: number; read: boolean }>(chatPath(chatId) + '/read', { method: 'POST' })
+        .then(() => {
+          setDialogs(current => current.map(item => item.chat_id === chatId ? { ...item, unread_count: 0 } : item))
+          setSelected(current => current && current.chat_id === chatId ? { ...current, unread_count: 0 } : current)
+        })
+        .catch(() => undefined)
+    }
   }, [selected?.chat_id])
 
   useEffect(() => {
@@ -1212,7 +1010,7 @@ function App() {
       setError('فقط پیام‌های ارسال‌شده توسط خودتان قابل حذف گروهی هستند.')
       return
     }
-    if (!window.confirm(new Intl.NumberFormat('fa-IR').format(selectedMessages.length) + ' پیام برای همه حذف شود؟')) return
+    if (!window.confirm(formatNumber(selectedMessages.length) + ' پیام برای همه حذف شود؟')) return
 
     setBulkBusy('delete')
     try {
@@ -1232,14 +1030,26 @@ function App() {
     }
   }
 
+  async function loadLiveDialogs() {
+    const nextDialogs = await api<Dialog[]>('/api/telegram/dialogs')
+    setDialogs(nextDialogs)
+    const nextFolders = await api<DialogFolder[]>('/api/telegram/dialog-folders').catch(() => null)
+    if (nextFolders) setTelegramFolders(nextFolders)
+  }
+
+  // A message from a chat that is not in the list (new chat): refetch once,
+  // debounced so a burst of messages costs one request.
+  function scheduleDialogRefresh() {
+    if (dialogRefreshTimerRef.current !== null) return
+    dialogRefreshTimerRef.current = window.setTimeout(() => {
+      dialogRefreshTimerRef.current = null
+      void loadLiveDialogs().catch(() => undefined)
+    }, 1500)
+  }
+
   async function refreshDialogs() {
     try {
-      const [nextDialogs, nextFolders] = await Promise.all([
-        api<Dialog[]>('/api/telegram/dialogs'),
-        api<DialogFolder[]>('/api/telegram/dialog-folders')
-      ])
-      setDialogs(nextDialogs)
-      setTelegramFolders(nextFolders)
+      await loadLiveDialogs()
     } catch (caught) {
       setError(errorMessage(caught, 'به‌روزرسانی گفتگوها انجام نشد.'))
     }
@@ -1251,11 +1061,13 @@ function App() {
     const previousHeight = viewport?.scrollHeight || 0
     const previousTop = viewport?.scrollTop || 0
     setLoadingOlder(true)
-    const oldestId = messages[0].message_id
+    const chatId = selected.chat_id
+    const oldestId = messages.find(item => !item.pending)?.message_id || 0
     try {
       const older = await api<Message[]>(
-        '/api/telegram/chats/' + selected.chat_id + '/messages?limit=' + HISTORY_PAGE_SIZE + '&offset_id=' + oldestId
+        chatPath(chatId) + '/messages?limit=' + HISTORY_PAGE_SIZE + '&offset_id=' + oldestId
       )
+      if (selectedChatIdRef.current !== chatId) return
       setMessages(current => {
         const known = new Set(current.map(item => item.message_id))
         return [...older.filter(item => !item.deleted && !known.has(item.message_id)), ...current]
@@ -1275,14 +1087,7 @@ function App() {
   async function refreshAuthorizedState() {
     const nextStatus = await api<Status>('/api/telegram/status')
     setStatus(nextStatus)
-    if (nextStatus.authorized) {
-      const [nextDialogs, nextFolders] = await Promise.all([
-        api<Dialog[]>('/api/telegram/dialogs'),
-        api<DialogFolder[]>('/api/telegram/dialog-folders')
-      ])
-      setDialogs(nextDialogs)
-      setTelegramFolders(nextFolders)
-    }
+    if (nextStatus.authorized) await loadLiveDialogs()
   }
 
   async function importSession() {
@@ -1291,14 +1096,7 @@ function App() {
     try {
       const nextStatus = await api<Status>('/api/telegram/session/import', { method: 'POST' })
       setStatus(nextStatus)
-      if (nextStatus.authorized) {
-        const [nextDialogs, nextFolders] = await Promise.all([
-          api<Dialog[]>('/api/telegram/dialogs'),
-          api<DialogFolder[]>('/api/telegram/dialog-folders')
-        ])
-        setDialogs(nextDialogs)
-        setTelegramFolders(nextFolders)
-      }
+      if (nextStatus.authorized) await loadLiveDialogs()
     } catch (caught) {
       setError(errorMessage(caught, 'انتقال سشن انجام نشد؛ تنظیمات مسیر یا فایل منبع را بررسی کنید.'))
     } finally {
@@ -1334,14 +1132,7 @@ function App() {
         body: JSON.stringify({ api_id: apiId, api_hash: apiHash })
       })
       setStatus(nextStatus)
-      if (nextStatus.authorized) {
-        const [nextDialogs, nextFolders] = await Promise.all([
-          api<Dialog[]>('/api/telegram/dialogs'),
-          api<DialogFolder[]>('/api/telegram/dialog-folders')
-        ])
-        setDialogs(nextDialogs)
-        setTelegramFolders(nextFolders)
-      }
+      if (nextStatus.authorized) await loadLiveDialogs()
     } catch (caught) {
       setError(errorMessage(caught, 'ذخیره تنظیمات و اتصال انجام نشد.'))
     } finally {
@@ -1520,14 +1311,12 @@ function App() {
     }
   }
 
-  function renderMessageText(value: string) {
-    const pattern = /(tg:\/\/(?:proxy|socks)\?[^\s]+|https?:\/\/(?:t\.me|telegram\.me)\/(?:proxy|socks)\?[^\s]+)/gi
-    const parts = value.split(pattern)
-    return parts.map((part, index) => (
-      /^(?:tg:\/\/(?:proxy|socks)\?|https?:\/\/(?:t\.me|telegram\.me)\/(?:proxy|socks)\?)/i.test(part)
-        ? <button className="proxy-link" type="button" key={index} onClick={() => void addProxyLink(part)}>{part}</button>
-        : <Fragment key={index}>{part}</Fragment>
-    ))
+  function openLink(url: string) {
+    if ('__TAURI_INTERNALS__' in window) {
+      invoke('open_external', { url }).catch(() => setError('باز کردن لینک انجام نشد.'))
+    } else {
+      window.open(url, '_blank', 'noopener')
+    }
   }
 
   async function openSettings() {
@@ -1586,15 +1375,6 @@ function App() {
     return message.chat_id + ':' + message.message_id
   }
 
-  function mediaUrl(message: Message, download = false) {
-    const path = backendBase + '/api/telegram/chats/' + encodeURIComponent(String(message.chat_id)) + '/messages/' + encodeURIComponent(String(message.message_id)) + '/media'
-    return download ? path + '?download=true' : path
-  }
-
-  function mediaState(message: Message): MediaState {
-    return mediaStates[mediaKey(message)] || (message.media?.kind === 'photo' ? 'loading' : 'ready')
-  }
-
   function setMessageMediaState(message: Message, value: MediaState) {
     setMediaStates(current => ({ ...current, [mediaKey(message)]: value }))
   }
@@ -1609,20 +1389,10 @@ function App() {
     if (!message.media || message.media.downloadable === false) return
     setMessageMediaState(message, 'downloading')
     try {
-      const response = await fetch(mediaUrl(message, true))
-      if (!response.ok) {
-        const body = await response.text()
-        let detail = body || 'دانلود رسانه انجام نشد.'
-        try {
-          const parsed = JSON.parse(body) as { detail?: string }
-          if (parsed.detail) detail = parsed.detail
-        } catch {
-          // Keep the plain response body when the backend did not return JSON.
-        }
-        throw new Error(detail)
-      }
-
-      const blob = await response.blob()
+      const blob = await apiBlob(
+        chatPath(message.chat_id) + '/messages/' + message.message_id + '/media?download=true',
+        'دانلود رسانه انجام نشد.'
+      )
       const objectUrl = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = objectUrl
@@ -1636,79 +1406,6 @@ function App() {
       setMessageMediaState(message, 'error')
       setError(errorMessage(caught, 'دانلود رسانه انجام نشد.'))
     }
-  }
-
-  function mediaButtonLabel(state: MediaState) {
-    if (state === 'downloading') return 'در حال دانلود…'
-    if (state === 'done') return 'دانلود شد'
-    if (state === 'error') return 'تلاش دوباره'
-    return 'دانلود'
-  }
-
-  function renderMedia(message: Message) {
-    if (!message.media || message.deleted) return null
-    const state = mediaState(message)
-    const label = mediaKindLabel(message.media.kind)
-
-    if (message.media.kind === 'photo') {
-      const key = mediaKey(message)
-      if (!preferences.autoLoadPhotos && !revealedPhotos.has(key)) {
-        return (
-          <div className="media-card photo-placeholder">
-            <span className="media-icon">▧</span>
-            <div className="media-copy">
-              <strong>{message.media.name || label}</strong>
-              <small>{formatBytes(message.media.size)} · بارگیری خودکار خاموش است</small>
-            </div>
-            <button
-              className="download-button"
-              type="button"
-              onClick={() => setRevealedPhotos(current => new Set(current).add(key))}
-            >
-              نمایش تصویر
-            </button>
-          </div>
-        )
-      }
-      return (
-        <div className="media-photo-card">
-          <BackendImage
-            className="message-photo"
-            src={mediaUrl(message)}
-            alt={message.media.name || 'تصویر پیام'}
-            loading="lazy"
-            onLoad={() => setMessageMediaState(message, 'ready')}
-            onError={() => setMessageMediaState(message, 'error')}
-          />
-          <div className="media-toolbar">
-            <div className="media-copy">
-              <strong>{message.media.name || label}</strong>
-              <small>{formatBytes(message.media.size)}</small>
-            </div>
-            <button className="download-button" type="button" onClick={() => downloadMedia(message)} disabled={state === 'downloading'}>
-              {mediaButtonLabel(state)}
-            </button>
-          </div>
-          {state === 'error' && <small className="media-status error">نمایش یا دریافت رسانه انجام نشد.</small>}
-        </div>
-      )
-    }
-
-    return (
-      <div className="media-card">
-        <span className="media-icon">{message.media.kind === 'audio' ? '♫' : message.media.kind === 'video' ? '▣' : '□'}</span>
-        <div className="media-copy">
-          <strong>{message.media.name || label}</strong>
-          <small>{label} · {formatBytes(message.media.size)}</small>
-          {message.media.kind === 'audio' || message.media.kind === 'video'
-            ? <small className="media-status">پخش در این فاز فعال نیست.</small>
-            : null}
-        </div>
-        <button className="download-button" type="button" onClick={() => downloadMedia(message)} disabled={state === 'downloading'}>
-          {mediaButtonLabel(state)}
-        </button>
-      </div>
-    )
   }
 
   function toggleMessageSearch() {
@@ -1752,14 +1449,6 @@ function App() {
       return [...current, message].sort((a, b) => a.message_id - b.message_id)
     })
     window.setTimeout(() => jumpToMessage(message.message_id), 0)
-  }
-
-  function messageSnippet(message: Message | null) {
-    if (!message) return 'پیام قبلی'
-    const text = message.text.trim()
-    if (text) return text.length > 110 ? text.slice(0, 110) + '…' : text
-    if (message.media) return mediaKindLabel(message.media.kind)
-    return 'پیام'
   }
 
   function beginReply(message: Message) {
@@ -1843,23 +1532,6 @@ function App() {
         : [...current, pinnedMessage].sort((a, b) => a.message_id - b.message_id)
     ))
     window.requestAnimationFrame(() => jumpToMessage(pinnedMessage.message_id))
-  }
-
-  function renderReplyReference(message: Message) {
-    if (!message.reply_to_message_id) return null
-    const source = messages.find(item => item.message_id === message.reply_to_message_id) || null
-    const sender = source ? (source.outgoing ? 'شما' : source.sender_name || 'پیام') : 'پیام قبلی'
-    return (
-      <button
-        className="reply-reference"
-        type="button"
-        onClick={() => jumpToMessage(message.reply_to_message_id as number)}
-        disabled={!source}
-      >
-        <strong>{sender}</strong>
-        <span>{messageSnippet(source)}</span>
-      </button>
-    )
   }
 
   async function setReaction(message: Message, emoji: string | null) {
@@ -1986,11 +1658,11 @@ function App() {
     setUploadName(
       pendingAttachments.length === 1
         ? pendingAttachments[0].file.name
-        : new Intl.NumberFormat('fa-IR').format(pendingAttachments.length) + ' فایل'
+        : formatNumber(pendingAttachments.length) + ' فایل'
     )
     setError('')
     try {
-      const response = await fetch(backendBase + '/api/telegram/chats/' + chatId + '/files/album', {
+      const response = await backendFetch(chatPath(chatId) + '/files/album', {
         method: 'POST',
         body: form
       })
@@ -2091,18 +1763,19 @@ function App() {
   async function sendMessage(event: FormEvent) {
     event.preventDefault()
     const text = draft.trim()
-    if (!selected || (!text && !pendingAttachments.length) || composerBusy) return
+    if (!selected || (!text && !pendingAttachments.length)) return
 
     if (!editing && pendingAttachments.length) {
       await uploadPendingFiles()
       return
     }
 
-    setComposerBusy(true)
-    try {
-      if (editing) {
+    if (editing) {
+      if (composerBusy) return
+      setComposerBusy(true)
+      try {
         const message = await api<Message>(
-          '/api/telegram/chats/' + selected.chat_id + '/messages/' + editing.message_id + '/edit',
+          chatPath(selected.chat_id) + '/messages/' + editing.message_id + '/edit',
           {
             method: 'POST',
             body: JSON.stringify({ text })
@@ -2111,30 +1784,95 @@ function App() {
         setMessages(current => current.map(item => item.message_id === message.message_id ? message : item))
         setEditing(null)
         setDraft(draftBeforeEditRef.current)
-      } else {
-        const message = await api<Message>('/api/telegram/chats/' + selected.chat_id + '/messages', {
-          method: 'POST',
-          body: JSON.stringify({
-            text,
-            reply_to_message_id: replyingTo?.message_id || null
-          })
-        })
-        setMessages(current => [...current.filter(item => item.message_id !== message.message_id), message])
-        setReplyingTo(null)
-        setDraft('')
+      } catch (caught) {
+        setError(errorMessage(caught, 'ویرایش پیام انجام نشد.'))
+      } finally {
+        setComposerBusy(false)
+      }
+      return
+    }
+
+    // Show the message at once, like Telegram, and swap in the real one when
+    // Telegram confirms it. The composer stays free for the next message.
+    const chatId = selected.chat_id
+    const replyTo = replyingTo?.message_id || null
+    const tempId = -Date.now() - Math.floor(Math.random() * 1000)
+    const optimistic: Message = {
+      chat_id: chatId,
+      message_id: tempId,
+      text,
+      date: new Date().toISOString(),
+      sender_id: status?.user_id || null,
+      sender_name: status?.display_name || null,
+      outgoing: true,
+      edited: false,
+      reply_to_message_id: replyTo,
+      reactions: [],
+      read: false,
+      deleted: false,
+      pending: true
+    }
+    setMessages(current => mergeMessage(current, optimistic))
+    setReplyingTo(null)
+    setDraft('')
+    window.requestAnimationFrame(() => scrollToBottom('smooth'))
+    try {
+      const message = await api<Message>(chatPath(chatId) + '/messages', {
+        method: 'POST',
+        body: JSON.stringify({ text, reply_to_message_id: replyTo })
+      })
+      if (selectedChatIdRef.current === chatId) {
+        setMessages(current => mergeMessage(current.filter(item => item.message_id !== tempId), message))
       }
     } catch (caught) {
-      setError(errorMessage(caught, editing ? 'ویرایش پیام انجام نشد.' : 'ارسال پیام انجام نشد.'))
-    } finally {
-      setComposerBusy(false)
+      if (selectedChatIdRef.current === chatId) {
+        setMessages(current => current.filter(item => item.message_id !== tempId))
+        setDraft(current => current || text)
+      }
+      setError(errorMessage(caught, 'ارسال پیام انجام نشد.'))
     }
   }
+
+  const bubbleActions = useStableHandlers<BubbleActions>({
+    contextMenu: (event, message) => {
+      if (message.pending) {
+        event.preventDefault()
+        return
+      }
+      openMessageContextMenu(event, message)
+    },
+    toggleSelection: messageId => toggleMessageSelection(messageId),
+    jumpTo: messageId => jumpToMessage(messageId),
+    react: (message, emoji) => void setReaction(message, emoji),
+    download: message => void downloadMedia(message),
+    view: message => setViewerMessage(message),
+    reveal: key => setRevealedPhotos(current => new Set(current).add(key)),
+    openLink: url => openLink(url),
+    addProxy: url => void addProxyLink(url)
+  })
+
+  const dialogActions = useStableHandlers<DialogActions>({
+    open: dialog => openDialog(dialog),
+    contextMenu: (event, dialog) => {
+      event.preventDefault()
+      event.stopPropagation()
+      setDialogContextMenu({ dialog, x: event.clientX, y: event.clientY })
+    }
+  })
+
+  const closeViewer = useCallback(() => setViewerMessage(null), [])
 
   if (!status) {
     return <div className="loading-screen">در حال راه‌اندازی تلگرام…</div>
   }
 
-  if (!status.authorized) {
+  // With a saved session, open straight into the cached chat list while
+  // Telegram connects, instead of a login/connecting screen.
+  const showMain = status.authorized || (
+    status.client_session_exists && status.state === 'CONNECTING' && dialogs.length > 0
+  )
+
+  if (!showMain) {
     return (
       <div className="auth-screen">
         <div className={'auth-card' + (status.state === 'PROXY_ERROR' ? ' proxy-recovery-card' : '')}>
@@ -2363,13 +2101,13 @@ function App() {
           <button className="titlebar-menu" aria-label="منوی اصلی" title="منوی اصلی" onClick={() => setMainMenuOpen(value => !value)}>☰</button>
           <span className="account-stack" aria-hidden="true"><i /><i /></span>
           <span className="telegram-logo" aria-hidden="true">➤</span>
-          <strong className="app-title">Telegram</strong>
+          <strong className="app-title">{status.authorized && status.connected ? 'Telegram' : 'در حال اتصال…'}</strong>
         </div>
         <div className="titlebar-drag-fill" data-tauri-drag-region aria-hidden="true" />
         <div className="window-controls">
-          <button aria-label="کمینه" onClick={() => void appWindow.minimize()}>—</button>
-          <button aria-label="بیشینه" onClick={() => void appWindow.toggleMaximize()}>□</button>
-          <button className="window-close" aria-label="بستن" onClick={() => void appWindow.close()}>×</button>
+          <button aria-label="کمینه" onClick={() => void appWindow?.minimize()}>—</button>
+          <button aria-label="بیشینه" onClick={() => void appWindow?.toggleMaximize()}>□</button>
+          <button className="window-close" aria-label="بستن" onClick={() => void appWindow?.close()}>×</button>
         </div>
       </header>
       {mainMenuOpen && (
@@ -2423,29 +2161,21 @@ function App() {
           })}
         </div>
         <div className="dialog-list">
-          {visibleDialogs.map(dialog => (
-            <button
-              className={'dialog-row ' + (selected?.chat_id === dialog.chat_id ? 'selected' : '')}
-              key={dialog.chat_id}
-              onClick={() => openDialog(dialog)}
-              onContextMenu={event => {
-                event.preventDefault()
-                event.stopPropagation()
-                setDialogContextMenu({ dialog, x: event.clientX, y: event.clientY })
-              }}
-            >
-              <ChatAvatar chatId={dialog.chat_id} title={dialog.title} />
-              <span className="dialog-copy">
-                <span className="dialog-title-line"><strong>{dialog.title}</strong>{dialog.muted && <i>⌕</i>}</span>
-                <small>{dialog.last_message_preview || dialog.username || dialogTypeLabel(dialog.dialog_type)}</small>
-              </span>
-              <span className="dialog-meta">
-                <time>{formatDialogTime(dialog.last_message_at)}</time>
-                {dialog.pinned && <i>◆</i>}
-                {dialog.unread_count > 0 && <span className="unread">{dialog.unread_count}</span>}
-              </span>
-            </button>
-          ))}
+          {visibleDialogs.map(dialog => {
+            const action = chatActions[dialog.chat_id]
+            const typing = action
+              ? (isGroupType(dialog.dialog_type) && action.user_name ? firstName(action.user_name) + ' ' : '') + chatActionLabel(action.action)
+              : null
+            return (
+              <DialogRow
+                key={dialog.chat_id}
+                dialog={dialog}
+                selected={selected?.chat_id === dialog.chat_id}
+                typing={typing}
+                actions={dialogActions}
+              />
+            )
+          })}
           {!visibleDialogs.length && <div className="empty-list">گفت‌وگویی پیدا نشد</div>}
         </div>
       </aside>
@@ -2536,7 +2266,7 @@ function App() {
             </header>
             {selectedMessageIds.size > 0 && (
               <div className="selection-toolbar">
-                <strong>{new Intl.NumberFormat('fa-IR').format(selectedMessageIds.size)} پیام انتخاب شده</strong>
+                <strong>{formatNumber(selectedMessageIds.size)} پیام انتخاب شده</strong>
                 <button type="button" onClick={() => copyMessages(selectedMessages)}>▣ کپی</button>
                 <button type="button" onClick={beginForwardSelected} disabled={bulkBusy !== null}>↗ فوروارد</button>
                 <button
@@ -2597,102 +2327,42 @@ function App() {
                   {loadingOlder ? 'در حال دریافت…' : 'پیام‌های قدیمی‌تر'}
                 </button>
               )}
-              {messages.filter(message => !message.deleted).map((message, index, visibleMessages) => (
-                <Fragment key={message.message_id}>
-                  {index === 0 || messageDayKey(visibleMessages[index - 1].date) !== messageDayKey(message.date) ? (
-                    <div className="date-separator"><span>{formatMessageDate(message.date)}</span></div>
-                  ) : null}
-                  {unreadBoundaryId === message.message_id && (
-                    <div className="unread-divider"><span>پیام‌های خوانده‌نشده</span></div>
-                  )}
-                <article
-                  id={'message-' + message.chat_id + '-' + message.message_id}
-                  className={
-                    'message '
-                    + (message.outgoing ? 'outgoing' : '')
-                    + (message.deleted ? ' deleted' : '')
-                    + (selectedMessageIds.has(message.message_id) ? ' selected-message' : '')
-                  }
-                  onContextMenu={event => openMessageContextMenu(event, message)}
-                  onClick={event => {
-                    if (
-                      selectedMessageIds.size > 0
-                      && !(event.target as HTMLElement).closest('button')
-                    ) toggleMessageSelection(message.message_id)
-                  }}
-                >
-                  {!message.outgoing && (
-                    <ChatAvatar
-                      chatId={message.sender_id || message.chat_id}
-                      title={message.sender_name || selected.title}
-                      className="message-avatar"
-                    />
-                  )}
-                  {selectedMessageIds.size > 0 && (
-                    <span className="message-selector" aria-hidden="true">
-                      {selectedMessageIds.has(message.message_id) ? '✓' : ''}
-                    </span>
-                  )}
-                  {!message.outgoing && message.sender_name && <strong className="sender-name">{message.sender_name}</strong>}
-                  {renderReplyReference(message)}
-                  {message.media && renderMedia(message)}
-                  {message.deleted
-                    ? <span className="message-text">پیام حذف شده است</span>
-                    : message.text.trim() && <span className="message-text">{renderMessageText(message.text.trim())}</span>}
-                  {!message.deleted && Boolean(message.reactions?.length) && (
-                    <div className="message-reactions">
-                      {message.reactions.map(reaction => (
-                        <button
-                          type="button"
-                          className={reaction.chosen ? 'chosen' : ''}
-                          key={reaction.emoji}
-                          onClick={() => setReaction(message, reaction.chosen ? null : reaction.emoji)}
-                          disabled={reactionBusy !== null}
-                        >
-                          <span>{reaction.emoji}</span>
-                          <small>{new Intl.NumberFormat('fa-IR').format(reaction.count)}</small>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  {reactionPickerFor === message.message_id && !message.deleted && selectedMessageIds.size === 0 && (
-                    <div className="reaction-picker" role="group" aria-label="انتخاب واکنش">
-                      {QUICK_REACTIONS.map(emoji => {
-                        const chosen = message.reactions?.some(item => item.emoji === emoji && item.chosen) || false
-                        const key = mediaKey(message) + ':' + (chosen ? 'remove' : emoji)
-                        return (
-                          <button
-                            type="button"
-                            className={chosen ? 'chosen' : ''}
-                            key={emoji}
-                            onClick={() => setReaction(message, chosen ? null : emoji)}
-                            disabled={reactionBusy !== null}
-                          >
-                            {reactionBusy === key ? '…' : emoji}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  )}
-                  <small className="message-meta">
-                    <span>{formatTime(message.date)}{message.edited ? ' · ویرایش‌شده' : ''}</span>
-                    {message.outgoing && (
-                      <span
-                        className={'read-receipt ' + (message.read ? 'read' : 'sent')}
-                        aria-label={message.read ? 'خوانده شده' : 'ارسال شده'}
-                        title={message.read ? 'خوانده شده' : 'ارسال شده'}
-                      >
-                        {message.read ? '✓✓' : '✓'}
-                      </span>
+              {messageRows.map(row => {
+                const lead = row.lead
+                const key = mediaKey(lead)
+                const busyPrefix = key + ':'
+                return (
+                  <Fragment key={lead.message_id}>
+                    {row.dayBreak && (
+                      <div className="date-separator"><span>{formatMessageDate(lead.date)}</span></div>
                     )}
-                  </small>
-                </article>
-                </Fragment>
-              ))}
+                    {unreadBoundaryId !== null && row.items.some(item => item.message_id === unreadBoundaryId) && (
+                      <div className="unread-divider"><span>پیام‌های خوانده‌نشده</span></div>
+                    )}
+                    <MessageBubble
+                      message={lead}
+                      album={row.items.length > 1 ? row.items : undefined}
+                      isGroup={isGroupType(selected.dialog_type)}
+                      showSender={row.showSender}
+                      showAvatar={row.showAvatar}
+                      chatTitle={selected.title}
+                      replySource={lead.reply_to_message_id ? messagesById.get(lead.reply_to_message_id) || null : undefined}
+                      selected={selectedMessageIds.has(lead.message_id)}
+                      selectionMode={selectedMessageIds.size > 0}
+                      pickerOpen={reactionPickerFor === lead.message_id}
+                      reactionBusy={reactionBusy !== null && reactionBusy.startsWith(busyPrefix) ? reactionBusy : null}
+                      mediaState={mediaStates[key] || 'ready'}
+                      autoLoadPhotos={preferences.autoLoadPhotos}
+                      revealed={revealedPhotos.has(key)}
+                      actions={bubbleActions}
+                    />
+                  </Fragment>
+                )
+              })}
               {showJumpToBottom && (
                 <button className="jump-bottom" type="button" onClick={() => scrollToBottom('smooth')} aria-label="رفتن به آخر گفتگو">
                   <span>↓</span>
-                  {newBelowCount > 0 && <strong>{new Intl.NumberFormat('fa-IR').format(newBelowCount)}</strong>}
+                  {newBelowCount > 0 && <strong>{formatNumber(newBelowCount)}</strong>}
                 </button>
               )}
             </div>
@@ -2719,7 +2389,7 @@ function App() {
               {pendingAttachments.length > 0 && !uploadBusy && (
                 <div className="attachment-tray">
                   <div className="attachment-tray-header">
-                    <strong>{new Intl.NumberFormat('fa-IR').format(pendingAttachments.length)} پیوست آماده ارسال</strong>
+                    <strong>{formatNumber(pendingAttachments.length)} پیوست آماده ارسال</strong>
                     <button type="button" onClick={clearPendingAttachments}>حذف همه</button>
                   </div>
                   <div className="attachment-items">
@@ -2766,8 +2436,19 @@ function App() {
                         const key = item.kind + ':' + item.media_id
                         return (
                           <button type="button" key={key} onClick={() => sendRecentMedia(item)} disabled={recentMediaSending !== null} title={item.label}>
-                            <strong>{recentMediaSending === key ? '…' : item.kind === 'sticker' ? item.label : 'GIF'}</strong>
-                            <small>{item.label}</small>
+                            {recentMediaSending === key ? (
+                              <strong>…</strong>
+                            ) : (
+                              <img
+                                src={authedUrl(backendBase + '/api/telegram/media/recent/' + item.kind + '/' + encodeURIComponent(item.media_id) + '/preview')}
+                                alt={item.label}
+                                loading="lazy"
+                                decoding="async"
+                                draggable={false}
+                                onError={event => { event.currentTarget.style.display = 'none' }}
+                              />
+                            )}
+                            <small>{item.kind === 'sticker' ? item.label : 'GIF'}</small>
                           </button>
                         )
                       })}
@@ -2811,7 +2492,7 @@ function App() {
                     className={'send-button' + ((!draft.trim() && !pendingAttachments.length && !editing) ? ' voice-mode' : ' send-mode')}
                     type="submit"
                     aria-label={(!draft.trim() && !pendingAttachments.length && !editing) ? 'پیام صوتی' : 'ارسال'}
-                    disabled={composerBusy || uploadBusy || (!draft.trim() && !pendingAttachments.length)}
+                    disabled={(editing !== null && composerBusy) || uploadBusy || (!draft.trim() && !pendingAttachments.length)}
                   >
                     <span className="composer-action-icon" aria-hidden="true" />
                   </button>
@@ -2841,7 +2522,7 @@ function App() {
               <div><span>نوع</span><strong>{dialogTypeLabel(chatInfo?.dialog_type || selected.dialog_type)}</strong></div>
               {chatInfo?.status && <div><span>وضعیت</span><strong>{presenceLabel(chatInfo.status)}</strong></div>}
               {chatInfo?.participants_count != null && (
-                <div><span>اعضا</span><strong>{new Intl.NumberFormat('fa-IR').format(chatInfo.participants_count)}</strong></div>
+                <div><span>اعضا</span><strong>{formatNumber(chatInfo.participants_count)}</strong></div>
               )}
               <div><span>شناسه</span><strong dir="ltr">{selected.chat_id}</strong></div>
             </div>
@@ -2894,7 +2575,7 @@ function App() {
                 <strong>
                   {forwarding.length === 1
                     ? 'فوروارد پیام'
-                    : 'فوروارد ' + new Intl.NumberFormat('fa-IR').format(forwarding.length) + ' پیام'}
+                    : 'فوروارد ' + formatNumber(forwarding.length) + ' پیام'}
                 </strong>
                 <small>{messageSnippet(forwarding[0])}</small>
               </div>
@@ -3047,7 +2728,7 @@ function App() {
                 ) : (
                   <>
                     <div className="settings-row"><span>مسیر فعال</span><strong>{status.active_route || (transportStatus?.allow_direct ? 'اتصال مستقیم' : 'نامشخص')}</strong></div>
-                    <div className="settings-row"><span>مسیرهای امن موجود</span><strong>{new Intl.NumberFormat('fa-IR').format(transportStatus?.routes.length || 0)}</strong></div>
+                    <div className="settings-row"><span>مسیرهای امن موجود</span><strong>{formatNumber(transportStatus?.routes.length || 0)}</strong></div>
                     {transportStatus?.routes.map(route => (
                       <div className="transport-row" key={route.index}>
                         <span>{route.name}{route.managed_v2ray ? ' · V2Ray' : ''}</span>
@@ -3080,11 +2761,15 @@ function App() {
                   <span><strong>بارگیری خودکار تصاویر</strong><small>در حالت خاموش، هر تصویر فقط با انتخاب شما نمایش داده می‌شود.</small></span>
                   <input type="checkbox" checked={preferences.autoLoadPhotos} onChange={event => updatePreferences({ autoLoadPhotos: event.target.checked })} />
                 </label>
-                <div className="safe-note">پخش صوت و ویدئو همچنان غیرفعال است. دانلود فایل‌ها فقط با دکمه دانلود انجام می‌شود.</div>
+                <div className="safe-note">ویدئو، پیام صوتی و موسیقی داخل گفتگو پخش می‌شوند. فایل‌ها فقط با دکمه دانلود ذخیره می‌شوند.</div>
               </section>
             </div>
           </section>
         </div>
+      )}
+
+      {viewerMessage && (
+        <MediaViewer message={viewerMessage} onClose={closeViewer} onDownload={message => void downloadMedia(message)} />
       )}
 
       {error && <button className="error-toast" onClick={() => setError('')}>{error}</button>}

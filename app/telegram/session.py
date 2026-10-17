@@ -121,6 +121,60 @@ class SessionManager:
             metadata["error"] = f"{type(error).__name__}: {error}"
             return None, metadata
 
+    def open_runtime_session(self) -> tuple[SQLiteSession | MemorySession | None, dict]:
+        """Open the client session for an authorized connection.
+
+        The SQLite session is used directly so Telethon keeps its entity cache
+        and update state (pts/qts) between launches: chats resolve without a
+        network round trip and messages received while the app was closed are
+        caught up on connect. If the file cannot be opened for writing (for
+        example it is locked), fall back to an in-memory clone of the auth key.
+        """
+        path = self.client_path
+        candidates = self._session_file_candidates(path)
+        session_file = next((item for item in candidates if item.is_file()), None)
+        if session_file is None:
+            return self.clone_runtime_session()
+
+        metadata = {
+            "session_path": str(path),
+            "session_exists": True,
+            "session_size": 0,
+            "dc_id": None,
+            "server_address": None,
+            "port": None,
+            "auth_key_present": False,
+            "auth_key_bytes": 0,
+            "error": None,
+            "persistent": True,
+        }
+        session: SQLiteSession | None = None
+        try:
+            metadata["session_size"] = session_file.stat().st_size
+            session = SQLiteSession(str(path))
+            metadata["dc_id"] = session.dc_id
+            metadata["server_address"] = session.server_address
+            metadata["port"] = session.port
+            auth_key = session.auth_key
+            key_data = getattr(auth_key, "key", None) if auth_key is not None else None
+            metadata["auth_key_present"] = bool(auth_key and key_data)
+            metadata["auth_key_bytes"] = len(key_data or b"")
+            if not auth_key or not key_data:
+                session.close()
+                return None, metadata
+            # Prove the file is writable now rather than on the first update.
+            session.save()
+            return session, metadata
+        except Exception:
+            if session is not None:
+                try:
+                    session.close()
+                except Exception:
+                    pass
+            runtime, fallback = self.clone_runtime_session()
+            fallback["persistent"] = False
+            return runtime, fallback
+
     def remove_client_session(self) -> None:
         root = self.settings.data_root
         for candidate in self._client_candidates():

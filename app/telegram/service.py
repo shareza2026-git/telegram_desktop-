@@ -1,8 +1,11 @@
 import asyncio
+from collections import OrderedDict
 from contextlib import suppress
 import logging
 import mimetypes
 from datetime import datetime, timezone
+from pathlib import Path
+import time
 from typing import Any
 
 from pydantic import SecretStr
@@ -10,6 +13,7 @@ from pydantic import SecretStr
 from telethon import TelegramClient, events, functions, types, utils
 from telethon.sessions import MemorySession
 from telethon.errors import (
+    FileReferenceExpiredError,
     FloodWaitError,
     PasswordHashInvalidError,
     PhoneCodeExpiredError,
@@ -33,6 +37,7 @@ from app.models import (
     RecentMediaItem,
 )
 from app.storage import ChatStore
+from app.telegram import convert
 from app.telegram.client import build_client
 from app.telegram.media import DownloadedMedia, media_path, safe_media_name
 from app.telegram.profile import chat_photo_path, is_fresh_chat_photo
@@ -44,6 +49,20 @@ from app.telegram.transfer_bundle import TransferBundle
 
 
 logger = logging.getLogger(__name__)
+
+MESSAGE_CACHE_LIMIT = 4000
+DIALOG_SNAPSHOT_MAX_AGE = 60.0
+# Back-to-back live list requests (startup, reconnect) reuse one fetch.
+DIALOG_REUSE_SECONDS = 10.0
+NO_PHOTO_RETRY_SECONDS = 6 * 60 * 60
+AVATAR_MAX_AGE_SECONDS = 24 * 60 * 60
+# In-chat photos use the smallest Telegram size at least this wide, the same
+# one Telegram Desktop shows in a bubble; the original is only for downloads.
+CHAT_PHOTO_PREVIEW_SIDE = 800
+
+
+class MediaUnavailable(DesktopError):
+    """The requested photo or file does not exist (reported as HTTP 404)."""
 
 
 class EventBroker:
@@ -63,7 +82,8 @@ class EventBroker:
             try:
                 queue.put_nowait(packet)
             except asyncio.QueueFull:
-                self._subscribers.discard(queue)
+                # A slow client fell behind: drop its backlog and tell it to
+                # reload, but keep it subscribed so live updates continue.
                 while not queue.empty():
                     queue.get_nowait()
                 queue.put_nowait({"type": "RESYNC", "data": {}})
@@ -90,17 +110,74 @@ class TelegramDesktopService:
         self._lifecycle_lock = asyncio.Lock()
         self._outbox_read_max: dict[int, int] = {}
         self._recent_media: dict[tuple[str, str], Any] = {}
-        self._priority_chat_ids: set[int] = set()
         self._connection_monitor: asyncio.Task | None = None
         self._session_metadata: dict = {}
+        self._init_runtime_state()
         info = self.sessions.info()
         self.status = ClientStatus(
             configured=settings.telegram_configured,
+            state="CONNECTING" if settings.telegram_configured else "UNCONFIGURED",
             source_session_available=info.source_available,
             client_session_exists=info.client_exists,
         )
 
+    def _init_runtime_state(self) -> None:
+        # Telethon entities seen in dialogs and messages. Avatars, chat info
+        # and names resolve from here without a network request.
+        self._entities: dict[int, Any] = {}
+        # Raw Telethon messages, so media downloads skip a get_messages call.
+        self._message_cache: OrderedDict[tuple[int, int], Any] = OrderedDict()
+        self._inflight: dict[str, asyncio.Future] = {}
+        self._dialogs_snapshot: list[Dialog] = []
+        self._dialogs_at = 0.0
+        self._dialogs_task: asyncio.Task | None = None
+        self._photo_ids: dict[int, int] = {}
+        self._no_photo: dict[int, float] = {}
+        self._background: set[asyncio.Task] = set()
+
+    def _spawn(self, coroutine) -> None:
+        # Keep a reference so fire-and-forget tasks are not garbage collected.
+        task = asyncio.create_task(coroutine)
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+
+    def _remember_entity(self, entity: Any) -> None:
+        if entity is None or isinstance(entity, (int, str)):
+            return
+        with suppress(Exception):
+            self._entities[int(utils.get_peer_id(entity))] = entity
+
+    def _remember_message(self, chat_id: int, message: Any) -> None:
+        key = (chat_id, int(message.id))
+        cache = self._message_cache
+        cache[key] = message
+        cache.move_to_end(key)
+        while len(cache) > MESSAGE_CACHE_LIMIT:
+            cache.popitem(last=False)
+
+    async def _single_flight(self, key: str, factory):
+        """Run one coroutine per key; concurrent callers share its result."""
+        running = self._inflight.get(key)
+        if running is not None:
+            return await asyncio.shield(running)
+        future = asyncio.ensure_future(factory())
+        self._inflight[key] = future
+        try:
+            return await asyncio.shield(future)
+        finally:
+            if future.done():
+                self._inflight.pop(key, None)
+            else:
+                future.add_done_callback(lambda _: self._inflight.pop(key, None))
+
     async def start(self) -> None:
+        try:
+            await self._start()
+        finally:
+            # The UI may have connected while we were still connecting.
+            await self.events.publish({"type": "READY", "data": self.status.model_dump(mode="json")})
+
+    async def _start(self) -> None:
         if self._connection_monitor is None:
             self._connection_monitor = asyncio.create_task(self._monitor_connection())
         self.sessions.ensure_client_path()
@@ -131,7 +208,8 @@ class TelegramDesktopService:
                     }
                 )
             return
-        await self._connect()
+        async with self._lifecycle_lock:
+            await self._connect()
 
     async def _monitor_connection(self) -> None:
         while True:
@@ -197,14 +275,14 @@ class TelegramDesktopService:
             )
             return
 
-        runtime_session, session_metadata = self.sessions.clone_runtime_session()
+        runtime_session, session_metadata = self.sessions.open_runtime_session()
         self._session_metadata = session_metadata
         self.status = self.status.model_copy(
             update={
                 "session_dc_id": session_metadata.get("dc_id"),
                 "session_auth_key_present": bool(session_metadata.get("auth_key_present")),
                 "session_auth_key_bytes": int(session_metadata.get("auth_key_bytes") or 0),
-                "runtime_session_cloned": runtime_session is not None,
+                "runtime_session_cloned": runtime_session is not None and not session_metadata.get("persistent"),
             }
         )
 
@@ -358,6 +436,7 @@ class TelegramDesktopService:
         if self.client is None:
             raise DesktopError("Telegram client is not connected")
         account = await self.client.get_me()
+        self._remember_entity(account)
         self._register_handlers()
         self.status = self.status.model_copy(
             update={
@@ -382,6 +461,14 @@ class TelegramDesktopService:
         except Exception:
             logger.warning("Portable account bundle could not be updated", exc_info=True)
         self.transfer_bundle.sync(include_session=True)
+        # Warm the dialog list so the UI's first live request is answered fast.
+        self._spawn(self._warm_dialogs())
+
+    async def _warm_dialogs(self) -> None:
+        try:
+            await self._fetch_dialogs()
+        except Exception:
+            logger.warning("Initial dialog refresh failed", exc_info=True)
 
     def _register_handlers(self) -> None:
         if self.client is None or self.handlers:
@@ -416,7 +503,7 @@ class TelegramDesktopService:
                     exc_info=True,
                 )
 
-        asyncio.create_task(persist())
+        self._spawn(persist())
 
     @staticmethod
     def _as_utc(value: datetime | None) -> datetime:
@@ -438,31 +525,14 @@ class TelegramDesktopService:
 
     @staticmethod
     def _media(message: Any) -> MediaInfo | None:
-        if not getattr(message, "media", None):
-            return None
-        if getattr(message, "photo", None):
-            kind = "photo"
-        elif getattr(message, "video", None):
-            kind = "video"
-        elif getattr(message, "audio", None):
-            kind = "audio"
-        elif getattr(message, "document", None):
-            kind = "file"
-        else:
-            kind = "other"
-        file_info = getattr(message, "file", None)
-        return MediaInfo(
-            kind=kind,
-            name=getattr(file_info, "name", None),
-            size=getattr(file_info, "size", None),
-            mime_type=getattr(file_info, "mime_type", None),
-            playable=False,
-            downloadable=True,
-        )
+        return convert.media_info(message)
 
     @staticmethod
     def _reactions(message: Any) -> list[ReactionSummary]:
-        summary = getattr(message, "reactions", None)
+        return TelegramDesktopService._reaction_summary(getattr(message, "reactions", None))
+
+    @staticmethod
+    def _reaction_summary(summary: Any) -> list[ReactionSummary]:
         values = []
         for item in getattr(summary, "results", None) or []:
             reaction = getattr(item, "reaction", None)
@@ -485,19 +555,35 @@ class TelegramDesktopService:
         message_id = int(message.id)
         outgoing = bool(getattr(message, "out", False))
         read_max = getattr(self, "_outbox_read_max", {}).get(chat_id, 0)
+        if hasattr(self, "_entities"):
+            self._remember_entity(getattr(message, "sender", None))
+            self._remember_message(chat_id, message)
+        sender_name = self._sender_name(message)
+        edit_date = getattr(message, "edit_date", None)
+        grouped_id = getattr(message, "grouped_id", None)
+        views = getattr(message, "views", None)
+        via_bot = getattr(message, "via_bot", None) if getattr(message, "via_bot_id", None) else None
         return Message(
             chat_id=chat_id,
             message_id=message_id,
             text=str(getattr(message, "raw_text", None) or ""),
             date=self._as_utc(getattr(message, "date", None)),
             sender_id=getattr(message, "sender_id", None),
-            sender_name=self._sender_name(message),
+            sender_name=sender_name,
             outgoing=outgoing,
-            edited=edited,
+            edited=edited or (edit_date is not None and not getattr(message, "edit_hide", False)),
             reply_to_message_id=getattr(message, "reply_to_msg_id", None),
             media=self._media(message),
             reactions=self._reactions(message),
             read=outgoing and message_id <= read_max,
+            entities=convert.entities(message),
+            forward_from=convert.forward_name(message),
+            grouped_id=int(grouped_id) if isinstance(grouped_id, int) else None,
+            views=int(views) if isinstance(views, int) else None,
+            post=bool(getattr(message, "post", False)),
+            action=convert.action_text(message, sender_name),
+            link_preview=convert.link_preview(message),
+            via_bot=getattr(via_bot, "username", None),
         )
 
     @staticmethod
@@ -514,23 +600,10 @@ class TelegramDesktopService:
 
     @staticmethod
     def _entity_title(entity: Any, chat_id: int) -> str:
-        title = getattr(entity, "title", None)
-        if title:
-            return str(title)
-        name = " ".join(
-            filter(
-                None,
-                [
-                    getattr(entity, "first_name", None),
-                    getattr(entity, "last_name", None),
-                ],
-            )
-        )
-        return name or getattr(entity, "username", None) or str(chat_id)
+        return convert.display_name(entity) or str(chat_id)
 
     @staticmethod
-    def _entity_status(entity: Any) -> str | None:
-        status = getattr(entity, "status", None)
+    def _status_label(status: Any) -> str | None:
         if status is None:
             return None
         labels = {
@@ -541,6 +614,10 @@ class TelegramDesktopService:
             "UserStatusLastMonth": "last_month",
         }
         return labels.get(type(status).__name__)
+
+    @staticmethod
+    def _entity_status(entity: Any) -> str | None:
+        return TelegramDesktopService._status_label(getattr(entity, "status", None))
 
     @staticmethod
     def _dialog_muted(dialog: Any) -> bool:
@@ -560,6 +637,7 @@ class TelegramDesktopService:
     def _dialog_model(dialog: Any) -> Dialog:
         entity = dialog.entity
         latest = getattr(dialog, "message", None)
+        raw_dialog = getattr(dialog, "dialog", None)
         if dialog.is_user:
             kind = "user"
         elif dialog.is_channel:
@@ -568,6 +646,11 @@ class TelegramDesktopService:
             kind = "group"
         else:
             kind = "unknown"
+        latest_out = bool(getattr(latest, "out", False))
+        read_outbox = int(getattr(raw_dialog, "read_outbox_max_id", 0) or 0)
+        sender = None
+        if latest is not None and kind in {"group", "supergroup"} and not isinstance(latest, types.MessageService):
+            sender = "شما" if latest_out else convert.first_name(getattr(latest, "sender", None))
         return Dialog(
             chat_id=int(dialog.id),
             title=str(dialog.title or ""),
@@ -579,50 +662,47 @@ class TelegramDesktopService:
             muted=TelegramDesktopService._dialog_muted(dialog),
             last_message_id=getattr(latest, "id", None),
             last_message_at=getattr(latest, "date", None),
-            last_message_preview=str(getattr(latest, "raw_text", None) or "").strip()[:180] or None,
+            last_message_preview=convert.preview_text(latest),
+            last_message_sender=sender,
+            last_message_outgoing=latest_out,
+            last_message_read=latest_out and int(getattr(latest, "id", 0) or 0) <= read_outbox,
         )
-
-    def _is_priority_chat(self, chat_id: int) -> bool:
-        return chat_id in self._priority_chat_ids
 
     async def _on_new(self, event: Any) -> None:
         if event.chat_id is None:
             return
         chat_id = int(event.chat_id)
         message = self._message_model(event.message, chat_id)
-        packet = {
-            "type": "MESSAGE_NEW",
-            "data": message.model_dump(mode="json"),
-            "priority": self._is_priority_chat(chat_id),
-        }
-        if self._is_priority_chat(chat_id):
-            await self.events.publish(packet)
-            self._persist_message_background(message)
-            return
-
+        self._dialogs_at = 0.0  # previews changed; next list request refetches
+        # Publish before persisting: the UI must never wait on the disk.
+        await self.events.publish({"type": "MESSAGE_NEW", "data": message.model_dump(mode="json")})
         self._persist_message_background(message)
-        await self.events.publish(packet)
 
     async def _on_edit(self, event: Any) -> None:
         if event.chat_id is None:
             return
         chat_id = int(event.chat_id)
         message = self._message_model(event.message, chat_id, edited=True)
-        packet = {
-            "type": "MESSAGE_EDITED",
-            "data": message.model_dump(mode="json"),
-            "priority": self._is_priority_chat(chat_id),
-        }
-        if self._is_priority_chat(chat_id):
-            await self.events.publish(packet)
-            self._persist_message_background(message)
-            return
-
+        await self.events.publish({"type": "MESSAGE_EDITED", "data": message.model_dump(mode="json")})
         self._persist_message_background(message)
-        await self.events.publish(packet)
 
     async def _on_user_update(self, event: Any) -> None:
-        if event.chat_id is None or event.action is None:
+        if event.action is None:
+            status = getattr(event, "status", None)
+            if status is not None and event.user_id is not None:
+                user_id = int(event.user_id)
+                entity = self._entities.get(user_id)
+                if entity is not None:
+                    with suppress(Exception):
+                        entity.status = status
+                await self.events.publish(
+                    {
+                        "type": "USER_STATUS",
+                        "data": {"user_id": user_id, "status": self._status_label(status)},
+                    }
+                )
+            return
+        if event.chat_id is None:
             return
         if event.user_id == self.status.user_id:
             return
@@ -643,12 +723,17 @@ class TelegramDesktopService:
             return
 
         user_name = None
-        try:
-            user = await event.get_user()
-            if user is not None:
-                user_name = self._entity_title(user, int(event.user_id or 0))
-        except Exception:
-            pass
+        cached = self._entities.get(int(event.user_id or 0))
+        if cached is not None:
+            user_name = convert.first_name(cached)
+        else:
+            try:
+                user = await event.get_user()
+                if user is not None:
+                    self._remember_entity(user)
+                    user_name = convert.first_name(user)
+            except Exception:
+                pass
 
         await self.events.publish(
             {
@@ -683,31 +768,51 @@ class TelegramDesktopService:
         )
 
     async def _on_delete(self, event: Any) -> None:
-        if event.chat_id is None:
-            return
-        for message_id in event.deleted_ids:
-            chat_id = int(event.chat_id)
-            await self.store.mark_deleted(chat_id, int(message_id))
-            await self.events.publish(
-                {
-                    "type": "MESSAGE_DELETED",
-                    "data": {"chat_id": chat_id, "message_id": int(message_id)},
-                }
-            )
+        deleted_ids = [int(value) for value in event.deleted_ids]
+        targets: dict[int | None, list[int]]
+        if event.chat_id is not None:
+            targets = {int(event.chat_id): deleted_ids}
+        else:
+            # Private chats and basic groups: Telegram sends only the ids,
+            # which are unique per account, so find their chat locally.
+            targets = dict(await self.store.chats_for_shared_ids(deleted_ids))
+            known = {value for values in targets.values() for value in values}
+            unknown = [value for value in deleted_ids if value not in known]
+            if unknown:
+                # The UI drops these from whichever non-channel chat is open.
+                targets[None] = unknown
+        for chat_id, message_ids in targets.items():
+            for message_id in message_ids:
+                if chat_id is not None:
+                    await self.store.mark_deleted(chat_id, message_id)
+                    self._message_cache.pop((chat_id, message_id), None)
+                await self.events.publish(
+                    {
+                        "type": "MESSAGE_DELETED",
+                        "data": {"chat_id": chat_id, "message_id": message_id},
+                    }
+                )
 
     async def _on_reaction(self, update: Any) -> None:
-        if self.client is None:
-            return
         try:
             chat_id = int(utils.get_peer_id(update.peer))
-            value = await self.client.get_messages(chat_id, ids=int(update.msg_id))
-            if value is None:
-                return
-            message = self._message_model(value, chat_id)
-            await self.store.upsert_message(message)
+            message_id = int(update.msg_id)
+            reactions = self._reaction_summary(update.reactions)
+            partial = bool(getattr(update.reactions, "min", False))
             await self.events.publish(
-                {"type": "MESSAGE_EDITED", "data": message.model_dump(mode="json")}
+                {
+                    "type": "MESSAGE_REACTIONS",
+                    "data": {
+                        "chat_id": chat_id,
+                        "message_id": message_id,
+                        "reactions": [item.model_dump(mode="json") for item in reactions],
+                        # "min" updates do not say which reaction is ours.
+                        "min": partial,
+                    },
+                }
             )
+            if not partial:
+                await self.store.update_reactions(chat_id, message_id, reactions)
         except Exception as error:
             logger.warning(
                 "Telegram reaction update could not be synchronized: %s",
@@ -773,6 +878,7 @@ class TelegramDesktopService:
                     request_retries=1,
                     auto_reconnect=False,
                     sequential_updates=True,
+                    receive_updates=False,
                     **options,
                 )
                 await asyncio.wait_for(client.connect(), timeout=4.5)
@@ -820,9 +926,18 @@ class TelegramDesktopService:
             for item in result.authorizations
         ]
 
+    async def _entity(self, client: TelegramClient, chat_id: int) -> Any:
+        cached = getattr(self, "_entities", {}).get(chat_id)
+        if cached is not None:
+            return cached
+        entity = await client.get_entity(chat_id)
+        if hasattr(self, "_entities"):
+            self._remember_entity(entity)
+        return entity
+
     async def chat_info(self, chat_id: int) -> ChatInfo:
         client = self._require_authorized()
-        entity = await client.get_entity(chat_id)
+        entity = await self._entity(client, chat_id)
         return ChatInfo(
             chat_id=chat_id,
             title=self._entity_title(entity, chat_id),
@@ -839,56 +954,181 @@ class TelegramDesktopService:
 
     async def download_chat_photo(self, chat_id: int) -> DownloadedMedia:
         client = self._require_authorized()
-        entity = await client.get_entity(chat_id)
-        if not getattr(entity, "photo", None):
-            raise DesktopError("Chat photo is not available")
-
         root = self.settings.data_root / "avatars"
-        root.mkdir(parents=True, exist_ok=True)
         target = chat_photo_path(root, chat_id)
-        if not is_fresh_chat_photo(target):
-            downloaded = await client.download_profile_photo(entity, file=str(target))
-            if downloaded is None or not target.is_file():
-                raise DesktopError("Chat photo download failed")
+        photo_ids = getattr(self, "_photo_ids", {})
+        no_photo = getattr(self, "_no_photo", {})
+        known = getattr(self, "_entities", {}).get(chat_id)
 
-        return DownloadedMedia(
-            path=target,
-            filename=target.name,
-            mime_type="image/jpeg",
-        )
+        def cached() -> DownloadedMedia:
+            return DownloadedMedia(path=target, filename=target.name, mime_type="image/jpeg")
 
-    async def download_media(self, chat_id: int, message_id: int) -> DownloadedMedia:
+        # Answer from disk whenever possible: an avatar only changes when its
+        # photo id changes, which the cached entity tells us for free.
+        if known is not None:
+            photo = getattr(known, "photo", None)
+            photo_id = getattr(photo, "photo_id", None)
+            if not photo or isinstance(photo, (types.UserProfilePhotoEmpty, types.ChatPhotoEmpty)):
+                raise MediaUnavailable("Chat photo is not available")
+            if photo_id is not None and photo_ids.get(chat_id) == photo_id and target.is_file():
+                return cached()
+        elif is_fresh_chat_photo(target, max_age_seconds=AVATAR_MAX_AGE_SECONDS):
+            return cached()
+        if time.monotonic() < no_photo.get(chat_id, 0):
+            raise MediaUnavailable("Chat photo is not available")
+
+        async def fetch() -> DownloadedMedia:
+            entity = known if known is not None else await self._entity(client, chat_id)
+            photo = getattr(entity, "photo", None)
+            if not photo or isinstance(photo, (types.UserProfilePhotoEmpty, types.ChatPhotoEmpty)):
+                no_photo[chat_id] = time.monotonic() + NO_PHOTO_RETRY_SECONDS
+                raise MediaUnavailable("Chat photo is not available")
+            photo_id = getattr(photo, "photo_id", None)
+            if photo_id is not None and photo_ids.get(chat_id) == photo_id and target.is_file():
+                return cached()
+            if photo_id is None and is_fresh_chat_photo(target, max_age_seconds=AVATAR_MAX_AGE_SECONDS):
+                return cached()
+            root.mkdir(parents=True, exist_ok=True)
+            partial = target.with_name(target.name + ".part")
+            downloaded = await client.download_profile_photo(entity, file=str(partial))
+            if downloaded is None or not partial.is_file() or partial.stat().st_size == 0:
+                partial.unlink(missing_ok=True)
+                no_photo[chat_id] = time.monotonic() + NO_PHOTO_RETRY_SECONDS
+                raise MediaUnavailable("Chat photo download failed")
+            partial.replace(target)
+            if photo_id is not None:
+                photo_ids[chat_id] = photo_id
+            return cached()
+
+        if not hasattr(self, "_inflight"):
+            return await fetch()
+        return await self._single_flight(f"avatar:{chat_id}", fetch)
+
+    async def _get_message(self, client: TelegramClient, chat_id: int, message_id: int, *, fresh: bool = False) -> Any:
+        cache = getattr(self, "_message_cache", None)
+        if not fresh and cache is not None:
+            value = cache.get((chat_id, message_id))
+            if value is not None:
+                return value
+        value = await client.get_messages(chat_id, ids=message_id)
+        if value is not None and cache is not None:
+            self._remember_message(chat_id, value)
+        return value
+
+    @staticmethod
+    def _cached_original(root: Path, chat_id: int, message_id: int) -> Path | None:
+        for candidate in root.glob(f"{chat_id}_{message_id}_*"):
+            if candidate.suffix != ".part" and candidate.is_file() and candidate.stat().st_size > 0:
+                return candidate
+        return None
+
+    @staticmethod
+    def _preview_size(photo: Any) -> Any:
+        sizes = [
+            size for size in getattr(photo, "sizes", None) or []
+            if isinstance(size, (types.PhotoSize, types.PhotoSizeProgressive))
+        ]
+        if not sizes:
+            return None
+        sizes.sort(key=lambda size: max(size.w, size.h))
+        for size in sizes:
+            if max(size.w, size.h) >= CHAT_PHOTO_PREVIEW_SIDE:
+                return size
+        return sizes[-1]
+
+    async def download_media(self, chat_id: int, message_id: int, *, thumb: bool = False) -> DownloadedMedia:
         client = self._require_authorized()
-        message = await client.get_messages(chat_id, ids=message_id)
-        if message is None or not getattr(message, "media", None):
-            raise DesktopError("Media is not available for this message")
-
-        file_info = getattr(message, "file", None)
-        mime_type = getattr(file_info, "mime_type", None)
-        raw_name = getattr(file_info, "name", None)
-        if not raw_name:
-            extension = mimetypes.guess_extension(mime_type or "") or ""
-            raw_name = f"media_{message_id}{extension}"
-        filename = safe_media_name(raw_name, fallback=f"media_{message_id}")
-
         root = self.settings.data_root / "downloads"
-        root.mkdir(parents=True, exist_ok=True)
-        target = media_path(root, chat_id, message_id, filename)
-        if not target.is_file() or target.stat().st_size == 0:
-            downloaded = await client.download_media(message, file=str(target))
-            if downloaded is None or not target.is_file():
+
+        if thumb:
+            target = root / f"{chat_id}_{message_id}.thumb.jpg"
+            if target.is_file() and target.stat().st_size > 0:
+                return DownloadedMedia(path=target, filename=target.name, mime_type="image/jpeg")
+        else:
+            existing = self._cached_original(root, chat_id, message_id)
+            if existing is not None:
+                name = existing.name.split("_", 2)[-1]
+                return DownloadedMedia(
+                    path=existing,
+                    filename=name,
+                    mime_type=mimetypes.guess_type(name)[0] or "application/octet-stream",
+                )
+
+        async def fetch() -> DownloadedMedia:
+            message = await self._get_message(client, chat_id, message_id)
+            if message is None or not getattr(message, "media", None):
+                raise MediaUnavailable("Media is not available for this message")
+            root.mkdir(parents=True, exist_ok=True)
+
+            if thumb:
+                target = root / f"{chat_id}_{message_id}.thumb.jpg"
+                photo = getattr(message, "photo", None)
+                if photo is not None:
+                    size = self._preview_size(photo)
+                    if size is None:
+                        raise MediaUnavailable("Photo preview is not available")
+                    options = {"thumb": size}
+                elif getattr(getattr(message, "document", None), "thumbs", None):
+                    options = {"thumb": -1}
+                else:
+                    raise MediaUnavailable("This media has no preview")
+                filename = target.name
+                mime_type = "image/jpeg"
+            else:
+                file_info = getattr(message, "file", None)
+                mime_type = getattr(file_info, "mime_type", None)
+                raw_name = getattr(file_info, "name", None)
+                if not raw_name:
+                    extension = mimetypes.guess_extension(mime_type or "") or ""
+                    if getattr(message, "photo", None):
+                        extension = ".jpg"
+                    raw_name = f"media_{message_id}{extension}"
+                filename = safe_media_name(raw_name, fallback=f"media_{message_id}")
+                target = media_path(root, chat_id, message_id, filename)
+                options = {}
+
+            # Download beside the target and rename at the end, so a broken
+            # transfer never leaves a truncated file in the cache.
+            partial = target.with_name(target.name + ".part")
+            for attempt in range(2):
+                try:
+                    downloaded = await client.download_media(message, file=str(partial), **options)
+                    break
+                except FileReferenceExpiredError:
+                    if attempt:
+                        raise
+                    message = await self._get_message(client, chat_id, message_id, fresh=True)
+                    if message is None:
+                        raise MediaUnavailable("Media is not available for this message") from None
+            if downloaded is None or not partial.is_file():
+                partial.unlink(missing_ok=True)
                 raise DesktopError("Media download failed")
+            partial.replace(target)
+            return DownloadedMedia(
+                path=target,
+                filename=filename,
+                mime_type=mime_type or mimetypes.guess_type(filename)[0],
+            )
 
-        return DownloadedMedia(
-            path=target,
-            filename=filename,
-            mime_type=mime_type or mimetypes.guess_type(filename)[0],
-        )
+        if not hasattr(self, "_inflight"):
+            return await fetch()
+        return await self._single_flight(f"media:{chat_id}:{message_id}:{int(thumb)}", fetch)
 
-    async def list_dialogs(self, search: str | None = None) -> list[Dialog]:
+    async def _fetch_dialogs(self) -> list[Dialog]:
+        """Fetch every dialog from Telegram once; concurrent callers share it."""
+        running = self._dialogs_task
+        if running is None or running.done():
+            running = asyncio.ensure_future(self._load_dialogs_live())
+            self._dialogs_task = running
+        return await asyncio.shield(running)
+
+    async def _load_dialogs_live(self) -> list[Dialog]:
         client = self._require_authorized()
-        dialogs = []
+        dialogs: list[Dialog] = []
         async for item in client.iter_dialogs():
+            self._remember_entity(item.entity)
+            if getattr(item, "message", None) is not None:
+                self._remember_entity(getattr(item.message, "sender", None))
             value = self._dialog_model(item)
             if self.status.user_id is not None and value.chat_id == int(self.status.user_id):
                 value = value.model_copy(update={"title": "Saved Messages"})
@@ -902,27 +1142,44 @@ class TelegramDesktopService:
                 self._outbox_read_max.get(value.chat_id, 0),
                 read_max,
             )
-            if search and search.casefold() not in value.title.casefold() and not (
-                value.username and search.casefold() in value.username.casefold()
-            ):
-                continue
             dialogs.append(value)
-            if "اتاق" in value.title:
-                self._priority_chat_ids.add(value.chat_id)
-            else:
-                self._priority_chat_ids.discard(value.chat_id)
-            await self.store.upsert_dialog(value)
-        return sorted(
-            dialogs,
-            key=lambda value: (
-                not value.pinned,
-                -(value.last_message_at.timestamp() if value.last_message_at else 0),
-            ),
-        )
+        # Telegram already returns pinned chats first, in their pinned order,
+        # then the rest by last activity; keep that order.
+        self._dialogs_snapshot = dialogs
+        self._dialogs_at = time.monotonic()
+        try:
+            await self.store.replace_dialogs(dialogs)
+        except Exception:
+            logger.warning("Dialog cache could not be written", exc_info=True)
+        return dialogs
+
+    @staticmethod
+    def _filter_dialogs(dialogs: list[Dialog], search: str | None) -> list[Dialog]:
+        if not search:
+            return list(dialogs)
+        needle = search.casefold()
+        return [
+            value for value in dialogs
+            if needle in value.title.casefold()
+            or (value.username and needle in value.username.casefold())
+        ]
+
+    async def list_dialogs(self, search: str | None = None, cached: bool = False) -> list[Dialog]:
+        if cached:
+            # Local cache: answered from SQLite in milliseconds, even before
+            # Telegram is connected, so the chat list appears immediately.
+            return await self.store.list_dialogs(search)
+        self._require_authorized()
+        if self._dialogs_snapshot and time.monotonic() - self._dialogs_at < DIALOG_REUSE_SECONDS:
+            return self._filter_dialogs(self._dialogs_snapshot, search)
+        return self._filter_dialogs(await self._fetch_dialogs(), search)
 
     async def list_dialog_folders(self) -> list[DialogFolder]:
         client = self._require_authorized()
-        dialogs = await self.list_dialogs()
+        if self._dialogs_snapshot and time.monotonic() - self._dialogs_at < DIALOG_SNAPSHOT_MAX_AGE:
+            dialogs = self._dialogs_snapshot
+        else:
+            dialogs = await self._fetch_dialogs()
         by_id = {item.chat_id: item for item in dialogs}
         try:
             result = await client(functions.messages.GetDialogFiltersRequest())
@@ -968,7 +1225,8 @@ class TelegramDesktopService:
             if bool(getattr(raw_filter, "exclude_read", False)):
                 values = [item for item in values if item.unread_count > 0]
 
-            ordered_ids = [item.chat_id for item in dialogs if any(value.chat_id == item.chat_id for value in values)]
+            member_ids = {value.chat_id for value in values}
+            ordered_ids = [item.chat_id for item in dialogs if item.chat_id in member_ids]
             folders.append(
                 DialogFolder(
                     id=folder_id,
@@ -981,6 +1239,7 @@ class TelegramDesktopService:
 
     async def _publish_dialog_update(self, chat_id: int, **changes: bool) -> dict:
         value = {"chat_id": chat_id, **changes}
+        self._dialogs_at = 0.0
         await self.events.publish({"type": "DIALOG_UPDATED", "data": value})
         return value
 
@@ -1041,9 +1300,18 @@ class TelegramDesktopService:
         await self.store.upsert_message(message)
         return message
 
-    async def history(self, chat_id: int, limit: int = 50, offset_id: int = 0) -> list[Message]:
+    async def history(
+        self,
+        chat_id: int,
+        limit: int = 50,
+        offset_id: int = 0,
+        cached: bool = False,
+    ) -> list[Message]:
         if limit < 1 or limit > 200:
             raise ValueError("limit must be between 1 and 200")
+        if cached:
+            values = await self.store.history(chat_id, limit, offset_id)
+            return [value for value in values if not value.deleted]
         client = self._require_authorized()
         values = []
         async for item in client.iter_messages(
@@ -1051,9 +1319,8 @@ class TelegramDesktopService:
             limit=limit,
             offset_id=offset_id or 0,
         ):
-            value = self._message_model(item, chat_id)
-            values.append(value)
-            await self.store.upsert_message(value)
+            values.append(self._message_model(item, chat_id))
+        await self.store.upsert_messages(values)
         return list(reversed(values))
 
     async def _own_message(self, chat_id: int, message_id: int) -> tuple[TelegramClient, Any]:
@@ -1080,9 +1347,8 @@ class TelegramDesktopService:
         client = self._require_authorized()
         messages = []
         async for item in client.iter_messages(chat_id, search=value, limit=limit):
-            message = self._message_model(item, chat_id)
-            messages.append(message)
-            await self.store.upsert_message(message)
+            messages.append(self._message_model(item, chat_id))
+        await self.store.upsert_messages(messages)
         return messages
 
     async def send_typing(self, chat_id: int, active: bool = True) -> dict:
@@ -1208,6 +1474,46 @@ class TelegramDesktopService:
                 )
         return result
 
+    async def recent_media_preview(self, kind: str, media_id: str) -> DownloadedMedia:
+        """Small preview image of a recent sticker or GIF for the picker grid."""
+        client = self._require_authorized()
+        document = self._recent_media.get((kind, media_id))
+        if document is None:
+            raise MediaUnavailable("Recent media is not loaded")
+        root = self.settings.data_root / "downloads" / "recent"
+        safe_id = safe_media_name(media_id, fallback="media")
+        target = root / f"{kind}_{safe_id}.thumb"
+        if target.is_file() and target.stat().st_size > 0:
+            return DownloadedMedia(path=target, filename=target.name, mime_type=self._sniff_image(target))
+
+        async def fetch() -> DownloadedMedia:
+            root.mkdir(parents=True, exist_ok=True)
+            partial = target.with_name(target.name + ".part")
+            mime = getattr(document, "mime_type", None)
+            if kind == "sticker" and mime == "image/webp":
+                downloaded = await client.download_media(document, file=str(partial))
+            elif getattr(document, "thumbs", None):
+                downloaded = await client.download_media(document, file=str(partial), thumb=-1)
+            else:
+                raise MediaUnavailable("This media has no preview")
+            if downloaded is None or not partial.is_file():
+                partial.unlink(missing_ok=True)
+                raise MediaUnavailable("Preview download failed")
+            partial.replace(target)
+            return DownloadedMedia(path=target, filename=target.name, mime_type=self._sniff_image(target))
+
+        return await self._single_flight(f"recent:{kind}:{media_id}", fetch)
+
+    @staticmethod
+    def _sniff_image(path: Path) -> str:
+        with path.open("rb") as handle:
+            head = handle.read(12)
+        if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+            return "image/webp"
+        if head[:8] == b"\x89PNG\r\n\x1a\n":
+            return "image/png"
+        return "image/jpeg"
+
     async def send_recent_media(
         self,
         chat_id: int,
@@ -1327,8 +1633,9 @@ class TelegramDesktopService:
         return {"chat_id": chat_id, "read": True}
 
     async def send_login_code(self, phone: str) -> dict:
-        if self.client is None or not self.status.connected:
-            await self._connect()
+        async with self._lifecycle_lock:
+            if self.client is None or not self.status.connected:
+                await self._connect()
         if self.client is None or not self.status.connected:
             raise DesktopError("Telegram connection is unavailable")
         if self.status.authorized:
@@ -1374,34 +1681,37 @@ class TelegramDesktopService:
         return {"code_sent": True, "requires_2fa": False, "authorized": True}
 
     async def logout(self) -> None:
-        logged_out_user_id = self.status.user_id
-        self._unregister_handlers()
-        if self.client is not None:
+        async with self._lifecycle_lock:
+            logged_out_user_id = self.status.user_id
+            self._unregister_handlers()
+            if self.client is not None:
+                try:
+                    await self.client.log_out()
+                except Exception:
+                    logger.warning("Telegram logout request failed")
+                with suppress(Exception):
+                    await self.client.disconnect()
+            self.client = None
+            if self.route is not None:
+                await self.route.deactivate()
+            self.route = None
+            self.login_phone = None
+            self.login_code_hash = None
+            self._init_runtime_state()
+            self.sessions.remove_client_session()
+            self.transfer_bundle.remove_session()
+            self.transfer_bundle.sync(include_session=False)
             try:
-                await self.client.log_out()
+                remove_account_from_portable(self.settings, logged_out_user_id)
             except Exception:
-                logger.warning("Telegram logout request failed")
-            await self.client.disconnect()
-        self.client = None
-        if self.route is not None:
-            await self.route.deactivate()
-        self.route = None
-        self.login_phone = None
-        self.login_code_hash = None
-        self.sessions.remove_client_session()
-        self.transfer_bundle.remove_session()
-        self.transfer_bundle.sync(include_session=False)
-        try:
-            remove_account_from_portable(self.settings, logged_out_user_id)
-        except Exception:
-            logger.warning("Portable account bundle could not remove logged-out account", exc_info=True)
-        info = self.sessions.info()
-        self.status = ClientStatus(
-            configured=self.settings.telegram_configured,
-            state="AUTH_REQUIRED" if self.settings.telegram_configured else "UNCONFIGURED",
-            source_session_available=info.source_available,
-            client_session_exists=info.client_exists,
-        )
+                logger.warning("Portable account bundle could not remove logged-out account", exc_info=True)
+            info = self.sessions.info()
+            self.status = ClientStatus(
+                configured=self.settings.telegram_configured,
+                state="AUTH_REQUIRED" if self.settings.telegram_configured else "UNCONFIGURED",
+                source_session_available=info.source_available,
+                client_session_exists=info.client_exists,
+            )
 
     async def close(self) -> None:
         if self._connection_monitor is not None:
@@ -1409,6 +1719,8 @@ class TelegramDesktopService:
             with suppress(asyncio.CancelledError):
                 await self._connection_monitor
             self._connection_monitor = None
+        for task in tuple(self._background):
+            task.cancel()
         self._unregister_handlers()
         if self.client is not None:
             await self.client.disconnect()
