@@ -28,6 +28,7 @@ from app.models import (
     ApiConfigRequest,
     ChatInfo,
     ClientStatus,
+    ContactInfo,
     DeviceSession,
     DesktopError,
     Dialog,
@@ -799,6 +800,56 @@ class TelegramDesktopService:
                 self._priority_chat_ids.discard(dialog.chat_id)
             values.append(dialog if dialog.priority == enabled else dialog.model_copy(update={"priority": enabled}))
         return values
+
+    async def contacts(self) -> list[ContactInfo]:
+        client = self._require_authorized()
+        result = await client(functions.contacts.GetContactsRequest(hash=0))
+        values = []
+        for user in getattr(result, "users", None) or []:
+            if getattr(user, "deleted", False):
+                continue
+            values.append(
+                ContactInfo(
+                    chat_id=int(user.id),
+                    title=self._entity_title(user, int(user.id)),
+                    username=getattr(user, "username", None),
+                    phone=getattr(user, "phone", None),
+                    status=self._entity_status(user),
+                )
+            )
+        values.sort(key=lambda item: item.title.casefold())
+        return values
+
+    async def create_chat(self, title: str, kind: str, about: str = "") -> Dialog:
+        """Create a group (a supergroup, as Telegram does today) or a channel."""
+        client = self._require_authorized()
+        name = title.strip()
+        if not name:
+            raise DesktopError("نام را وارد کنید.")
+        try:
+            result = await client(
+                functions.channels.CreateChannelRequest(
+                    title=name,
+                    about=about.strip(),
+                    megagroup=kind == "group",
+                    broadcast=kind == "channel",
+                )
+            )
+        except Exception as error:
+            logger.warning("Telegram chat creation failed: %s", type(error).__name__)
+            raise DesktopError("ساخت " + ("گروه" if kind == "group" else "کانال") + " انجام نشد.") from None
+        chat = next(iter(getattr(result, "chats", None) or []), None)
+        if chat is None:
+            raise DesktopError("Telegram did not return the new chat")
+        dialog = Dialog(
+            chat_id=int(utils.get_peer_id(chat)),
+            title=name,
+            dialog_type="supergroup" if kind == "group" else "channel",
+            last_message_at=datetime.now(timezone.utc),
+        )
+        self._dialog_snapshot = [dialog, *self._dialog_snapshot]
+        await self.store.upsert_dialog(dialog)
+        return dialog
 
     async def set_dialog_priority(self, chat_id: int, enabled: bool) -> dict:
         title = next((item.title for item in self._dialog_snapshot if item.chat_id == chat_id), "")

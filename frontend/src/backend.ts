@@ -13,7 +13,13 @@ export function configureBackend(port: number) {
 // without it, so other programs and websites cannot drive the account.
 let token = ''
 const tokenReady: Promise<string> = (async () => {
-  if (!('__TAURI_INTERNALS__' in window)) return ''
+  if (!('__TAURI_INTERNALS__' in window)) {
+    // Development only: a browser tab (no Tauri shell) may pass the dev
+    // backend's token as ?devtoken=... to inspect the real UI. Production
+    // builds never read it.
+    if (import.meta.env.DEV) token = new URLSearchParams(window.location.search).get('devtoken') || ''
+    return token
+  }
   try {
     token = await invoke<string>('backend_token')
   } catch {

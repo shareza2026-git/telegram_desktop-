@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse
 
 from app.models import (
     ApiConfigRequest,
+    CreateChatRequest,
     DesktopError,
     DialogStateRequest,
     EditMessageRequest,
@@ -160,6 +161,22 @@ async def set_dialog_archived(chat_id: int, values: DialogStateRequest, request:
 async def set_dialog_muted(chat_id: int, values: DialogStateRequest, request: Request):
     try:
         return await service(request).set_dialog_muted(chat_id, values.enabled)
+    except DesktopError as exc:
+        raise error_response(exc) from None
+
+
+@router.get("/api/telegram/contacts")
+async def contacts(request: Request):
+    try:
+        return await service(request).contacts()
+    except DesktopError as exc:
+        raise error_response(exc) from None
+
+
+@router.post("/api/telegram/chats/create")
+async def create_chat(values: CreateChatRequest, request: Request):
+    try:
+        return await service(request).create_chat(values.title, values.kind, values.about)
     except DesktopError as exc:
         raise error_response(exc) from None
 

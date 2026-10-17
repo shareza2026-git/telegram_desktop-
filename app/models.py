@@ -241,6 +241,20 @@ class DialogStateRequest(BaseModel):
     enabled: bool
 
 
+class ContactInfo(BaseModel):
+    chat_id: int
+    title: str
+    username: str | None = None
+    phone: str | None = None
+    status: str | None = None
+
+
+class CreateChatRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=128)
+    kind: Literal["group", "channel"]
+    about: str = Field(default="", max_length=255)
+
+
 class ApiConfigRequest(BaseModel):
     api_id: int = Field(ge=1)
     api_hash: str = Field(min_length=16, max_length=128)

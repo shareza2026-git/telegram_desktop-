@@ -30,6 +30,7 @@ import type {
   AuthStep,
   ChatAction,
   ChatInfo,
+  ContactInfo,
   DeviceSession,
   Dialog,
   DialogContextMenu,
@@ -226,6 +227,13 @@ function App() {
   const [chatActions, setChatActions] = useState<Record<number, ChatAction>>({})
   const [viewerMessage, setViewerMessage] = useState<Message | null>(null)
   const [countryCode, setCountryCode] = useState('+98')
+  const [contactsOpen, setContactsOpen] = useState(false)
+  const [contacts, setContacts] = useState<ContactInfo[] | null>(null)
+  const [contactsQuery, setContactsQuery] = useState('')
+  const [createKind, setCreateKind] = useState<'group' | 'channel' | null>(null)
+  const [createTitle, setCreateTitle] = useState('')
+  const [createAbout, setCreateAbout] = useState('')
+  const [createBusy, setCreateBusy] = useState(false)
   const typingTimerRef = useRef<number | null>(null)
   const typingSentRef = useRef<{ chatId: number; active: boolean; at: number } | null>(null)
   const chatActionTimerRef = useRef<number | null>(null)
@@ -322,7 +330,7 @@ function App() {
   }, [activeFolder, dialogs, query, telegramFolders])
 
   const totalUnread = useMemo(
-    () => dialogs.reduce((total, dialog) => total + dialog.unread_count, 0),
+    () => dialogs.reduce((total, dialog) => total + (dialog.muted || dialog.archived ? 0 : dialog.unread_count), 0),
     [dialogs]
   )
 
@@ -1887,6 +1895,65 @@ function App() {
     }
   }
 
+  async function openContacts() {
+    setMainMenuOpen(false)
+    setContactsQuery('')
+    setContactsOpen(true)
+    try {
+      setContacts(await api<ContactInfo[]>('/api/telegram/contacts'))
+    } catch (caught) {
+      setContacts([])
+      setError(errorMessage(caught, 'فهرست مخاطبین دریافت نشد.'))
+    }
+  }
+
+  function openContact(contact: ContactInfo) {
+    setContactsOpen(false)
+    const existing = dialogsRef.current.find(item => item.chat_id === contact.chat_id)
+    if (existing) {
+      openDialog(existing)
+      return
+    }
+    const dialog: Dialog = {
+      chat_id: contact.chat_id,
+      title: contact.title,
+      dialog_type: 'user',
+      username: contact.username,
+      unread_count: 0,
+      pinned: false,
+      archived: false,
+      muted: false
+    }
+    setDialogs(current => [dialog, ...current])
+    openDialog(dialog)
+  }
+
+  function openCreateChat(kind: 'group' | 'channel') {
+    setMainMenuOpen(false)
+    setCreateTitle('')
+    setCreateAbout('')
+    setCreateKind(kind)
+  }
+
+  async function submitCreateChat(event: FormEvent) {
+    event.preventDefault()
+    if (!createKind || createBusy || !createTitle.trim()) return
+    setCreateBusy(true)
+    try {
+      const dialog = await api<Dialog>('/api/telegram/chats/create', {
+        method: 'POST',
+        body: JSON.stringify({ title: createTitle.trim(), kind: createKind, about: createAbout.trim() })
+      })
+      setDialogs(current => [dialog, ...current.filter(item => item.chat_id !== dialog.chat_id)])
+      setCreateKind(null)
+      openDialog(dialog)
+    } catch (caught) {
+      setError(errorMessage(caught, createKind === 'group' ? 'ساخت گروه انجام نشد.' : 'ساخت کانال انجام نشد.'))
+    } finally {
+      setCreateBusy(false)
+    }
+  }
+
   function menuUnavailable(label: string) {
     setMainMenuOpen(false)
     setError(label + ' در نسخهٔ فعلی هنوز فعال نشده است.')
@@ -2734,13 +2801,9 @@ function App() {
               <small dir="ltr">{status.phone ? '+' + status.phone : 'Telegram account'}</small>
               <span className="menu-chevron">⌃</span>
             </section>
-            <button className="menu-item" type="button" onClick={() => void openRelay()}><Icon name="account" /><span>Add Account</span></button>
-            <button className="menu-item" type="button" onClick={() => void openRelay()}><Icon name="forward" /><span>Auto Forward</span><small className="menu-hint">فوروارد خودکار</small></button>
-            <hr />
-            <button className="menu-item" type="button" onClick={() => menuUnavailable('گروه جدید')}><Icon name="group" /><span>New Group</span></button>
-            <button className="menu-item" type="button" onClick={() => menuUnavailable('کانال جدید')}><Icon name="channel" /><span>New Channel</span></button>
-            <button className="menu-item" type="button" onClick={() => menuUnavailable('مخاطبین')}><Icon name="contacts" /><span>Contacts</span></button>
-            <button className="menu-item" type="button" onClick={() => menuUnavailable('تماس‌ها')}><Icon name="calls" /><span>Calls</span></button>
+            <button className="menu-item" type="button" onClick={() => openCreateChat('group')}><Icon name="group" /><span>New Group</span></button>
+            <button className="menu-item" type="button" onClick={() => openCreateChat('channel')}><Icon name="channel" /><span>New Channel</span></button>
+            <button className="menu-item" type="button" onClick={() => void openContacts()}><Icon name="contacts" /><span>Contacts</span></button>
             <button className="menu-item" type="button" onClick={openSelfChat}><Icon name="saved" /><span>Saved Messages</span></button>
             <button className="menu-item" type="button" onClick={() => void openSettings()}><Icon name="settings" /><span>Settings</span></button>
             <button
@@ -2804,7 +2867,7 @@ function App() {
           onMouseDown={event => event.stopPropagation()}
         >
           <button type="button" onClick={() => void openDialogInNewWindow(dialogContextMenu.dialog)}>
-            <span>□</span>
+            <Icon name="window" />
             Open in New Window
           </button>
         </div>
@@ -2862,28 +2925,28 @@ function App() {
                       onClick={() => updateDialogState('pin', !selected.pinned)}
                       disabled={dialogActionBusy !== null}
                     >
-                      <span>⌖</span>{selected.pinned ? 'برداشتن سنجاق گفتگو' : 'سنجاق‌کردن گفتگو'}
+                      <Icon name="pin" />{selected.pinned ? 'برداشتن سنجاق گفتگو' : 'سنجاق‌کردن گفتگو'}
                     </button>
                     <button
                       type="button"
                       onClick={() => updateDialogState('mute', !selected.muted)}
                       disabled={dialogActionBusy !== null}
                     >
-                      <span>🔕</span>{selected.muted ? 'فعال‌کردن اعلان گفتگو' : 'بی‌صداکردن گفتگو'}
+                      <Icon name="mute" />{selected.muted ? 'فعال‌کردن اعلان گفتگو' : 'بی‌صداکردن گفتگو'}
                     </button>
                     <button
                       type="button"
                       onClick={() => updateDialogState('archive', !selected.archived)}
                       disabled={dialogActionBusy !== null}
                     >
-                      <span>▣</span>{selected.archived ? 'خارج‌کردن از آرشیو' : 'انتقال به آرشیو'}
+                      <Icon name="archive" />{selected.archived ? 'خارج‌کردن از آرشیو' : 'انتقال به آرشیو'}
                     </button>
                     <button
                       type="button"
                       onClick={() => updateDialogState('priority', !selected.priority)}
                       disabled={dialogActionBusy !== null}
                     >
-                      <span>⚡</span>{selected.priority ? 'برداشتن اولویت لفظ' : 'اولویت لفظ (تحویل سریع‌تر)'}
+                      <Icon name="bolt" />{selected.priority ? 'برداشتن اولویت لفظ' : 'اولویت لفظ (تحویل سریع‌تر)'}
                     </button>
                   </div>
                 )}
@@ -3125,7 +3188,7 @@ function App() {
           role="menu"
           onMouseDown={event => event.stopPropagation()}
         >
-          <button type="button" role="menuitem" onClick={() => beginReply(messageContextMenu.message)}>↩ پاسخ</button>
+          <button type="button" role="menuitem" onClick={() => beginReply(messageContextMenu.message)}><Icon name="reply" />پاسخ</button>
           <button
             type="button"
             role="menuitem"
@@ -3134,23 +3197,23 @@ function App() {
               setMessageContextMenu(null)
             }}
           >
-            ☺ واکنش
+            <Icon name="smile" />واکنش
           </button>
-          <button type="button" role="menuitem" onClick={() => beginForward(messageContextMenu.message)}>↗ فوروارد</button>
-          <button type="button" role="menuitem" onClick={() => copyMessages([messageContextMenu.message])}>▣ کپی متن</button>
-          <button type="button" role="menuitem" onClick={() => toggleMessageSelection(messageContextMenu.message.message_id)}>☑ انتخاب</button>
+          <button type="button" role="menuitem" onClick={() => beginForward(messageContextMenu.message)}><Icon name="forward" />فوروارد</button>
+          <button type="button" role="menuitem" onClick={() => copyMessages([messageContextMenu.message])}><Icon name="copy" />کپی متن</button>
+          <button type="button" role="menuitem" onClick={() => toggleMessageSelection(messageContextMenu.message.message_id)}><Icon name="select" />انتخاب</button>
           {messageContextMenu.message.outgoing && messageContextMenu.message.text && !messageContextMenu.message.deleted && (
             <button type="button" role="menuitem" onClick={() => {
               beginEdit(messageContextMenu.message)
               setMessageContextMenu(null)
-            }}>✎ ویرایش</button>
+            }}><Icon name="edit" />ویرایش</button>
           )}
           {messageContextMenu.message.outgoing && !messageContextMenu.message.deleted && (
             <button type="button" role="menuitem" className="danger" onClick={() => {
               const message = messageContextMenu.message
               setMessageContextMenu(null)
               void deleteMessage(message)
-            }}>حذف</button>
+            }}><Icon name="trash" />حذف</button>
           )}
         </div>
       )}
@@ -3332,7 +3395,7 @@ function App() {
               <section className="settings-section">
                 <h3>انتقال به اکانت دوم</h3>
                 <div className="safe-note">اکانت دوم فقط برای ارسال به کانال‌های مقصد استفاده می‌شود؛ پیام‌های آن در این برنامه بارگیری نمی‌شوند.</div>
-                <button className="relay-action" type="button" onClick={() => void openRelay()}>افزودن حساب / مدیریت انتقال‌ها</button>
+                <button className="relay-action" type="button" onClick={() => void openRelay()}>فوروارد خودکار / مدیریت اکانت دوم</button>
               </section>
 
               <section className="settings-section">
@@ -3357,7 +3420,7 @@ function App() {
                   <span><strong>بارگیری خودکار تصاویر</strong><small>در حالت خاموش، هر تصویر فقط با انتخاب شما نمایش داده می‌شود.</small></span>
                   <input type="checkbox" checked={preferences.autoLoadPhotos} onChange={event => updatePreferences({ autoLoadPhotos: event.target.checked })} />
                 </label>
-                <div className="safe-note">پخش صوت و ویدئو همچنان غیرفعال است. دانلود فایل‌ها فقط با دکمه دانلود انجام می‌شود.</div>
+                <div className="safe-note">ویدئو، پیام صوتی و موسیقی داخل گفتگو پخش می‌شوند. فایل‌ها فقط با دکمه دانلود ذخیره می‌شوند.</div>
               </section>
             </div>
           </section>
@@ -3412,6 +3475,71 @@ function App() {
               )}
             </div>
           </section>
+        </div>
+      )}
+
+      {contactsOpen && (
+        <div className="forward-backdrop" onMouseDown={() => setContactsOpen(false)}>
+          <section className="forward-modal tg-panel" role="dialog" aria-modal="true" aria-label="Contacts" onMouseDown={event => event.stopPropagation()}>
+            <header>
+              <div><strong>Contacts</strong></div>
+              <button className="icon-button" type="button" aria-label="بستن" onClick={() => setContactsOpen(false)}>×</button>
+            </header>
+            <input
+              className="forward-search"
+              value={contactsQuery}
+              onChange={event => setContactsQuery(event.target.value)}
+              placeholder="Search"
+              autoFocus
+            />
+            <div className="forward-dialogs">
+              {contacts === null && <div className="search-empty">در حال دریافت…</div>}
+              {contacts?.filter(item => {
+                const value = contactsQuery.trim().toLocaleLowerCase()
+                return !value || item.title.toLocaleLowerCase().includes(value) || Boolean(item.username?.toLocaleLowerCase().includes(value)) || Boolean(item.phone?.includes(value))
+              }).map(contact => (
+                <button className="forward-dialog-row" type="button" key={contact.chat_id} onClick={() => openContact(contact)}>
+                  <ChatAvatar chatId={contact.chat_id} title={contact.title} />
+                  <span>
+                    <strong>{contact.title}</strong>
+                    <small>{presenceLabel(contact.status) || (contact.username ? '@' + contact.username : '')}</small>
+                  </span>
+                </button>
+              ))}
+              {contacts?.length === 0 && <div className="search-empty">مخاطبی پیدا نشد.</div>}
+            </div>
+          </section>
+        </div>
+      )}
+
+      {createKind && (
+        <div className="forward-backdrop" onMouseDown={() => !createBusy && setCreateKind(null)}>
+          <form className="forward-modal tg-panel tg-create" role="dialog" aria-modal="true" onSubmit={submitCreateChat} onMouseDown={event => event.stopPropagation()}>
+            <header>
+              <div><strong>{createKind === 'group' ? 'New Group' : 'New Channel'}</strong></div>
+              <button className="icon-button" type="button" aria-label="بستن" onClick={() => setCreateKind(null)} disabled={createBusy}>×</button>
+            </header>
+            <input
+              className="tg-login-single"
+              value={createTitle}
+              onChange={event => setCreateTitle(event.target.value)}
+              placeholder={createKind === 'group' ? 'Group name' : 'Channel name'}
+              maxLength={128}
+              autoFocus
+            />
+            {createKind === 'channel' && (
+              <input
+                className="tg-login-single"
+                value={createAbout}
+                onChange={event => setCreateAbout(event.target.value)}
+                placeholder="Description (optional)"
+                maxLength={255}
+              />
+            )}
+            <button className="tg-login-next" type="submit" disabled={createBusy || !createTitle.trim()}>
+              {createBusy ? <span className="tg-login-spinner" aria-label="در حال ساخت" /> : 'Create'}
+            </button>
+          </form>
         </div>
       )}
 

@@ -205,3 +205,18 @@
 .composer-input-shell input::placeholder { color: #999; }
 .composer-attach, .composer-emoji { width: 40px; height: 40px; display: grid; place-items: center; color: #999; background: transparent; border-radius: 50%; }
 .composer-attach:hover, .composer-emoji:hover { color: #40a7e3; background: transparent; }
+
+/* Menus with line icons, as in Telegram Desktop */
+.message-context-menu button .tg-icon, .chat-menu button .tg-icon, .dialog-context-menu button .tg-icon { width: 20px; height: 20px; flex-basis: 20px; }
+.chat-menu button { display: flex; align-items: center; gap: 12px; }
+
+/* Contacts and New Group/Channel panels */
+.tg-panel { color: #000; background: #fff; border: 0; border-radius: 10px; box-shadow: 0 10px 40px rgba(0, 0, 0, .25); }
+.tg-panel header strong { color: #000; font-size: 16px; font-weight: 600; }
+.tg-panel .forward-search { color: #000; background: #f1f1f1; border: 0; border-radius: 18px; }
+.tg-panel .forward-dialog-row { color: #000; }
+.tg-panel .forward-dialog-row:hover { background: #f1f1f1; }
+.tg-panel .forward-dialog-row small { color: #999; }
+.tg-create { gap: 14px; padding: 18px 22px 22px; }
+.tg-create .tg-login-single { text-align: start; letter-spacing: 0; }
+.tg-create .tg-login-next { margin-top: 10px; }

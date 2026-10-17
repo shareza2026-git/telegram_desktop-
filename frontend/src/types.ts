@@ -230,6 +230,14 @@ export type DeviceSession = {
   region?: string | null
 }
 
+export type ContactInfo = {
+  chat_id: number
+  title: string
+  username?: string | null
+  phone?: string | null
+  status?: string | null
+}
+
 export type AuthStep = 'phone' | 'code' | 'password'
 export type FolderKey = 'all' | 'private' | 'unread' | 'groups' | 'channels' | 'archived' | `folder:${number}`
 export type MediaState = 'loading' | 'ready' | 'downloading' | 'done' | 'error'
