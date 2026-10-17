@@ -21,6 +21,7 @@ import {
   presenceLabel,
   statusLabel
 } from './format'
+import { Icon } from './icons'
 import { ChatAvatar, MediaViewer } from './media'
 import { MessageBubble, type BubbleActions } from './MessageBubble'
 import { buildMessageRows } from './messageList'
@@ -2733,19 +2734,23 @@ function App() {
               <small dir="ltr">{status.phone ? '+' + status.phone : 'Telegram account'}</small>
               <span className="menu-chevron">⌃</span>
             </section>
-            <button className="menu-item" type="button" onClick={() => void openRelay()}><i>⊕</i><span>Add Account</span></button>
+            <button className="menu-item" type="button" onClick={() => void openRelay()}><Icon name="account" /><span>Add Account</span></button>
+            <button className="menu-item" type="button" onClick={() => void openRelay()}><Icon name="forward" /><span>Auto Forward</span><small className="menu-hint">فوروارد خودکار</small></button>
             <hr />
-            <button className="menu-item" type="button" onClick={openSelfChat}><i>⌑</i><span>Saved Messages</span></button>
-            <button className="menu-item" type="button" onClick={openSelfChat}><i>◉</i><span>My Profile</span></button>
-            <button className="menu-item" type="button" onClick={() => menuUnavailable('گروه جدید')}><i>♧</i><span>New Group</span></button>
-            <button className="menu-item" type="button" onClick={() => menuUnavailable('کانال جدید')}><i>▷</i><span>New Channel</span></button>
-            <hr />
-            <button className="menu-item active" type="button" onClick={() => setMainMenuOpen(false)}><i>◌</i><span>Chats</span></button>
-            <button className="menu-item" type="button" onClick={() => menuUnavailable('مخاطبین')}><i>♙</i><span>Contacts</span></button>
-            <button className="menu-item" type="button" onClick={() => menuUnavailable('تماس‌ها')}><i>⌕</i><span>Calls</span></button>
-            <button className="menu-item" type="button" onClick={() => void openSettings()}><i>⚙</i><span>Settings</span></button>
-            <hr />
-            <button className="menu-item" type="button" onClick={() => menuUnavailable('قابلیت‌های تلگرام')}><i>?</i><span>Telegram Features</span></button>
+            <button className="menu-item" type="button" onClick={() => menuUnavailable('گروه جدید')}><Icon name="group" /><span>New Group</span></button>
+            <button className="menu-item" type="button" onClick={() => menuUnavailable('کانال جدید')}><Icon name="channel" /><span>New Channel</span></button>
+            <button className="menu-item" type="button" onClick={() => menuUnavailable('مخاطبین')}><Icon name="contacts" /><span>Contacts</span></button>
+            <button className="menu-item" type="button" onClick={() => menuUnavailable('تماس‌ها')}><Icon name="calls" /><span>Calls</span></button>
+            <button className="menu-item" type="button" onClick={openSelfChat}><Icon name="saved" /><span>Saved Messages</span></button>
+            <button className="menu-item" type="button" onClick={() => void openSettings()}><Icon name="settings" /><span>Settings</span></button>
+            <button
+              className="menu-item menu-toggle"
+              type="button"
+              onClick={() => updatePreferences({ theme: preferences.theme === 'dark' ? 'light' : 'dark' })}
+            >
+              <Icon name="night" /><span>Night Mode</span>
+              <span className={'tg-switch' + (preferences.theme === 'dark' ? ' on' : '')} aria-hidden="true" />
+            </button>
           </nav>
         </div>
       )}

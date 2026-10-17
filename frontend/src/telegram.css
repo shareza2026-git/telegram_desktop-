@@ -182,3 +182,26 @@
 
 /* Priority (quote) chats */
 .dialog-priority { margin-inline-end: 3px; color: #f2a516; font-size: 12px; }
+
+/* Main menu, as in Telegram Desktop */
+.main-menu-drawer { width: 264px; padding-bottom: 8px; }
+.main-menu-drawer .menu-item { min-height: 44px; padding: 0 18px; display: flex; align-items: center; gap: 22px; color: #000; font-size: 14px; }
+.main-menu-drawer .menu-item:hover { background: #f1f1f1; }
+.main-menu-drawer .menu-item i { display: none; }
+.main-menu-drawer hr { margin: 6px 0; border: 0; border-top: 1px solid #ececec; }
+.tg-icon { width: 22px; height: 22px; flex: 0 0 22px; color: #8a8a8a; }
+.menu-item .menu-hint { margin-inline-start: auto; color: #999; font-size: 11px; }
+.menu-toggle { position: relative; }
+.tg-switch { position: relative; width: 30px; height: 16px; margin-inline-start: auto; background: #d4d4d4; border-radius: 8px; transition: background .15s; }
+.tg-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; background: #fff; border-radius: 50%; transition: transform .15s; }
+.tg-switch.on { background: #40a7e3; }
+.tg-switch.on::after { transform: translateX(14px); }
+
+/* Composer, as in Telegram Desktop: one flat white bar across the chat. */
+.composer-shell { padding: 0; background: #fff; border-top: 1px solid #e7e7e7; }
+.composer { padding: 0; }
+.composer-input-shell { min-height: 48px; padding: 0 8px; gap: 4px; background: #fff; border: 0; border-radius: 0; box-shadow: none; }
+.composer-input-shell input { height: 48px; padding: 0 6px; color: #000; background: transparent; border: 0; box-shadow: none; font-size: 14px; }
+.composer-input-shell input::placeholder { color: #999; }
+.composer-attach, .composer-emoji { width: 40px; height: 40px; display: grid; place-items: center; color: #999; background: transparent; border-radius: 50%; }
+.composer-attach:hover, .composer-emoji:hover { color: #40a7e3; background: transparent; }
