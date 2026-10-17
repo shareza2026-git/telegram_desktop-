@@ -633,8 +633,21 @@ function App() {
         // Busy chats push several messages per second. Collect what arrives
         // within a few milliseconds and apply it in one React update instead
         // of re-rendering (and re-sorting the chat list) once per message.
-        pendingPackets.push(event.data as string)
-        if (flushTimer === undefined) flushTimer = window.setTimeout(flushPackets, 16)
+        let packet: { type: string; data: unknown; priority?: boolean }
+        try {
+          packet = JSON.parse(event.data as string)
+        } catch {
+          return
+        }
+        pendingPackets.push(packet)
+        if (packet.priority) {
+          // Quotes from priority chats are drawn at once, with whatever else
+          // is already waiting, instead of after the batching delay.
+          if (flushTimer !== undefined) window.clearTimeout(flushTimer)
+          flushPackets()
+        } else if (flushTimer === undefined) {
+          flushTimer = window.setTimeout(flushPackets, 16)
+        }
       }
       socket.onclose = () => {
         if (disposed) return
@@ -646,16 +659,16 @@ function App() {
       socket.onerror = () => socket?.close()
     }
 
-    let pendingPackets: string[] = []
+    let pendingPackets: Array<{ type: string; data: unknown; priority?: boolean }> = []
     let flushTimer: number | undefined
 
     function flushPackets() {
       flushTimer = undefined
       const batch = pendingPackets
       pendingPackets = []
-      for (const raw of batch) {
+      for (const packet of batch) {
         try {
-          handlePacket(JSON.parse(raw) as { type: string; data: unknown })
+          handlePacket(packet)
         } catch {
           // One malformed packet must not stop live updates.
         }
@@ -1234,7 +1247,7 @@ function App() {
   }
 
   async function updateDialogState(
-    action: 'pin' | 'archive' | 'mute',
+    action: 'pin' | 'archive' | 'mute' | 'priority',
     enabled: boolean
   ) {
     if (!selected || dialogActionBusy !== null) return
@@ -2859,6 +2872,13 @@ function App() {
                       disabled={dialogActionBusy !== null}
                     >
                       <span>▣</span>{selected.archived ? 'خارج‌کردن از آرشیو' : 'انتقال به آرشیو'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateDialogState('priority', !selected.priority)}
+                      disabled={dialogActionBusy !== null}
+                    >
+                      <span>⚡</span>{selected.priority ? 'برداشتن اولویت لفظ' : 'اولویت لفظ (تحویل سریع‌تر)'}
                     </button>
                   </div>
                 )}

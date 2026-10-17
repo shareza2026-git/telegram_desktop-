@@ -57,7 +57,7 @@ async def delivery_diagnostics(request: Request):
 
 @router.get("/api/cache/dialogs")
 async def cached_dialogs(request: Request):
-    return await request.app.state.chat_store.list_dialogs()
+    return service(request).annotate_priority(await request.app.state.chat_store.list_dialogs())
 
 
 @router.get("/api/cache/chats/{chat_id}/messages")
@@ -162,6 +162,11 @@ async def set_dialog_muted(chat_id: int, values: DialogStateRequest, request: Re
         return await service(request).set_dialog_muted(chat_id, values.enabled)
     except DesktopError as exc:
         raise error_response(exc) from None
+
+
+@router.post("/api/telegram/chats/{chat_id}/priority")
+async def set_dialog_priority(chat_id: int, values: DialogStateRequest, request: Request):
+    return await service(request).set_dialog_priority(chat_id, values.enabled)
 
 
 @router.get("/api/telegram/chats/{chat_id}")

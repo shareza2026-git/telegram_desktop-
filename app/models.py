@@ -102,6 +102,8 @@ class Dialog(BaseModel):
     last_message_sender: str | None = None
     last_message_outgoing: bool = False
     last_message_read: bool = False
+    # Quote rooms and price feeds: their messages are delivered first.
+    priority: bool = False
 
 
 class DialogFolder(BaseModel):

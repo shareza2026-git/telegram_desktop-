@@ -1,4 +1,5 @@
 import asyncio
+from collections import deque
 from contextlib import suppress
 import logging
 import mimetypes
@@ -42,6 +43,7 @@ from app.telegram.client import build_client
 from app.telegram.media import DownloadedMedia, cached_media_path, media_path, safe_media_name
 from app.telegram.profile import chat_photo_path, is_fresh_chat_photo
 from app.telegram.portable import remove_account_from_portable, sync_account_to_portable
+from app.telegram.priority import PriorityChats
 from app.telegram.session import SessionManager
 from app.telegram.session_import import SessionImporter
 from app.telegram.transport import ProxyRoute, TransportCatalog
@@ -63,16 +65,58 @@ class MediaUnavailable(DesktopError):
     """The requested photo or file does not exist (reported as HTTP 404)."""
 
 
+class SubscriberQueue:
+    """A WebSocket's outgoing packets, with a fast lane for priority chats.
+
+    During a burst (hundreds of channel posts) normal packets queue up; a
+    quote from a priority chat goes out next instead of waiting behind them.
+    """
+
+    def __init__(self, maxsize: int = 2000) -> None:
+        self.maxsize = maxsize
+        self._urgent: deque = deque()
+        self._normal: deque = deque()
+        self._ready = asyncio.Event()
+
+    def qsize(self) -> int:
+        return len(self._urgent) + len(self._normal)
+
+    def empty(self) -> bool:
+        return not self._urgent and not self._normal
+
+    def put_nowait(self, packet: dict, urgent: bool = False) -> None:
+        if self.qsize() >= self.maxsize:
+            raise asyncio.QueueFull
+        (self._urgent if urgent else self._normal).append(packet)
+        self._ready.set()
+
+    def get_nowait(self) -> dict:
+        if self._urgent:
+            packet = self._urgent.popleft()
+        elif self._normal:
+            packet = self._normal.popleft()
+        else:
+            raise asyncio.QueueEmpty
+        if self.empty():
+            self._ready.clear()
+        return packet
+
+    async def get(self) -> dict:
+        while self.empty():
+            await self._ready.wait()
+        return self.get_nowait()
+
+
 class EventBroker:
     def __init__(self) -> None:
-        self._subscribers: dict[asyncio.Queue, int | None] = {}
+        self._subscribers: dict[SubscriberQueue, int | None] = {}
 
-    def subscribe(self, chat_id: int | None = None) -> asyncio.Queue:
-        queue: asyncio.Queue = asyncio.Queue(maxsize=2000)
+    def subscribe(self, chat_id: int | None = None) -> SubscriberQueue:
+        queue = SubscriberQueue(maxsize=2000)
         self._subscribers[queue] = chat_id
         return queue
 
-    def unsubscribe(self, queue: asyncio.Queue) -> None:
+    def unsubscribe(self, queue: SubscriberQueue) -> None:
         self._subscribers.pop(queue, None)
 
     @staticmethod
@@ -89,7 +133,7 @@ class EventBroker:
             if chat_id is not None and packet_chat_id is not None and packet_chat_id != chat_id:
                 continue
             try:
-                queue.put_nowait(packet)
+                queue.put_nowait(packet, urgent=bool(packet.get("priority")))
             except asyncio.QueueFull:
                 while not queue.empty():
                     queue.get_nowait()
@@ -119,6 +163,7 @@ class TelegramDesktopService:
         self._outbox_read_max: dict[int, int] = {}
         self._recent_media: dict[tuple[str, str], Any] = {}
         self._priority_chat_ids: set[int] = set()
+        self.priority = PriorityChats(settings.data_root / "priority_chats.json")
         self._dialog_snapshot: list[Dialog] = []
         self._dialog_snapshot_at = 0.0
         self._dialog_scan_task: asyncio.Task[list[Dialog]] | None = None
@@ -154,7 +199,7 @@ class TelegramDesktopService:
         # Hydrate the last known dialog list before any network connection so the
         # desktop can render immediately after the sidecar starts.
         try:
-            self._dialog_snapshot = await self.store.list_dialogs()
+            self._dialog_snapshot = self.annotate_priority(await self.store.list_dialogs())
         except Exception:
             logger.warning("Cached dialogs could not be loaded during startup", exc_info=True)
 
@@ -739,6 +784,34 @@ class TelegramDesktopService:
 
     def _is_priority_chat(self, chat_id: int) -> bool:
         return chat_id in self._priority_chat_ids
+
+    def annotate_priority(self, dialogs: list[Dialog]) -> list[Dialog]:
+        """Mark quote chats and remember them for live delivery."""
+        rules = getattr(self, "priority", None)
+        if rules is None:
+            return dialogs
+        values = []
+        for dialog in dialogs:
+            enabled = rules.is_priority(dialog.chat_id, dialog.title)
+            if enabled:
+                self._priority_chat_ids.add(dialog.chat_id)
+            else:
+                self._priority_chat_ids.discard(dialog.chat_id)
+            values.append(dialog if dialog.priority == enabled else dialog.model_copy(update={"priority": enabled}))
+        return values
+
+    async def set_dialog_priority(self, chat_id: int, enabled: bool) -> dict:
+        title = next((item.title for item in self._dialog_snapshot if item.chat_id == chat_id), "")
+        await asyncio.to_thread(self.priority.set, chat_id, title, enabled)
+        if enabled:
+            self._priority_chat_ids.add(chat_id)
+        else:
+            self._priority_chat_ids.discard(chat_id)
+        self._dialog_snapshot = [
+            item.model_copy(update={"priority": enabled}) if item.chat_id == chat_id else item
+            for item in self._dialog_snapshot
+        ]
+        return await self._publish_dialog_update(chat_id, priority=enabled)
 
     def _remember_message_chat(self, message_id: int, chat_id: int) -> None:
         recent = getattr(self, "_recent_message_chat", None)
@@ -1335,10 +1408,8 @@ class TelegramDesktopService:
                 read_max,
             )
             dialogs.append(value)
-            if "اتاق" in value.title:
-                self._priority_chat_ids.add(value.chat_id)
-            else:
-                self._priority_chat_ids.discard(value.chat_id)
+
+        dialogs = self.annotate_priority(dialogs)
 
         await self.store.upsert_dialogs(dialogs)
         ordered = sorted(

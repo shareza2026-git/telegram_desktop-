@@ -13,6 +13,8 @@ export type Dialog = {
   last_message_sender?: string | null
   last_message_outgoing?: boolean
   last_message_read?: boolean
+  // Quote room or price feed: delivered and drawn ahead of everything else.
+  priority?: boolean
 }
 
 export type DialogFolder = {
@@ -27,6 +29,7 @@ export type DialogPatch = {
   pinned?: boolean
   archived?: boolean
   muted?: boolean
+  priority?: boolean
 }
 
 export type MessageContextMenu = {

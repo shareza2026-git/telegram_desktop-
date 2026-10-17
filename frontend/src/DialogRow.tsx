@@ -30,6 +30,7 @@ function DialogRowView({
       <ChatAvatar chatId={dialog.chat_id} title={dialog.title} />
       <span className="dialog-copy">
         <span className="dialog-title-line">
+          {dialog.priority && <span className="dialog-priority" title="اولویت لفظ" aria-label="اولویت لفظ">⚡</span>}
           <strong>{dialog.title}</strong>
           {dialog.muted && <svg className="dialog-icon" viewBox="0 0 16 16" aria-label="بی‌صدا"><path d="M3 6h2l3-3v10l-3-3H3z" fill="currentColor"/><path d="m10.5 6 3 4m0-4-3 4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>}
         </span>
