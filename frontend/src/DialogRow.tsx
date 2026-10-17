@@ -31,7 +31,7 @@ function DialogRowView({
       <span className="dialog-copy">
         <span className="dialog-title-line">
           <strong>{dialog.title}</strong>
-          {dialog.muted && <i aria-label="بی‌صدا">🔇</i>}
+          {dialog.muted && <svg className="dialog-icon" viewBox="0 0 16 16" aria-label="بی‌صدا"><path d="M3 6h2l3-3v10l-3-3H3z" fill="currentColor"/><path d="m10.5 6 3 4m0-4-3 4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>}
         </span>
         {typing ? (
           <small className="dialog-typing">{typing}</small>
@@ -54,7 +54,7 @@ function DialogRowView({
         {dialog.unread_count > 0 ? (
           <span className={'unread' + (dialog.muted ? ' muted' : '')}>{formatNumber(dialog.unread_count)}</span>
         ) : dialog.pinned ? (
-          <i className="dialog-pin" aria-label="سنجاق‌شده">📌</i>
+          <svg className="dialog-icon pin" viewBox="0 0 16 16" aria-label="سنجاق‌شده"><path d="M10.2 2.2 13.8 5.8l-1.4.6-2.3 2.3.2 2.6-1.1 1.1L6.9 10l-3.3 3.3-.6-.6L6.3 9.4 3.9 7.1 5 6l2.6.2 2.3-2.3z" fill="currentColor"/></svg>
         ) : null}
       </span>
     </button>

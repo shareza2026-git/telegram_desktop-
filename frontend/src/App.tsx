@@ -219,11 +219,12 @@ function App() {
     if (value) values = values.filter(item => item.title.toLocaleLowerCase().includes(value))
 
     const order = new Map(dialogs.map((item, index) => [item.chat_id, index]))
-    const time = (item: Dialog) => (item.last_message_at ? Date.parse(item.last_message_at) : 0)
+    // Parse each date once, not on every comparison of the sort.
+    const times = new Map(values.map(item => [item.chat_id, item.last_message_at ? Date.parse(item.last_message_at) : 0]))
     return [...values].sort((a, b) => {
       if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
       if (a.pinned) return (order.get(a.chat_id) || 0) - (order.get(b.chat_id) || 0)
-      return time(b) - time(a)
+      return (times.get(b.chat_id) || 0) - (times.get(a.chat_id) || 0)
     })
   }, [activeFolder, dialogs, query, telegramFolders])
 
@@ -533,6 +534,22 @@ function App() {
       }
     }
 
+    let pendingPackets: string[] = []
+    let flushTimer: number | undefined
+
+    function flushPackets() {
+      flushTimer = undefined
+      const batch = pendingPackets
+      pendingPackets = []
+      for (const raw of batch) {
+        try {
+          handlePacket(JSON.parse(raw) as { type: string; data: unknown })
+        } catch {
+          // One malformed packet must not stop live updates.
+        }
+      }
+    }
+
     function connectSocket() {
       if (disposed) return
       socket = new WebSocket(authedUrl(socketBase + '/ws/telegram'))
@@ -540,11 +557,11 @@ function App() {
         retryCount = 0
       }
       socket.onmessage = event => {
-        try {
-          handlePacket(JSON.parse(event.data) as { type: string; data: unknown })
-        } catch {
-          // One malformed packet must not stop live updates.
-        }
+        // Busy chats push several messages per second. Collect what arrives
+        // within a few milliseconds and apply it in one React update instead
+        // of re-rendering (and re-sorting ~1000 chats) once per message.
+        pendingPackets.push(event.data as string)
+        if (flushTimer === undefined) flushTimer = window.setTimeout(flushPackets, 16)
       }
       socket.onclose = () => {
         if (disposed) return
@@ -561,6 +578,7 @@ function App() {
     return () => {
       disposed = true
       if (retryTimer !== undefined) window.clearTimeout(retryTimer)
+      if (flushTimer !== undefined) window.clearTimeout(flushTimer)
       if (dialogRefreshTimerRef.current !== null) window.clearTimeout(dialogRefreshTimerRef.current)
       socket?.close()
     }

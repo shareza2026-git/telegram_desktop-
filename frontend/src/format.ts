@@ -1,12 +1,13 @@
 import type { ChatAction, MediaKind, Message } from './types'
 
 // Intl formatters are expensive to build; create each once.
-const timeFormat = new Intl.DateTimeFormat('fa-IR', { hour: '2-digit', minute: '2-digit' })
+const timeFormat = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' })
 const dialogTimeFormat = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' })
 const dialogDateFormat = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' })
 const weekdayFormat = new Intl.DateTimeFormat('en-US', { weekday: 'short' })
-const messageDateFormat = new Intl.DateTimeFormat('fa-IR', { year: 'numeric', month: 'long', day: 'numeric' })
-const numberFormat = new Intl.NumberFormat('fa-IR')
+const messageDateFormat = new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric' })
+const messageDateYearFormat = new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+const numberFormat = new Intl.NumberFormat('en-US')
 const compactFormat = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 })
 
 export function formatNumber(value: number) {
@@ -36,7 +37,15 @@ export function messageDayKey(value: string) {
 }
 
 export function formatMessageDate(value: string) {
-  return messageDateFormat.format(new Date(value))
+  const date = new Date(value)
+  const now = new Date()
+  if (date.toDateString() === now.toDateString()) return 'Today'
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  if (date.toDateString() === yesterday.toDateString()) return 'Yesterday'
+  return date.getFullYear() === now.getFullYear()
+    ? messageDateFormat.format(date)
+    : messageDateYearFormat.format(date)
 }
 
 export function formatDuration(seconds: number | null | undefined) {
