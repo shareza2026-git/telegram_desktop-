@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { invoke } from '@tauri-apps/api/core'
 import App, { configureRuntime } from './App'
 import './styles.css'
+import './telegram.css'
 
 async function bootstrap() {
   try {

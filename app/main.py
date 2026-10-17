@@ -10,6 +10,7 @@ from app.telegram.relay import RelayService
 from app.telegram.transport import TransportCatalog
 from app.telegram.portable import apply_portable_config
 from app.api.routes import router
+from app.security import DESKTOP_ORIGINS, TOKEN_HEADER, DesktopGuard, ErrorEnvelope
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -37,17 +38,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await store.close()
 
     application = FastAPI(title="Telegram Desktop", lifespan=lifespan)
+    # Innermost: unexpected errors become JSON that still gets CORS headers.
+    application.add_middleware(ErrorEnvelope)
     application.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://127.0.0.1:1420",
-            "http://localhost:1420",
-            "http://tauri.localhost",
-            "https://tauri.localhost",
-            "tauri://localhost",
-        ],
+        allow_origins=sorted(DESKTOP_ORIGINS),
         allow_methods=["GET", "POST", "DELETE"],
-        allow_headers=["Content-Type"],
+        allow_headers=["Content-Type", TOKEN_HEADER],
+    )
+    # Added last so it runs first, before CORS and routing.
+    application.add_middleware(
+        DesktopGuard,
+        token=active_settings.desktop_token.get_secret_value() if active_settings.desktop_token else None,
+        port=active_settings.backend_port,
     )
     application.include_router(router)
 

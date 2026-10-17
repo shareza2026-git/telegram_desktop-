@@ -3,11 +3,15 @@ from contextlib import suppress
 import logging
 import mimetypes
 from datetime import datetime, timezone
+from pathlib import Path
+import random
+import time
 from typing import Any
 
 from pydantic import SecretStr
 
 from telethon import TelegramClient, events, functions, types, utils
+from telethon.tl.functions import PingRequest
 from telethon.sessions import MemorySession, SQLiteSession
 from telethon.errors import (
     FloodWaitError,
@@ -33,6 +37,7 @@ from app.models import (
     RecentMediaItem,
 )
 from app.storage import ChatStore
+from app.telegram import convert
 from app.telegram.client import build_client
 from app.telegram.media import DownloadedMedia, cached_media_path, media_path, safe_media_name
 from app.telegram.profile import chat_photo_path, is_fresh_chat_photo
@@ -44,6 +49,18 @@ from app.telegram.transfer_bundle import TransferBundle
 
 
 logger = logging.getLogger(__name__)
+
+NO_PHOTO_RETRY_SECONDS = 6 * 60 * 60
+# In-chat photos use the smallest Telegram size at least this wide, the same
+# one Telegram Desktop shows in a bubble; the original is only for downloads.
+CHAT_PHOTO_PREVIEW_SIDE = 800
+PROXY_PROBE_TIMEOUT = 10.0
+CONNECTION_UNAVAILABLE = "اتصال به تلگرام برقرار نیست؛ تنظیمات پراکسی را بررسی کنید."
+CONNECTION_DROPPED = "اتصال به تلگرام قطع شد؛ دوباره تلاش کنید یا پراکسی دیگری انتخاب کنید."
+
+
+class MediaUnavailable(DesktopError):
+    """The requested photo or file does not exist (reported as HTTP 404)."""
 
 
 class EventBroker:
@@ -241,7 +258,7 @@ class TelegramDesktopService:
             )
             return self.status.connected
 
-    async def _connect(self) -> None:
+    async def _connect(self, avoid: str | None = None) -> None:
         routes = self.transport.load()
         selected = self.transport.selected_index()
 
@@ -265,6 +282,15 @@ class TelegramDesktopService:
                 update={"state": "PROXY_ERROR", "last_error": "No Telegram route is configured"}
             )
             return
+        if avoid is not None:
+            # The route that just dropped a request goes to the back of the
+            # line; the others get a chance first.
+            def name(route: ProxyRoute | None) -> str:
+                return route.display_name if route is not None else "direct"
+
+            candidates = [item for item in candidates if name(item) != avoid] + [
+                item for item in candidates if name(item) == avoid
+            ]
 
         runtime_session, session_metadata = self.sessions.clone_runtime_session()
         self._session_metadata = session_metadata
@@ -312,7 +338,12 @@ class TelegramDesktopService:
                 except OSError:
                     logger.warning("Could not save the working route preference")
                 return
-            except Exception as error:
+            except (Exception, asyncio.CancelledError) as error:
+                task = asyncio.current_task()
+                if isinstance(error, asyncio.CancelledError) and task is not None and task.cancelling():
+                    raise
+                # A proxy that drops the connection mid-handshake cancels
+                # Telethon's pending request; treat it as a failed route.
                 route_name = route.display_name if route is not None else "direct"
                 message = str(error).strip().replace("\n", " ")
                 short = f"{type(error).__name__}: {message}" if message else type(error).__name__
@@ -554,31 +585,14 @@ class TelegramDesktopService:
 
     @staticmethod
     def _media(message: Any) -> MediaInfo | None:
-        if not getattr(message, "media", None):
-            return None
-        if getattr(message, "photo", None):
-            kind = "photo"
-        elif getattr(message, "video", None):
-            kind = "video"
-        elif getattr(message, "audio", None):
-            kind = "audio"
-        elif getattr(message, "document", None):
-            kind = "file"
-        else:
-            kind = "other"
-        file_info = getattr(message, "file", None)
-        return MediaInfo(
-            kind=kind,
-            name=getattr(file_info, "name", None),
-            size=getattr(file_info, "size", None),
-            mime_type=getattr(file_info, "mime_type", None),
-            playable=False,
-            downloadable=True,
-        )
+        return convert.media_info(message)
 
     @staticmethod
     def _reactions(message: Any) -> list[ReactionSummary]:
-        summary = getattr(message, "reactions", None)
+        return TelegramDesktopService._reaction_summary(getattr(message, "reactions", None))
+
+    @staticmethod
+    def _reaction_summary(summary: Any) -> list[ReactionSummary]:
         values = []
         for item in getattr(summary, "results", None) or []:
             reaction = getattr(item, "reaction", None)
@@ -601,19 +615,32 @@ class TelegramDesktopService:
         message_id = int(message.id)
         outgoing = bool(getattr(message, "out", False))
         read_max = getattr(self, "_outbox_read_max", {}).get(chat_id, 0)
+        sender_name = self._sender_name(message)
+        edit_date = getattr(message, "edit_date", None)
+        grouped_id = getattr(message, "grouped_id", None)
+        views = getattr(message, "views", None)
+        via_bot = getattr(message, "via_bot", None) if getattr(message, "via_bot_id", None) else None
         return Message(
             chat_id=chat_id,
             message_id=message_id,
             text=str(getattr(message, "raw_text", None) or ""),
             date=self._as_utc(getattr(message, "date", None)),
             sender_id=getattr(message, "sender_id", None),
-            sender_name=self._sender_name(message),
+            sender_name=sender_name,
             outgoing=outgoing,
-            edited=edited,
+            edited=edited or (edit_date is not None and not getattr(message, "edit_hide", False)),
             reply_to_message_id=getattr(message, "reply_to_msg_id", None),
             media=self._media(message),
             reactions=self._reactions(message),
             read=outgoing and message_id <= read_max,
+            entities=convert.entities(message),
+            forward_from=convert.forward_name(message),
+            grouped_id=int(grouped_id) if isinstance(grouped_id, int) else None,
+            views=int(views) if isinstance(views, int) else None,
+            post=bool(getattr(message, "post", False)),
+            action=convert.action_text(message, sender_name),
+            link_preview=convert.link_preview(message),
+            via_bot=getattr(via_bot, "username", None),
         )
 
     @staticmethod
@@ -646,7 +673,10 @@ class TelegramDesktopService:
 
     @staticmethod
     def _entity_status(entity: Any) -> str | None:
-        status = getattr(entity, "status", None)
+        return TelegramDesktopService._status_label(getattr(entity, "status", None))
+
+    @staticmethod
+    def _status_label(status: Any) -> str | None:
         if status is None:
             return None
         labels = {
@@ -676,6 +706,7 @@ class TelegramDesktopService:
     def _dialog_model(dialog: Any) -> Dialog:
         entity = dialog.entity
         latest = getattr(dialog, "message", None)
+        raw_dialog = getattr(dialog, "dialog", None)
         if dialog.is_user:
             kind = "user"
         elif dialog.is_channel:
@@ -695,7 +726,15 @@ class TelegramDesktopService:
             muted=TelegramDesktopService._dialog_muted(dialog),
             last_message_id=getattr(latest, "id", None),
             last_message_at=getattr(latest, "date", None),
-            last_message_preview=str(getattr(latest, "raw_text", None) or "").strip()[:180] or None,
+            last_message_preview=convert.preview_text(latest),
+            last_message_sender=(
+                ("شما" if getattr(latest, "out", False) else convert.first_name(getattr(latest, "sender", None)))
+                if latest is not None and kind in {"group", "supergroup"} and not isinstance(latest, types.MessageService)
+                else None
+            ),
+            last_message_outgoing=bool(getattr(latest, "out", False)),
+            last_message_read=bool(getattr(latest, "out", False))
+            and int(getattr(latest, "id", 0) or 0) <= int(getattr(raw_dialog, "read_outbox_max_id", 0) or 0),
         )
 
     def _is_priority_chat(self, chat_id: int) -> bool:
@@ -785,7 +824,20 @@ class TelegramDesktopService:
         await self.events.publish(packet)
 
     async def _on_user_update(self, event: Any) -> None:
-        if event.chat_id is None or event.action is None:
+        if event.action is None:
+            status = getattr(event, "status", None)
+            if status is not None and event.user_id is not None:
+                await self.events.publish(
+                    {
+                        "type": "USER_STATUS",
+                        "data": {
+                            "user_id": int(event.user_id),
+                            "status": self._status_label(status),
+                        },
+                    }
+                )
+            return
+        if event.chat_id is None:
             return
         if event.user_id == self.status.user_id:
             return
@@ -870,18 +922,26 @@ class TelegramDesktopService:
                 await self.relay.enqueue_delete(int(chat_id), message_id)
 
     async def _on_reaction(self, update: Any) -> None:
-        if self.client is None:
-            return
+        # The update already carries the new counts: no message refetch.
         try:
             chat_id = int(utils.get_peer_id(update.peer))
-            value = await self.client.get_messages(chat_id, ids=int(update.msg_id))
-            if value is None:
-                return
-            message = self._message_model(value, chat_id)
-            await self.store.upsert_message(message)
+            message_id = int(update.msg_id)
+            reactions = self._reaction_summary(update.reactions)
+            partial = bool(getattr(update.reactions, "min", False))
             await self.events.publish(
-                {"type": "MESSAGE_EDITED", "data": message.model_dump(mode="json")}
+                {
+                    "type": "MESSAGE_REACTIONS",
+                    "data": {
+                        "chat_id": chat_id,
+                        "message_id": message_id,
+                        "reactions": [item.model_dump(mode="json") for item in reactions],
+                        # "min" updates do not say which reaction is ours.
+                        "min": partial,
+                    },
+                }
             )
+            if not partial:
+                await self.store.update_reactions(chat_id, message_id, reactions)
         except Exception as error:
             logger.warning(
                 "Telegram reaction update could not be synchronized: %s",
@@ -957,10 +1017,13 @@ class TelegramDesktopService:
                 )
             )
             if same_active_route:
+                # Measure the route in use over the live connection instead of
+                # opening a second one through the same proxy.
+                latency = await self._ping(active_client)
                 return {
                     "index": index,
                     "available": True,
-                    "latency_ms": None,
+                    "latency_ms": latency,
                     "detail": "Active Telegram connection",
                     "active": True,
                 }
@@ -982,8 +1045,14 @@ class TelegramDesktopService:
                     sequential_updates=True,
                     **options,
                 )
-                await asyncio.wait_for(client.connect(), timeout=4.5)
-                latency = round((asyncio.get_running_loop().time() - started) * 1000, 2)
+                # MTProto proxies often need several seconds for the handshake;
+                # a short timeout reported working proxies as unavailable.
+                await asyncio.wait_for(client.connect(), timeout=PROXY_PROBE_TIMEOUT)
+                # Like Telegram, show the round trip of a ping on the open
+                # connection, not the time the whole handshake took.
+                latency = await self._ping(client)
+                if latency is None:
+                    latency = round((asyncio.get_running_loop().time() - started) * 1000, 2)
                 return {
                     "index": index,
                     "available": True,
@@ -1007,6 +1076,15 @@ class TelegramDesktopService:
         return await asyncio.gather(
             *(probe_one(index, route) for index, route in enumerate(routes, 1))
         )
+
+    @staticmethod
+    async def _ping(client: TelegramClient) -> float | None:
+        started = time.perf_counter()
+        try:
+            await asyncio.wait_for(client(PingRequest(ping_id=random.getrandbits(63))), timeout=PROXY_PROBE_TIMEOUT)
+        except Exception:
+            return None
+        return round((time.perf_counter() - started) * 1000, 1)
 
     async def devices(self) -> list[DeviceSession]:
         client = self._require_authorized()
@@ -1069,13 +1147,27 @@ class TelegramDesktopService:
                 mime_type="image/jpeg",
             )
 
+        missing = getattr(self, "_no_photo", None)
+        if missing is None:
+            missing = {}
+            self._no_photo = missing
+        if time.monotonic() < missing.get(chat_id, 0):
+            raise MediaUnavailable("Chat photo is not available")
         entity = await client.get_entity(chat_id)
-        if not getattr(entity, "photo", None):
-            raise DesktopError("Chat photo is not available")
+        photo = getattr(entity, "photo", None)
+        if not photo or isinstance(photo, (types.UserProfilePhotoEmpty, types.ChatPhotoEmpty)):
+            # Remember it: a chat list full of photo-less users must not cost
+            # one Telegram request per row on every launch.
+            missing[chat_id] = time.monotonic() + NO_PHOTO_RETRY_SECONDS
+            raise MediaUnavailable("Chat photo is not available")
 
-        downloaded = await client.download_profile_photo(entity, file=str(target))
-        if downloaded is None or not target.is_file() or target.stat().st_size == 0:
-            raise DesktopError("Chat photo download failed")
+        partial = target.with_name(target.name + ".part")
+        downloaded = await client.download_profile_photo(entity, file=str(partial))
+        if downloaded is None or not partial.is_file() or partial.stat().st_size == 0:
+            partial.unlink(missing_ok=True)
+            missing[chat_id] = time.monotonic() + NO_PHOTO_RETRY_SECONDS
+            raise MediaUnavailable("Chat photo download failed")
+        partial.replace(target)
 
         return DownloadedMedia(
             path=target,
@@ -1111,7 +1203,7 @@ class TelegramDesktopService:
         client = self._require_authorized()
         message = await client.get_messages(chat_id, ids=message_id)
         if message is None or not getattr(message, "media", None):
-            raise DesktopError("Media is not available for this message")
+            raise MediaUnavailable("Media is not available for this message")
 
         file_info = getattr(message, "file", None)
         mime_type = getattr(file_info, "mime_type", None)
@@ -1125,9 +1217,14 @@ class TelegramDesktopService:
         root.mkdir(parents=True, exist_ok=True)
         target = media_path(root, chat_id, message_id, filename)
         if not target.is_file() or target.stat().st_size == 0:
-            downloaded = await client.download_media(message, file=str(target))
-            if downloaded is None or not target.is_file() or target.stat().st_size == 0:
-                raise DesktopError("Media download failed")
+            # Download beside the target and rename at the end, so a broken
+            # transfer never leaves a truncated file in the cache.
+            partial = target.with_name(target.name + ".part")
+            downloaded = await client.download_media(message, file=str(partial))
+            if downloaded is None or not partial.is_file() or partial.stat().st_size == 0:
+                partial.unlink(missing_ok=True)
+                raise MediaUnavailable("Media is no longer available")
+            partial.replace(target)
 
         return DownloadedMedia(
             path=target,
@@ -1153,6 +1250,66 @@ class TelegramDesktopService:
         task = tasks.get(key)
         if task is None or task.done():
             task = asyncio.create_task(self._download_media_once(chat_id, message_id))
+            tasks[key] = task
+        try:
+            return await task
+        finally:
+            if tasks.get(key) is task and task.done():
+                tasks.pop(key, None)
+
+    @staticmethod
+    def _preview_size(photo: Any) -> Any:
+        sizes = [
+            size for size in getattr(photo, "sizes", None) or []
+            if isinstance(size, (types.PhotoSize, types.PhotoSizeProgressive))
+        ]
+        if not sizes:
+            return None
+        sizes.sort(key=lambda size: max(size.w, size.h))
+        for size in sizes:
+            if max(size.w, size.h) >= CHAT_PHOTO_PREVIEW_SIDE:
+                return size
+        return sizes[-1]
+
+    async def _download_media_preview_once(self, chat_id: int, message_id: int) -> DownloadedMedia:
+        client = self._require_authorized()
+        root = self.settings.data_root / "downloads"
+        target = root / f"{chat_id}_{message_id}.thumb.jpg"
+        message = await client.get_messages(chat_id, ids=message_id)
+        if message is None or not getattr(message, "media", None):
+            raise MediaUnavailable("Media is not available for this message")
+        photo = getattr(message, "photo", None)
+        if photo is not None:
+            size = self._preview_size(photo)
+            if size is None:
+                raise MediaUnavailable("Photo preview is not available")
+            options = {"thumb": size}
+        elif getattr(getattr(message, "document", None), "thumbs", None):
+            options = {"thumb": -1}
+        else:
+            raise MediaUnavailable("This media has no preview")
+        root.mkdir(parents=True, exist_ok=True)
+        partial = target.with_name(target.name + ".part")
+        downloaded = await client.download_media(message, file=str(partial), **options)
+        if downloaded is None or not partial.is_file() or partial.stat().st_size == 0:
+            partial.unlink(missing_ok=True)
+            raise MediaUnavailable("Media preview is no longer available")
+        partial.replace(target)
+        return DownloadedMedia(path=target, filename=target.name, mime_type="image/jpeg")
+
+    async def download_media_preview(self, chat_id: int, message_id: int) -> DownloadedMedia:
+        """Bubble-sized photo/video poster, far smaller than the original."""
+        target = self.settings.data_root / "downloads" / f"{chat_id}_{message_id}.thumb.jpg"
+        if target.is_file() and target.stat().st_size > 0:
+            return DownloadedMedia(path=target, filename=target.name, mime_type="image/jpeg")
+        key = (chat_id, -message_id)
+        tasks = getattr(self, "_media_download_tasks", None)
+        if tasks is None:
+            tasks = {}
+            self._media_download_tasks = tasks
+        task = tasks.get(key)
+        if task is None or task.done():
+            task = asyncio.create_task(self._download_media_preview_once(chat_id, message_id))
             tasks[key] = task
         try:
             return await task
@@ -1583,6 +1740,40 @@ class TelegramDesktopService:
                 )
         return result
 
+    async def recent_media_preview(self, kind: str, media_id: str) -> DownloadedMedia:
+        """Small preview image of a recent sticker or GIF for the picker grid."""
+        client = self._require_authorized()
+        document = self._recent_media.get((kind, media_id))
+        if document is None:
+            raise MediaUnavailable("Recent media is not loaded")
+        root = self.settings.data_root / "downloads" / "recent"
+        target = root / f"{kind}_{safe_media_name(media_id, fallback='media')}.thumb"
+        if not (target.is_file() and target.stat().st_size > 0):
+            root.mkdir(parents=True, exist_ok=True)
+            partial = target.with_name(target.name + ".part")
+            mime = getattr(document, "mime_type", None)
+            if kind == "sticker" and mime == "image/webp":
+                downloaded = await client.download_media(document, file=str(partial))
+            elif getattr(document, "thumbs", None):
+                downloaded = await client.download_media(document, file=str(partial), thumb=-1)
+            else:
+                raise MediaUnavailable("This media has no preview")
+            if downloaded is None or not partial.is_file():
+                partial.unlink(missing_ok=True)
+                raise MediaUnavailable("Preview download failed")
+            partial.replace(target)
+        return DownloadedMedia(path=target, filename=target.name, mime_type=self._sniff_image(target))
+
+    @staticmethod
+    def _sniff_image(path: Path) -> str:
+        with path.open("rb") as handle:
+            head = handle.read(12)
+        if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+            return "image/webp"
+        if head[:8] == b"\x89PNG\r\n\x1a\n":
+            return "image/png"
+        return "image/jpeg"
+
     async def send_recent_media(
         self,
         chat_id: int,
@@ -1711,18 +1902,62 @@ class TelegramDesktopService:
         await self.store.mark_dialog_read(chat_id)
         return {"chat_id": chat_id, "read": True}
 
+    async def _reconnect_unauthorized(self) -> None:
+        """Rebuild the login connection (the monitor only heals logged-in ones)."""
+        async with self._lifecycle_lock:
+            client = self.client
+            if client is not None:
+                with suppress(Exception):
+                    await client.disconnect()
+            self.client = None
+            failed = self.route.display_name if self.route is not None else "direct"
+            if self.route is not None:
+                with suppress(Exception):
+                    await self.route.deactivate()
+            self.route = None
+            await self._connect(avoid=failed if client is not None else None)
+            await self.events.publish({"type": "READY", "data": self.status.model_dump(mode="json")})
+
+    async def _ensure_login_connection(self) -> TelegramClient:
+        if self.client is None or not self.status.connected or not self.client.is_connected():
+            # A proxy can drop an idle login connection without notice.
+            await self._reconnect_unauthorized()
+        if self.client is None or not self.status.connected:
+            raise DesktopError(CONNECTION_UNAVAILABLE)
+        return self.client
+
+    @staticmethod
+    def _dropped(error: BaseException) -> bool:
+        """True when a proxy dropped the request, not when we were cancelled."""
+        if isinstance(error, ConnectionError):
+            return True
+        if isinstance(error, asyncio.CancelledError):
+            task = asyncio.current_task()
+            return task is None or not task.cancelling()
+        return False
+
     async def send_login_code(self, phone: str) -> dict:
-        if self.client is None or not self.status.connected:
-            await self._connect()
-        if self.client is None or not self.status.connected:
-            raise DesktopError("Telegram connection is unavailable")
+        await self._ensure_login_connection()
         if self.status.authorized:
             raise DesktopError("Log out before authorizing another account")
-        try:
-            sent = await self.client.send_code_request(phone.strip())
-        except Exception as error:
-            self._log_auth_error(error)
-            raise self._auth_error(error, "ارسال کد تأیید انجام نشد.") from None
+        sent = None
+        for attempt in range(2):
+            client = await self._ensure_login_connection()
+            try:
+                sent = await client.send_code_request(phone.strip())
+                break
+            except (Exception, asyncio.CancelledError) as error:
+                if not self._dropped(error):
+                    if isinstance(error, asyncio.CancelledError):
+                        raise
+                    self._log_auth_error(error)
+                    raise self._auth_error(error, "ارسال کد تأیید انجام نشد.") from None
+                # When the connection breaks mid-request Telethon cancels the
+                # pending call; reconnect (trying other proxies first) and retry.
+                self._log_auth_error(error)
+                if attempt:
+                    raise DesktopError(CONNECTION_DROPPED) from None
+                await self._reconnect_unauthorized()
         self.login_phone = phone.strip()
         self.login_code_hash = sent.phone_code_hash
         self.status = self.status.model_copy(update={"state": "AUTH_REQUIRED", "last_error": None})
@@ -1761,10 +1996,14 @@ class TelegramDesktopService:
             )
         except SessionPasswordNeededError:
             return {"code_sent": True, "requires_2fa": True, "authorized": False}
-        except Exception as error:
+        except (Exception, asyncio.CancelledError) as error:
+            if isinstance(error, asyncio.CancelledError) and not self._dropped(error):
+                raise
             self._log_auth_error(error)
             account = await self._recover_authorized_account()
             if account is None:
+                if self._dropped(error):
+                    raise DesktopError(CONNECTION_DROPPED) from None
                 raise self._auth_error(error, "تأیید کد انجام نشد.") from None
         await self._mark_authorized(account=account, persist_session=True)
         self._clear_login_challenge()
@@ -1778,10 +2017,14 @@ class TelegramDesktopService:
                 self.client.sign_in(password=password),
                 timeout=20.0,
             )
-        except Exception as error:
+        except (Exception, asyncio.CancelledError) as error:
+            if isinstance(error, asyncio.CancelledError) and not self._dropped(error):
+                raise
             self._log_auth_error(error)
             account = await self._recover_authorized_account()
             if account is None:
+                if self._dropped(error):
+                    raise DesktopError(CONNECTION_DROPPED) from None
                 raise self._auth_error(error, "تأیید رمز دومرحله‌ای انجام نشد.") from None
         await self._mark_authorized(account=account, persist_session=True)
         self._clear_login_challenge()

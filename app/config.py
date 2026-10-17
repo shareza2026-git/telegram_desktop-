@@ -59,6 +59,10 @@ class Settings(BaseSettings):
         ge=1,
         le=65535,
     )
+    desktop_token: SecretStr | None = Field(
+        default=None,
+        validation_alias="TELEGRAM_DESKTOP_TOKEN",
+    )
     database_path: Path = Field(
         default=Path("data/telegram_desktop/accounts/default/client.db"),
         validation_alias="TELEGRAM_DATABASE_PATH",
@@ -70,6 +74,7 @@ class Settings(BaseSettings):
         "telegram_client_data_root",
         "telegram_transfer_dir",
         "telegram_source_session_path",
+        "desktop_token",
         mode="before",
     )
     @classmethod

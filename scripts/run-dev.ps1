@@ -21,6 +21,12 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
     throw "cargo is not installed. Install Rust with rustup for Tauri development."
 }
 
+# Shared secret for this dev run. The backend rejects API calls without it and
+# the Tauri dev shell hands it to the webview through the backend_token command.
+$TokenBytes = New-Object byte[] 32
+[Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($TokenBytes)
+$env:TELEGRAM_DESKTOP_TOKEN = -join ($TokenBytes | ForEach-Object { $_.ToString("x2") })
+
 Write-Host "Starting the local backend on http://127.0.0.1:8110 ..." -ForegroundColor Cyan
 $Backend = Start-Process `
     -FilePath $Python `

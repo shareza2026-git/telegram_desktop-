@@ -12,8 +12,7 @@ async def test_storage_initializes_wal_once_and_keeps_batch_history_working(tmp_
     store = ChatStore(path)
     await store.initialize()
 
-    with store._connect() as connection:
-        mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
+    mode = store._db().execute("PRAGMA journal_mode").fetchone()[0]
     assert str(mode).lower() == "wal"
 
     messages = [
@@ -29,3 +28,4 @@ async def test_storage_initializes_wal_once_and_keeps_batch_history_working(tmp_
 
     history = await store.history(123, limit=10)
     assert [item.message_id for item in history] == [1, 2, 3, 4, 5]
+    await store.close()

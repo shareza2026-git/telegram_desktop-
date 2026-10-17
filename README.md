@@ -249,7 +249,24 @@ For a local Windows release build:
 2. Build `app/desktop.py` with PyInstaller and copy the resulting executable to `frontend/src-tauri/binaries/telegram-desktop-backend-x86_64-pc-windows-msvc.exe`.
 3. Run `npm run tauri build -- --config src-tauri/tauri.windows.conf.json` from `frontend`.
 
-The standard development build does not auto-start a Python process; run the backend with Uvicorn during `npm run tauri dev`. Audio/video playback, calls and Stories remain outside this release.
+The standard development build does not auto-start a Python process; run the backend with Uvicorn during `npm run tauri dev`. Calls and Stories remain outside this release.
+
+## Phase 18: local API protection, speed and Telegram parity
+
+Security:
+
+1. The Tauri shell creates a random token on every launch and passes it to the backend sidecar in `TELEGRAM_DESKTOP_TOKEN`. Every API and WebSocket request must carry it (`X-Desktop-Token` header, or `token` query parameter for media and the socket). Only `/health` stays open.
+2. The backend also rejects a foreign `Host` (DNS rebinding) and any browser `Origin` that is not the desktop app, so websites cannot post forms to the local API.
+3. `scripts/run-dev.ps1` generates the token for development runs. A UI from this version needs a backend sidecar from this version; rebuild both together with `scripts/build-release.ps1`.
+
+Speed:
+
+1. The API answers immediately on start; the Telegram connection is made in the background. The UI shows the chat list and recently opened chats from the local SQLite cache (`?cached=true`) and then replaces them with live data.
+2. The Telethon session is used directly from `client.session` (persistent SQLite), so entities and update state survive restarts and missed messages are caught up on connect. If the file cannot be opened, the old in-memory clone is used.
+3. Photos in chats use Telegram's preview size (`?thumb=true`) with the ~1 KB stripped thumbnail shown blurred first. Media, avatars and thumbnails are cached on disk, downloaded once even when requested concurrently, and written via `.part` files so an interrupted download never leaves a broken cache entry.
+4. Messages and dialog rows are memoized React components; typing in the composer no longer re-renders the chat. Sending shows the message immediately and replaces it when Telegram confirms.
+
+Telegram parity: text formatting (bold, italic, code, links, mentions, spoilers, quotes), albums, stickers, GIFs, inline video, voice and music playback, video messages, forwarded-from headers, link previews, service messages, channel view counts, sender colours and grouped avatars, typing in the chat list, read ticks in the chat list, live online status and a photo/video viewer.
 
 ## Local configuration
 

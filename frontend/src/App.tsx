@@ -2,170 +2,53 @@ import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 
+import { api, apiBlob, authedUrl, backendFetch, chatPath, configureBackend } from './backend'
+import { DialogRow, type DialogActions } from './DialogRow'
 import { DRAFT_STORAGE_KEY, parseDraftMap, updateDraftMap } from './drafts'
+import {
+  chatActionLabel,
+  dialogTypeLabel,
+  errorMessage,
+  formatBytes,
+  formatDialogTime,
+  formatMessageDate,
+  messageDayKey,
+  formatNumber,
+  formatTime,
+  isChannelId,
+  mediaKindLabel,
+  messageSnippet,
+  presenceLabel,
+  statusLabel
+} from './format'
+import { ChatAvatar, MediaViewer } from './media'
+import { MessageBubble, type BubbleActions } from './MessageBubble'
+import { buildMessageRows } from './messageList'
+import type {
+  AuthResponse,
+  AuthStep,
+  ChatAction,
+  ChatInfo,
+  DeviceSession,
+  Dialog,
+  DialogContextMenu,
+  DialogFolder,
+  DialogPatch,
+  FolderKey,
+  MediaState,
+  Message,
+  MessageContextMenu,
+  PendingAttachment,
+  ProxyProbe,
+  ReactionUpdate,
+  ReadReceipt,
+  RecentMediaCatalog,
+  RecentMediaItem,
+  Status,
+  TransportStatus
+} from './types'
 import { PREFERENCES_STORAGE_KEY, parsePreferences, resolvedTheme, type ClientPreferences } from './preferences'
 import { shouldHoldAuthScreen, canShowCachedWorkspace } from './startup'
-
-type Dialog = {
-  chat_id: number
-  title: string
-  dialog_type: string
-  username?: string | null
-  unread_count: number
-  pinned: boolean
-  archived: boolean
-  muted: boolean
-  last_message_at?: string | null
-  last_message_preview?: string | null
-}
-
-type DialogFolder = {
-  id: number
-  title: string
-  chat_ids: number[]
-  unread_count: number
-}
-
-type DialogPatch = {
-  chat_id: number
-  pinned?: boolean
-  archived?: boolean
-  muted?: boolean
-}
-
-type MessageContextMenu = {
-  message: Message
-  x: number
-  y: number
-}
-
-type DialogContextMenu = {
-  dialog: Dialog
-  x: number
-  y: number
-}
-
-type ChatInfo = {
-  chat_id: number
-  title: string
-  dialog_type: string
-  username?: string | null
-  participants_count?: number | null
-  status?: string | null
-  is_bot: boolean
-  verified: boolean
-  scam: boolean
-  fake: boolean
-  photo_available: boolean
-}
-
-type MediaInfo = {
-  kind: 'photo' | 'video' | 'audio' | 'file' | 'other'
-  name?: string | null
-  size?: number | null
-  mime_type?: string | null
-  playable: boolean
-  downloadable: boolean
-}
-
-type ReactionSummary = {
-  emoji: string
-  count: number
-  chosen: boolean
-}
-
-type Message = {
-  chat_id: number
-  message_id: number
-  text: string
-  date: string
-  sender_id?: number | null
-  sender_name?: string | null
-  outgoing: boolean
-  edited: boolean
-  reply_to_message_id?: number | null
-  media?: MediaInfo | null
-  reactions: ReactionSummary[]
-  read: boolean
-  deleted: boolean
-}
-
-type Status = {
-  configured: boolean
-  connected: boolean
-  authorized: boolean
-  state: string
-  user_id?: number | null
-  display_name?: string | null
-  phone?: string | null
-  active_route?: string | null
-  source_session_available: boolean
-  client_session_exists: boolean
-  session_dc_id?: number | null
-  session_auth_key_present?: boolean
-  session_auth_key_bytes?: number
-  runtime_session_cloned?: boolean
-  last_error?: string | null
-}
-
-type ChatAction = {
-  chat_id: number
-  user_id?: number | null
-  user_name?: string | null
-  action: 'typing' | 'uploading' | 'recording' | 'cancel'
-  active: boolean
-  expires_at?: number
-}
-
-type ReadReceipt = {
-  chat_id: number
-  max_id: number
-}
-
-type PendingAttachment = {
-  id: string
-  file: File
-  previewUrl: string | null
-}
-
-type RecentMediaItem = {
-  media_id: string
-  kind: 'sticker' | 'gif'
-  label: string
-  mime_type?: string | null
-}
-
-type RecentMediaCatalog = {
-  stickers: RecentMediaItem[]
-  gifs: RecentMediaItem[]
-}
-
-type TransportStatus = {
-  routes: Array<{
-    index: number
-    type: string
-    host: string
-    port: number
-    managed_v2ray: boolean
-    name: string
-    selected?: boolean
-  }>
-  allow_direct: boolean
-}
-
-type ProxyProbe = {
-  index: number
-  available: boolean
-  latency_ms?: number | null
-  detail?: string | null
-  active?: boolean
-}
-
-type AuthResponse = {
-  code_sent: boolean
-  requires_2fa: boolean
-  authorized: boolean
-}
 
 type RelayStatus = {
   configured: boolean
@@ -192,13 +75,8 @@ type RelayMapping = {
   destination_title: string
 }
 
-type AuthStep = 'phone' | 'code' | 'password'
-type FolderKey = 'all' | 'private' | 'unread' | 'groups' | 'channels' | 'archived' | `folder:${number}`
-type MediaState = 'loading' | 'ready' | 'downloading' | 'done' | 'error'
-
 const HISTORY_PAGE_SIZE = 80
 const MAX_LOADED_MESSAGES = 480
-const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🔥']
 const COMPOSER_EMOJIS = [
   '😀', '😃', '😄', '😁', '😆', '😅', '😂', '🙂', '🙃', '😉',
   '😊', '😍', '🥰', '😘', '😎', '🤔', '😮', '😢', '😭', '😡',
@@ -213,13 +91,15 @@ export function configureRuntime(port: number, instanceId: string) {
   backendBase = 'http://127.0.0.1:' + port
   socketBase = 'ws://127.0.0.1:' + port
   runtimeStoragePrefix = 'telegram-instance-' + instanceId
+  configureBackend(port)
 }
 
 function instanceStorageKey(key: string) {
   return runtimeStoragePrefix + ':' + key
 }
 
-const appWindow = getCurrentWindow()
+// Null when the UI runs in a plain browser (vite dev without the Tauri shell).
+const appWindow = '__TAURI_INTERNALS__' in window ? getCurrentWindow() : null
 const startupParams = new URLSearchParams(window.location.search)
 const popoutChatId = startupParams.get('popout') === '1'
   ? Number(startupParams.get('chat') || 0)
@@ -228,12 +108,38 @@ const isPopoutWindow = Boolean(popoutChatId)
 if (isPopoutWindow) {
   document.documentElement.classList.add('popout-window')
 }
-const mediaLabels: Record<MediaInfo['kind'], string> = {
-  photo: 'تصویر',
-  video: 'ویدئو',
-  audio: 'صدا',
-  file: 'فایل',
-  other: 'رسانه'
+/**
+ * Stable callbacks that always run the latest render's handler. Memoized rows
+ * receive these, so typing in the composer does not re-render every message.
+ */
+function useStableHandlers<T extends object>(handlers: T): T {
+  const ref = useRef(handlers)
+  ref.current = handlers
+  return useMemo(() => {
+    const stable: Record<string, unknown> = {}
+    for (const key of Object.keys(handlers)) {
+      stable[key] = (...args: unknown[]) => (ref.current as Record<string, (...values: unknown[]) => unknown>)[key](...args)
+    }
+    return stable as T
+  }, [])
+}
+
+function isGroupType(value: string) {
+  return value === 'group' || value === 'supergroup'
+}
+
+function firstName(value?: string | null) {
+  return (value || '').trim().split(/\s+/)[0] || null
+}
+
+const COUNTRY_NAMES: Record<string, string> = {
+  '+98': 'Iran', '+1': 'USA / Canada', '+44': 'United Kingdom', '+49': 'Germany', '+90': 'Turkey',
+  '+971': 'United Arab Emirates', '+7': 'Russia', '+93': 'Afghanistan', '+964': 'Iraq', '+33': 'France',
+  '+39': 'Italy', '+31': 'Netherlands', '+46': 'Sweden', '+61': 'Australia', '+91': 'India', '+86': 'China'
+}
+
+function countryName(code: string) {
+  return COUNTRY_NAMES[code] || 'Country'
 }
 
 function upsertSortedMessage(current: Message[], message: Message): Message[] {
@@ -261,217 +167,6 @@ function upsertSortedMessage(current: Message[], message: Message): Message[] {
   }
   return [...current.slice(0, low), message, ...current.slice(low)]
 }
-
-async function api<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(backendBase + path, {
-    ...options,
-    headers: { 'Content-Type': 'application/json', ...(options?.headers || {}) }
-  })
-  if (response.ok) return response.json() as Promise<T>
-
-  const body = await response.text()
-  let message = body || 'درخواست انجام نشد.'
-  try {
-    const parsed = JSON.parse(body) as { detail?: string }
-    if (parsed.detail) message = parsed.detail
-  } catch {
-    // Keep the plain response body when the backend did not return JSON.
-  }
-  throw new Error(message)
-}
-
-function formatTime(value: string) {
-  return new Intl.DateTimeFormat('fa-IR', { hour: '2-digit', minute: '2-digit' }).format(new Date(value))
-}
-
-type DeviceSession = {
-  hash: number
-  current: boolean
-  device_model: string
-  platform: string
-  system_version: string
-  app_name: string
-  app_version: string
-  date_active: string
-  country?: string | null
-  region?: string | null
-}
-
-function formatDialogTime(value?: string | null) {
-  if (!value) return ''
-  const date = new Date(value)
-  const now = new Date()
-  if (date.toDateString() === now.toDateString()) {
-    return new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' }).format(date)
-  }
-  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(date)
-}
-
-function messageDayKey(value: string) {
-  const date = new Date(value)
-  return [date.getFullYear(), date.getMonth(), date.getDate()].join('-')
-}
-
-function formatMessageDate(value: string) {
-  return new Intl.DateTimeFormat('fa-IR', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric'
-  }).format(new Date(value))
-}
-
-function formatBytes(value: number | null | undefined) {
-  if (value == null || value < 0) return 'اندازه نامشخص'
-  if (value < 1024) return value + ' B'
-
-  const units = ['KB', 'MB', 'GB']
-  let amount = value
-  let index = -1
-  while (amount >= 1024 && index < units.length - 1) {
-    amount /= 1024
-    index += 1
-  }
-  const digits = amount >= 10 || index === 0 ? 0 : 1
-  return amount.toFixed(digits) + ' ' + units[index]
-}
-
-function mediaKindLabel(kind: MediaInfo['kind']) {
-  return mediaLabels[kind]
-}
-
-function statusLabel(value: string) {
-  const labels: Record<string, string> = {
-    UNCONFIGURED: 'تنظیمات ناقص',
-    IMPORT_READY: 'آماده انتقال سشن',
-    CONNECTING: 'در حال اتصال',
-    CONNECTED: 'متصل',
-    AUTH_REQUIRED: 'نیاز به ورود',
-    PROXY_ERROR: 'خطای مسیر اتصال',
-    STOPPED: 'متوقف'
-  }
-  return labels[value] || value
-}
-
-function errorMessage(error: unknown, fallback: string) {
-  return error instanceof Error && error.message ? error.message : fallback
-}
-
-function dialogTypeLabel(value: string) {
-  const labels: Record<string, string> = {
-    user: 'گفت‌وگوی شخصی',
-    group: 'گروه',
-    supergroup: 'سوپرگروه',
-    channel: 'کانال'
-  }
-  return labels[value] || value
-}
-
-function chatActionLabel(value: ChatAction['action']) {
-  const labels: Record<ChatAction['action'], string> = {
-    typing: 'در حال نوشتن…',
-    uploading: 'در حال ارسال فایل…',
-    recording: 'در حال ضبط…',
-    cancel: ''
-  }
-  return labels[value]
-}
-
-function presenceLabel(value: string | null | undefined) {
-  const labels: Record<string, string> = {
-    online: 'آنلاین',
-    offline: 'آفلاین',
-    recently: 'اخیراً آنلاین',
-    last_week: 'آخرین بازدید این هفته',
-    last_month: 'آخرین بازدید این ماه'
-  }
-  return value ? labels[value] || value : ''
-}
-
-function avatarUrl(chatId: number) {
-  return backendBase + '/api/telegram/chats/' + encodeURIComponent(String(chatId)) + '/photo'
-}
-
-
-function BackendImage({
-  src,
-  className = '',
-  alt = '',
-  loading = 'lazy',
-  onLoad,
-  onError
-}: {
-  src: string
-  className?: string
-  alt?: string
-  loading?: 'lazy' | 'eager'
-  onLoad?: () => void
-  onError?: () => void
-}) {
-  return (
-    <img
-      className={className}
-      src={src}
-      alt={alt}
-      loading={loading}
-      decoding="async"
-      onLoad={onLoad}
-      onError={onError}
-    />
-  )
-}
-
-function ChatAvatar({ chatId, title, className = '' }: { chatId: number; title: string; className?: string }) {
-  const [failed, setFailed] = useState(false)
-
-  useEffect(() => {
-    setFailed(false)
-  }, [chatId])
-
-  return (
-    <span className={'avatar ' + className}>
-      <span className="avatar-fallback">{title.slice(0, 1)}</span>
-      {!failed && (
-        <BackendImage
-          src={avatarUrl(chatId)}
-          alt=""
-          loading="lazy"
-          onError={() => setFailed(true)}
-        />
-      )}
-    </span>
-  )
-}
-
-const DialogRow = memo(function DialogRow({
-  dialog,
-  selected,
-  onOpen,
-  onContextMenu
-}: {
-  dialog: Dialog
-  selected: boolean
-  onOpen: (dialog: Dialog) => void
-  onContextMenu: (event: ReactMouseEvent, dialog: Dialog) => void
-}) {
-  return (
-    <button
-      className={'dialog-row ' + (selected ? 'selected' : '')}
-      onClick={() => onOpen(dialog)}
-      onContextMenu={event => onContextMenu(event, dialog)}
-    >
-      <ChatAvatar chatId={dialog.chat_id} title={dialog.title} />
-      <span className="dialog-copy">
-        <span className="dialog-title-line"><strong>{dialog.title}</strong>{dialog.muted && <i>⌕</i>}</span>
-        <small>{dialog.last_message_preview || dialog.username || dialogTypeLabel(dialog.dialog_type)}</small>
-      </span>
-      <span className="dialog-meta">
-        <time>{formatDialogTime(dialog.last_message_at)}</time>
-        {dialog.pinned && <i>◆</i>}
-        {dialog.unread_count > 0 && <span className="unread">{dialog.unread_count}</span>}
-      </span>
-    </button>
-  )
-})
 
 function App() {
   const [status, setStatus] = useState<Status | null>(null)
@@ -526,6 +221,10 @@ function App() {
   const [reactionPickerFor, setReactionPickerFor] = useState<number | null>(null)
   const [reactionBusy, setReactionBusy] = useState<string | null>(null)
   const [selectedChatAction, setSelectedChatAction] = useState<ChatAction | null>(null)
+  // Typing/uploading per chat, for the chat list (like Telegram).
+  const [chatActions, setChatActions] = useState<Record<number, ChatAction>>({})
+  const [viewerMessage, setViewerMessage] = useState<Message | null>(null)
+  const [countryCode, setCountryCode] = useState('+98')
   const typingTimerRef = useRef<number | null>(null)
   const typingSentRef = useRef<{ chatId: number; active: boolean; at: number } | null>(null)
   const chatActionTimerRef = useRef<number | null>(null)
@@ -613,11 +312,11 @@ function App() {
     const value = query.trim().toLocaleLowerCase()
     if (value) values = values.filter(item => item.title.toLocaleLowerCase().includes(value))
 
+    // Parse each date once, not on every comparison of the sort.
+    const times = new Map(values.map(item => [item.chat_id, item.last_message_at ? Date.parse(item.last_message_at) : 0]))
     return [...values].sort((a, b) => {
       if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
-      const aTime = a.last_message_at ? new Date(a.last_message_at).getTime() : 0
-      const bTime = b.last_message_at ? new Date(b.last_message_at).getTime() : 0
-      return bTime - aTime
+      return (times.get(b.chat_id) || 0) - (times.get(a.chat_id) || 0)
     })
   }, [activeFolder, dialogs, query, telegramFolders])
 
@@ -636,110 +335,82 @@ function App() {
     [messages]
   )
 
-  const messageNodes = useMemo(() => (
-    visibleMessages.map((message, index) => (
-      <Fragment key={message.message_id}>
-        {index === 0 || messageDayKey(visibleMessages[index - 1].date) !== messageDayKey(message.date) ? (
-          <div className="date-separator"><span>{formatMessageDate(message.date)}</span></div>
-        ) : null}
-        {unreadBoundaryId === message.message_id && (
-          <div className="unread-divider"><span>پیام‌های خوانده‌نشده</span></div>
-        )}
-        <article
-          id={'message-' + message.chat_id + '-' + message.message_id}
-          className={
-            'message '
-            + (message.outgoing ? 'outgoing' : '')
-            + (message.deleted ? ' deleted' : '')
-            + (selectedMessageIds.has(message.message_id) ? ' selected-message' : '')
-          }
-          onContextMenu={event => openMessageContextMenu(event, message)}
-          onClick={event => {
-            if (
-              selectedMessageIds.size > 0
-              && !(event.target as HTMLElement).closest('button')
-            ) toggleMessageSelection(message.message_id)
-          }}
-        >
-          {!message.outgoing && (
-            <ChatAvatar
-              chatId={message.sender_id || message.chat_id}
-              title={message.sender_name || selected?.title || ''}
-              className="message-avatar"
-            />
+  const messageRows = useMemo(() => buildMessageRows(visibleMessages), [visibleMessages])
+  const messagesById = useMemo(() => new Map(messages.map(item => [item.message_id, item])), [messages])
+
+  const bubbleActions = useStableHandlers<BubbleActions>({
+    contextMenu: (event, message) => {
+      if (message.pending) {
+        event.preventDefault()
+        return
+      }
+      openMessageContextMenu(event, message)
+    },
+    toggleSelection: messageId => toggleMessageSelection(messageId),
+    jumpTo: messageId => jumpToMessage(messageId),
+    react: (message, emoji) => void setReaction(message, emoji),
+    download: message => void downloadMedia(message),
+    view: message => setViewerMessage(message),
+    reveal: key => setRevealedPhotos(current => new Set(current).add(key)),
+    openLink: url => openLink(url),
+    addProxy: url => void addProxyLink(url)
+  })
+
+  const messageNodes = useMemo(() => {
+    const isGroup = isGroupType(selected?.dialog_type || '')
+    const chatTitle = selected?.title || ''
+    return messageRows.map(row => {
+      const lead = row.lead
+      const key = lead.chat_id + ':' + lead.message_id
+      return (
+        <Fragment key={lead.message_id}>
+          {row.dayBreak && (
+            <div className="date-separator"><span>{formatMessageDate(lead.date)}</span></div>
           )}
-          {selectedMessageIds.size > 0 && (
-            <span className="message-selector" aria-hidden="true">
-              {selectedMessageIds.has(message.message_id) ? '✓' : ''}
-            </span>
+          {unreadBoundaryId !== null && row.items.some(item => item.message_id === unreadBoundaryId) && (
+            <div className="unread-divider"><span>پیام‌های خوانده‌نشده</span></div>
           )}
-          {!message.outgoing && message.sender_name && <strong className="sender-name">{message.sender_name}</strong>}
-          {renderReplyReference(message)}
-          {message.media && renderMedia(message)}
-          {message.deleted
-            ? <span className="message-text">پیام حذف شده است</span>
-            : message.text.trim() && <span className="message-text">{renderMessageText(message.text.trim())}</span>}
-          {!message.deleted && Boolean(message.reactions?.length) && (
-            <div className="message-reactions">
-              {message.reactions.map(reaction => (
-                <button
-                  type="button"
-                  className={reaction.chosen ? 'chosen' : ''}
-                  key={reaction.emoji}
-                  onClick={() => setReaction(message, reaction.chosen ? null : reaction.emoji)}
-                  disabled={reactionBusy !== null}
-                >
-                  <span>{reaction.emoji}</span>
-                  <small>{new Intl.NumberFormat('fa-IR').format(reaction.count)}</small>
-                </button>
-              ))}
-            </div>
-          )}
-          {reactionPickerFor === message.message_id && !message.deleted && selectedMessageIds.size === 0 && (
-            <div className="reaction-picker" role="group" aria-label="انتخاب واکنش">
-              {QUICK_REACTIONS.map(emoji => {
-                const chosen = message.reactions?.some(item => item.emoji === emoji && item.chosen) || false
-                const key = mediaKey(message) + ':' + (chosen ? 'remove' : emoji)
-                return (
-                  <button
-                    type="button"
-                    className={chosen ? 'chosen' : ''}
-                    key={emoji}
-                    onClick={() => setReaction(message, chosen ? null : emoji)}
-                    disabled={reactionBusy !== null}
-                  >
-                    {reactionBusy === key ? '…' : emoji}
-                  </button>
-                )
-              })}
-            </div>
-          )}
-          <small className="message-meta">
-            <span>{formatTime(message.date)}{message.edited ? ' · ویرایش‌شده' : ''}</span>
-            {message.outgoing && (
-              <span
-                className={'read-receipt ' + (message.read ? 'read' : 'sent')}
-                aria-label={message.read ? 'خوانده شده' : 'ارسال شده'}
-                title={message.read ? 'خوانده شده' : 'ارسال شده'}
-              >
-                {message.read ? '✓✓' : '✓'}
-              </span>
-            )}
-          </small>
-        </article>
-      </Fragment>
-    ))
-  ), [
-    visibleMessages,
+          <MessageBubble
+            message={lead}
+            album={row.items.length > 1 ? row.items : undefined}
+            isGroup={isGroup}
+            showSender={row.showSender}
+            showAvatar={row.showAvatar}
+            chatTitle={chatTitle}
+            replySource={lead.reply_to_message_id ? messagesById.get(lead.reply_to_message_id) || null : undefined}
+            selected={selectedMessageIds.has(lead.message_id)}
+            selectionMode={selectedMessageIds.size > 0}
+            pickerOpen={reactionPickerFor === lead.message_id}
+            reactionBusy={reactionBusy !== null && reactionBusy.startsWith(key + ':') ? reactionBusy : null}
+            mediaState={mediaStates[key] || 'ready'}
+            autoLoadPhotos={preferences.autoLoadPhotos}
+            revealed={revealedPhotos.has(key)}
+            actions={bubbleActions}
+          />
+        </Fragment>
+      )
+    })
+  }, [
+    messageRows,
+    messagesById,
     unreadBoundaryId,
     selectedMessageIds,
     selected?.title,
+    selected?.dialog_type,
     reactionPickerFor,
     reactionBusy,
     mediaStates,
     preferences.autoLoadPhotos,
-    revealedPhotos
+    revealedPhotos,
+    bubbleActions
   ])
+
+  const dialogActions = useStableHandlers<DialogActions>({
+    open: dialog => openDialog(dialog),
+    contextMenu: (event, dialog) => openDialogContextMenu(event, dialog)
+  })
+
+  const closeViewer = useCallback(() => setViewerMessage(null), [])
 
   useEffect(() => {
     selectedChatIdRef.current = selected?.chat_id || null
@@ -823,7 +494,7 @@ function App() {
 
   useEffect(() => {
     document.title = totalUnread > 0
-      ? '(' + new Intl.NumberFormat('fa-IR').format(totalUnread) + ') Telegram'
+      ? '(' + formatNumber(totalUnread) + ') Telegram'
       : 'Telegram Desktop'
     const badgeNavigator = navigator as Navigator & {
       setAppBadge?: (count?: number) => Promise<void>
@@ -950,7 +621,7 @@ function App() {
       const socketUrl = isPopoutWindow && popoutChatId
         ? socketBase + '/ws/telegram?chat_id=' + encodeURIComponent(String(popoutChatId))
         : socketBase + '/ws/telegram'
-      socket = new WebSocket(socketUrl)
+      socket = new WebSocket(authedUrl(socketUrl))
       socket.onopen = () => {
         const wasReconnect = retryCount > 0
         retryCount = 0
@@ -959,13 +630,44 @@ function App() {
         if (wasReconnect) void resyncActiveChat()
       }
       socket.onmessage = event => {
-      const packet = JSON.parse(event.data) as {
-        type: string
-        data: Status | Message | ChatAction | ReadReceipt | DialogPatch
+        // Busy chats push several messages per second. Collect what arrives
+        // within a few milliseconds and apply it in one React update instead
+        // of re-rendering (and re-sorting the chat list) once per message.
+        pendingPackets.push(event.data as string)
+        if (flushTimer === undefined) flushTimer = window.setTimeout(flushPackets, 16)
       }
+      socket.onclose = () => {
+        if (disposed) return
+        void refreshStatus()
+        const delay = Math.min(250 * 2 ** Math.min(retryCount, 5), 5000)
+        retryCount += 1
+        retryTimer = window.setTimeout(connectSocket, delay)
+      }
+      socket.onerror = () => socket?.close()
+    }
+
+    let pendingPackets: string[] = []
+    let flushTimer: number | undefined
+
+    function flushPackets() {
+      flushTimer = undefined
+      const batch = pendingPackets
+      pendingPackets = []
+      for (const raw of batch) {
+        try {
+          handlePacket(JSON.parse(raw) as { type: string; data: unknown })
+        } catch {
+          // One malformed packet must not stop live updates.
+        }
+      }
+    }
+
+    function handlePacket(packet: { type: string; data: unknown }) {
       if (packet.type === 'READY') {
         const ready = packet.data as Status
         setStatus(ready)
+        // A fresh connection (e.g. after switching proxy) makes old login errors stale.
+        if (!ready.authorized && ready.connected) setError('')
         if (ready.authorized) {
           setError('')
           setAuthBusy(false)
@@ -991,17 +693,25 @@ function App() {
       if (packet.type === 'MESSAGE_NEW' || packet.type === 'MESSAGE_EDITED') {
         const message = packet.data as Message
         if (isPopoutWindow && selectedChatIdRef.current !== message.chat_id) return
+        const isNew = packet.type === 'MESSAGE_NEW'
         if (!isPopoutWindow) setDialogs(current => current.map(dialog => {
           if (dialog.chat_id !== message.chat_id) return dialog
+          if (!isNew && dialog.last_message_id != null && dialog.last_message_id !== message.message_id) return dialog
           const activeAndVisible = (
             selectedChatIdRef.current === message.chat_id
             && document.visibilityState === 'visible'
           )
           return {
             ...dialog,
-            last_message_at: message.date,
-            last_message_preview: message.text || dialog.last_message_preview,
-            unread_count: packet.type === 'MESSAGE_NEW' && !message.outgoing && !activeAndVisible
+            last_message_id: message.message_id,
+            last_message_at: isNew ? message.date : dialog.last_message_at,
+            last_message_preview: messageSnippet(message),
+            last_message_sender: isGroupType(dialog.dialog_type) && !message.action
+              ? (message.outgoing ? 'شما' : firstName(message.sender_name))
+              : null,
+            last_message_outgoing: message.outgoing,
+            last_message_read: isNew ? false : dialog.last_message_read,
+            unread_count: isNew && !message.outgoing && !activeAndVisible
               ? dialog.unread_count + 1
               : dialog.unread_count
           }
@@ -1037,8 +747,46 @@ function App() {
       if (packet.type === 'DIALOG_UPDATED' && !isPopoutWindow) {
         applyDialogPatch(packet.data as DialogPatch)
       }
+      if (packet.type === 'MESSAGE_REACTIONS') {
+        const update = packet.data as ReactionUpdate
+        if (selectedChatIdRef.current === update.chat_id) {
+          setMessages(current => current.map(item => {
+            if (item.message_id !== update.message_id) return item
+            const reactions = update.min
+              ? update.reactions.map(reaction => ({
+                ...reaction,
+                chosen: item.reactions.some(own => own.emoji === reaction.emoji && own.chosen)
+              }))
+              : update.reactions
+            return { ...item, reactions }
+          }))
+        }
+      }
+      if (packet.type === 'USER_STATUS') {
+        const value = packet.data as { user_id: number; status: string | null }
+        setChatInfo(current => (current && current.chat_id === value.user_id ? { ...current, status: value.status } : current))
+      }
       if (packet.type === 'CHAT_ACTION') {
         const action = packet.data as ChatAction
+        if (!action.active || action.action === 'cancel') {
+          setChatActions(current => {
+            if (!current[action.chat_id]) return current
+            const next = { ...current }
+            delete next[action.chat_id]
+            return next
+          })
+        } else {
+          const listExpiresAt = Date.now() + 6000
+          setChatActions(current => ({ ...current, [action.chat_id]: { ...action, expires_at: listExpiresAt } }))
+          window.setTimeout(() => {
+            setChatActions(current => {
+              if (current[action.chat_id]?.expires_at !== listExpiresAt) return current
+              const next = { ...current }
+              delete next[action.chat_id]
+              return next
+            })
+          }, 6100)
+        }
         if (selectedChatIdRef.current === action.chat_id) {
           if (chatActionTimerRef.current !== null) {
             window.clearTimeout(chatActionTimerRef.current)
@@ -1060,6 +808,11 @@ function App() {
       }
       if (packet.type === 'MESSAGES_READ') {
         const receipt = packet.data as ReadReceipt
+        if (!isPopoutWindow) setDialogs(current => current.map(item => (
+          item.chat_id === receipt.chat_id && item.last_message_outgoing && (item.last_message_id || 0) <= receipt.max_id
+            ? { ...item, last_message_read: true }
+            : item
+        )))
         if (selectedChatIdRef.current === receipt.chat_id) {
           setMessages(current => current.map(item => (
             item.outgoing && item.message_id <= receipt.max_id
@@ -1069,23 +822,15 @@ function App() {
         }
       }
       if (packet.type === 'MESSAGE_DELETED') {
-        const deleted = packet.data as { chat_id: number; message_id: number }
-        if (selectedChatIdRef.current === deleted.chat_id) {
+        const deleted = packet.data as { chat_id: number | null; message_id: number }
+        const openChat = selectedChatIdRef.current
+        if (openChat !== null && (deleted.chat_id === openChat || (deleted.chat_id === null && !isChannelId(openChat)))) {
           setMessages(current => current.filter(item => item.message_id !== deleted.message_id))
           setPinnedMessage(current => current?.message_id === deleted.message_id ? null : current)
           setReplyingTo(current => current?.message_id === deleted.message_id ? null : current)
           setEditing(current => current?.message_id === deleted.message_id ? null : current)
         }
       }
-      }
-      socket.onclose = () => {
-        if (disposed) return
-        void refreshStatus()
-        const delay = Math.min(250 * 2 ** Math.min(retryCount, 5), 5000)
-        retryCount += 1
-        retryTimer = window.setTimeout(connectSocket, delay)
-      }
-      socket.onerror = () => socket?.close()
     }
 
     void hydrateCachedDialogs()
@@ -1094,6 +839,7 @@ function App() {
     return () => {
       disposed = true
       if (retryTimer !== undefined) window.clearTimeout(retryTimer)
+      if (flushTimer !== undefined) window.clearTimeout(flushTimer)
       socket?.close()
     }
   }, [])
@@ -1596,7 +1342,7 @@ function App() {
       setError('فقط پیام‌های ارسال‌شده توسط خودتان قابل حذف گروهی هستند.')
       return
     }
-    if (!window.confirm(new Intl.NumberFormat('fa-IR').format(selectedMessages.length) + ' پیام برای همه حذف شود؟')) return
+    if (!window.confirm(formatNumber(selectedMessages.length) + ' پیام برای همه حذف شود؟')) return
 
     setBulkBusy('delete')
     try {
@@ -1805,7 +1551,7 @@ function App() {
 
   async function sendCode(event: FormEvent) {
     event.preventDefault()
-    const value = phone.trim()
+    const value = phone.trim() ? countryCode + phone.replace(/\D/g, '') : ''
     if (!value) {
       setError('شماره تلفن را وارد کنید.')
       return
@@ -1953,14 +1699,12 @@ function App() {
     }
   }
 
-  function renderMessageText(value: string) {
-    const pattern = /(tg:\/\/(?:proxy|socks)\?[^\s]+|https?:\/\/(?:t\.me|telegram\.me|telegram\.dog)\/(?:proxy|socks)\?[^\s]+|(?:vless|vmess|trojan|ss|socks5|socks4):\/\/[^\s]+)/gi
-    const parts = value.split(pattern)
-    return parts.map((part, index) => (
-      /^(?:tg:\/\/(?:proxy|socks)\?|https?:\/\/(?:t\.me|telegram\.me|telegram\.dog)\/(?:proxy|socks)\?|(?:vless|vmess|trojan|ss|socks5|socks4):\/\/)/i.test(part)
-        ? <button className="proxy-link" type="button" key={index} onClick={() => void addProxyLink(part)}>{part}</button>
-        : <Fragment key={index}>{part}</Fragment>
-    ))
+  function openLink(url: string) {
+    if ('__TAURI_INTERNALS__' in window) {
+      invoke('open_external', { url }).catch(() => setError('باز کردن لینک انجام نشد.'))
+    } else {
+      window.open(url, '_blank', 'noopener')
+    }
   }
 
   async function openSettings() {
@@ -2167,15 +1911,6 @@ function App() {
     return message.chat_id + ':' + message.message_id
   }
 
-  function mediaUrl(message: Message, download = false) {
-    const path = backendBase + '/api/telegram/chats/' + encodeURIComponent(String(message.chat_id)) + '/messages/' + encodeURIComponent(String(message.message_id)) + '/media'
-    return download ? path + '?download=true' : path
-  }
-
-  function mediaState(message: Message): MediaState {
-    return mediaStates[mediaKey(message)] || (message.media?.kind === 'photo' ? 'loading' : 'ready')
-  }
-
   function setMessageMediaState(message: Message, value: MediaState) {
     setMediaStates(current => ({ ...current, [mediaKey(message)]: value }))
   }
@@ -2190,7 +1925,7 @@ function App() {
     if (!message.media || message.media.downloadable === false) return
     setMessageMediaState(message, 'downloading')
     try {
-      const response = await fetch(mediaUrl(message, true))
+      const response = await backendFetch(chatPath(message.chat_id) + '/messages/' + message.message_id + '/media?download=true')
       if (!response.ok) {
         const body = await response.text()
         let detail = body || 'دانلود رسانه انجام نشد.'
@@ -2217,79 +1952,6 @@ function App() {
       setMessageMediaState(message, 'error')
       setError(errorMessage(caught, 'دانلود رسانه انجام نشد.'))
     }
-  }
-
-  function mediaButtonLabel(state: MediaState) {
-    if (state === 'downloading') return 'در حال دانلود…'
-    if (state === 'done') return 'دانلود شد'
-    if (state === 'error') return 'تلاش دوباره'
-    return 'دانلود'
-  }
-
-  function renderMedia(message: Message) {
-    if (!message.media || message.deleted) return null
-    const state = mediaState(message)
-    const label = mediaKindLabel(message.media.kind)
-
-    if (message.media.kind === 'photo') {
-      const key = mediaKey(message)
-      if (!preferences.autoLoadPhotos && !revealedPhotos.has(key)) {
-        return (
-          <div className="media-card photo-placeholder">
-            <span className="media-icon">▧</span>
-            <div className="media-copy">
-              <strong>{message.media.name || label}</strong>
-              <small>{formatBytes(message.media.size)} · بارگیری خودکار خاموش است</small>
-            </div>
-            <button
-              className="download-button"
-              type="button"
-              onClick={() => setRevealedPhotos(current => new Set(current).add(key))}
-            >
-              نمایش تصویر
-            </button>
-          </div>
-        )
-      }
-      return (
-        <div className="media-photo-card">
-          <BackendImage
-            className="message-photo"
-            src={mediaUrl(message)}
-            alt={message.media.name || 'تصویر پیام'}
-            loading="lazy"
-            onLoad={() => setMessageMediaState(message, 'ready')}
-            onError={() => setMessageMediaState(message, 'error')}
-          />
-          <div className="media-toolbar">
-            <div className="media-copy">
-              <strong>{message.media.name || label}</strong>
-              <small>{formatBytes(message.media.size)}</small>
-            </div>
-            <button className="download-button" type="button" onClick={() => downloadMedia(message)} disabled={state === 'downloading'}>
-              {mediaButtonLabel(state)}
-            </button>
-          </div>
-          {state === 'error' && <small className="media-status error">نمایش یا دریافت رسانه انجام نشد.</small>}
-        </div>
-      )
-    }
-
-    return (
-      <div className="media-card">
-        <span className="media-icon">{message.media.kind === 'audio' ? '♫' : message.media.kind === 'video' ? '▣' : '□'}</span>
-        <div className="media-copy">
-          <strong>{message.media.name || label}</strong>
-          <small>{label} · {formatBytes(message.media.size)}</small>
-          {message.media.kind === 'audio' || message.media.kind === 'video'
-            ? <small className="media-status">پخش در این فاز فعال نیست.</small>
-            : null}
-        </div>
-        <button className="download-button" type="button" onClick={() => downloadMedia(message)} disabled={state === 'downloading'}>
-          {mediaButtonLabel(state)}
-        </button>
-      </div>
-    )
   }
 
   function toggleMessageSearch() {
@@ -2342,14 +2004,6 @@ function App() {
       jumpToMessage(message.message_id)
       searchJumpTimerRef.current = null
     }, 0)
-  }
-
-  function messageSnippet(message: Message | null) {
-    if (!message) return 'پیام قبلی'
-    const text = message.text.trim()
-    if (text) return text.length > 110 ? text.slice(0, 110) + '…' : text
-    if (message.media) return mediaKindLabel(message.media.kind)
-    return 'پیام'
   }
 
   function beginReply(message: Message) {
@@ -2437,23 +2091,6 @@ function App() {
         : upsertSortedMessage(current, pinnedMessage)
     ))
     window.requestAnimationFrame(() => jumpToMessage(pinnedMessage.message_id))
-  }
-
-  function renderReplyReference(message: Message) {
-    if (!message.reply_to_message_id) return null
-    const source = messages.find(item => item.message_id === message.reply_to_message_id) || null
-    const sender = source ? (source.outgoing ? 'شما' : source.sender_name || 'پیام') : 'پیام قبلی'
-    return (
-      <button
-        className="reply-reference"
-        type="button"
-        onClick={() => jumpToMessage(message.reply_to_message_id as number)}
-        disabled={!source}
-      >
-        <strong>{sender}</strong>
-        <span>{messageSnippet(source)}</span>
-      </button>
-    )
   }
 
   async function setReaction(message: Message, emoji: string | null) {
@@ -2580,11 +2217,11 @@ function App() {
     setUploadName(
       pendingAttachments.length === 1
         ? pendingAttachments[0].file.name
-        : new Intl.NumberFormat('fa-IR').format(pendingAttachments.length) + ' فایل'
+        : formatNumber(pendingAttachments.length) + ' فایل'
     )
     setError('')
     try {
-      const response = await fetch(backendBase + '/api/telegram/chats/' + chatId + '/files/album', {
+      const response = await backendFetch(chatPath(chatId) + '/files/album', {
         method: 'POST',
         body: form
       })
@@ -2686,7 +2323,7 @@ function App() {
     try {
       await invoke('close_current_window')
     } catch {
-      await appWindow.close()
+      await appWindow?.close()
     }
   }
 
@@ -2737,15 +2374,36 @@ function App() {
     return <div className="loading-screen">در حال راه‌اندازی تلگرام…</div>
   }
 
+  const loginMode = status.state !== 'UNCONFIGURED' && status.state !== 'PROXY_ERROR' && !showAuthProxyManager
+  const loginTitle = authStep === 'phone'
+    ? 'شماره تلفن شما'
+    : authStep === 'code'
+      ? countryCode + ' ' + phone
+      : 'رمز ابری'
+  const loginLead = authStep === 'phone'
+    ? 'لطفاً کد کشور را تأیید و شماره تلفن خود را وارد کنید.'
+    : authStep === 'code'
+      ? 'کد ورود را به اپ تلگرام روی دستگاه دیگرتان فرستادیم.'
+      : 'حساب شما با یک رمز اضافه محافظت می‌شود.'
+
   if (!status.authorized && !showCachedWorkspace) {
     return (
-      <div className="auth-screen">
+      <div className={'auth-screen' + (loginMode ? ' tg-login' : '')}>
         <div className={'auth-card' + (status.state === 'PROXY_ERROR' ? ' proxy-recovery-card' : '')}>
-          <div className="brand-mark">✈</div>
-          <h1>Telegram Desktop</h1>
-          <p>ورود به کلاینت مستقل</p>
-          <span className="status-pill">{statusLabel(status.state)}</span>
-          {status.last_error && <small className="auth-error">{status.last_error}</small>}
+          <div className="brand-mark tg-login-logo"><span className="paper-plane" aria-hidden="true" /></div>
+          {loginMode ? (
+            <>
+              <h1>{loginTitle}</h1>
+              <p className="tg-login-lead">{loginLead}</p>
+              {status.state === 'CONNECTING' && <small className="tg-login-connecting">در حال اتصال…</small>}
+            </>
+          ) : (
+            <>
+              <h1>Telegram Desktop</h1>
+              <span className="status-pill">{statusLabel(status.state)}</span>
+              {status.last_error && <small className="auth-error">{status.last_error}</small>}
+            </>
+          )}
 
           {status.state === 'IMPORT_READY' && status.source_session_available && (
             <>
@@ -2917,48 +2575,105 @@ function App() {
             <form className="auth-form" onSubmit={authStep === 'phone' ? sendCode : authStep === 'code' ? verifyCode : verifyPassword}>
               {authStep === 'phone' && (
                 <>
-                  <label className="auth-field">
-                    <span>شماره تلفن</span>
-                    <input value={phone} onChange={event => setPhone(event.target.value)} placeholder="+98..." autoComplete="tel" dir="ltr" />
-                  </label>
-                  <button className="primary-action auth-submit" type="submit" disabled={authBusy}>
-                    {authBusy ? 'در حال ارسال…' : 'دریافت کد تأیید'}
-                  </button>
-                  <button className="text-button" type="button" onClick={() => { setShowProxyAdd(true); setShowAuthProxyManager(true) }}>افزودن پراکسی / V2Ray</button>
+                  <div className="tg-login-country" dir="ltr">
+                    <span>{countryName(countryCode)}</span>
+                  </div>
+                  <div className="tg-login-phone" dir="ltr">
+                    <input
+                      className="tg-login-code"
+                      value={countryCode}
+                      onChange={event => setCountryCode('+' + event.target.value.replace(/\D/g, '').slice(0, 4))}
+                      inputMode="numeric"
+                      aria-label="کد کشور"
+                    />
+                    <input
+                      value={phone}
+                      onChange={event => {
+                        const raw = event.target.value.trim()
+                        if (raw.startsWith('+')) {
+                          // Full international number pasted: split off the country code.
+                          const digits = raw.replace(/\D/g, '')
+                          const code = Object.keys(COUNTRY_NAMES)
+                            .filter(item => digits.startsWith(item.slice(1)))
+                            .sort((a, b) => b.length - a.length)[0]
+                          if (code) {
+                            setCountryCode(code)
+                            setPhone(digits.slice(code.length - 1))
+                            return
+                          }
+                        }
+                        // Local format (0918...) drops the trunk zero, as Telegram does.
+                        setPhone(event.target.value.replace(/[^\d ]/g, '').replace(/^0+/, ''))
+                      }}
+                      placeholder="--- --- ----"
+                      inputMode="tel"
+                      autoComplete="tel-national"
+                      aria-label="شماره تلفن"
+                      autoFocus
+                    />
+                  </div>
                 </>
               )}
 
               {authStep === 'code' && (
-                <>
-                  <p className="auth-notice">{authNotice || 'کد تأیید را وارد کنید.'}</p>
-                  <label className="auth-field">
-                    <span>کد تأیید</span>
-                    <input value={code} onChange={event => setCode(event.target.value)} placeholder="12345" inputMode="numeric" autoComplete="one-time-code" dir="ltr" />
-                  </label>
-                  <button className="primary-action auth-submit" type="submit" disabled={authBusy}>
-                    {authBusy ? 'در حال بررسی…' : 'تأیید و ورود'}
-                  </button>
-                  <button className="text-button" type="button" onClick={resetAuth}>تغییر شماره</button>
-                </>
+                <input
+                  className="tg-login-single"
+                  value={code}
+                  onChange={event => {
+                    const value = event.target.value.replace(/\D/g, '').slice(0, 6)
+                    setCode(value)
+                    // Telegram submits on its own once the 5-digit code is in.
+                    if (value.length === 5 && !authBusy) window.setTimeout(() => event.target.form?.requestSubmit(), 0)
+                  }}
+                  placeholder="کد"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  dir="ltr"
+                  autoFocus
+                />
               )}
 
               {authStep === 'password' && (
-                <>
-                  <p className="auth-notice">{authNotice || 'رمز دومرحله‌ای را وارد کنید.'}</p>
-                  <label className="auth-field">
-                    <span>رمز دومرحله‌ای</span>
-                    <input value={password} onChange={event => setPassword(event.target.value)} type="password" autoComplete="current-password" dir="ltr" />
-                  </label>
-                  <button className="primary-action auth-submit" type="submit" disabled={authBusy}>
-                    {authBusy ? 'در حال بررسی…' : 'تأیید رمز و ورود'}
-                  </button>
-                  <button className="text-button" type="button" onClick={resetAuth}>شروع دوباره</button>
-                </>
+                <input
+                  className="tg-login-single"
+                  value={password}
+                  onChange={event => setPassword(event.target.value)}
+                  type="password"
+                  placeholder="رمز عبور"
+                  autoComplete="current-password"
+                  dir="ltr"
+                  autoFocus
+                />
+              )}
+
+              {error && <small className="tg-login-error">{error}</small>}
+
+              <button className="tg-login-next" type="submit" disabled={authBusy}>
+                {authBusy ? <span className="tg-login-spinner" aria-label="در حال انجام" /> : 'بعدی'}
+              </button>
+              {authStep !== 'phone' && (
+                <button className="tg-login-link" type="button" onClick={resetAuth}>
+                  {authStep === 'code' ? 'شماره اشتباه است؟' : 'شروع دوباره'}
+                </button>
               )}
             </form>
           )}
         </div>
-        {error && <button className="error-toast" onClick={() => setError('')}>{error}</button>}
+        {error && !loginMode && <button className="error-toast" onClick={() => setError('')}>{error}</button>}
+        {loginMode && (
+          <button
+            type="button"
+            className={'tg-login-proxy' + (status.active_route && status.active_route !== 'direct' ? ' active' : '')}
+            onClick={() => {
+              setShowProxyAdd(false)
+              setShowAuthProxyManager(true)
+            }}
+            title="Proxy Settings"
+            aria-label="تنظیمات پراکسی"
+          >
+            <span className="proxy-shield-icon" aria-hidden="true" />
+          </button>
+        )}
       </div>
     )
   }
@@ -2974,7 +2689,7 @@ function App() {
                 <strong dir="auto">{chatInfo?.title || selected.title}</strong>
                 <small dir="auto">
                   {chatInfo?.participants_count != null
-                    ? new Intl.NumberFormat('fa-IR').format(chatInfo.participants_count) + ' عضو'
+                    ? formatNumber(chatInfo.participants_count) + ' عضو'
                     : presenceLabel(chatInfo?.status) || dialogTypeLabel(chatInfo?.dialog_type || selected.dialog_type)}
                 </small>
               </span>
@@ -2990,8 +2705,8 @@ function App() {
         </div>
         <div className="titlebar-drag-fill" data-tauri-drag-region aria-hidden="true" />
         <div className="window-controls">
-          <button aria-label="کمینه" onClick={() => void appWindow.minimize()}>—</button>
-          <button aria-label="بیشینه" onClick={() => void appWindow.toggleMaximize()}>□</button>
+          <button aria-label="کمینه" onClick={() => void appWindow?.minimize()}>—</button>
+          <button aria-label="بیشینه" onClick={() => void appWindow?.toggleMaximize()}>□</button>
           <button className="window-close" aria-label="بستن" onClick={() => void closeApplication()}>×</button>
         </div>
       </header>
@@ -3046,15 +2761,21 @@ function App() {
           })}
         </div>
         <div className="dialog-list">
-          {visibleDialogs.map(dialog => (
-            <DialogRow
-              key={dialog.chat_id}
-              dialog={dialog}
-              selected={selected?.chat_id === dialog.chat_id}
-              onOpen={openDialog}
-              onContextMenu={openDialogContextMenu}
-            />
-          ))}
+          {visibleDialogs.map(dialog => {
+            const action = chatActions[dialog.chat_id]
+            const typing = action
+              ? (isGroupType(dialog.dialog_type) && action.user_name ? firstName(action.user_name) + ' ' : '') + chatActionLabel(action.action)
+              : null
+            return (
+              <DialogRow
+                key={dialog.chat_id}
+                dialog={dialog}
+                selected={selected?.chat_id === dialog.chat_id}
+                typing={typing}
+                actions={dialogActions}
+              />
+            )
+          })}
           {!visibleDialogs.length && <div className="empty-list">گفت‌وگویی پیدا نشد</div>}
         </div>
       </aside>
@@ -3145,7 +2866,7 @@ function App() {
             </header>
             {selectedMessageIds.size > 0 && (
               <div className="selection-toolbar">
-                <strong>{new Intl.NumberFormat('fa-IR').format(selectedMessageIds.size)} پیام انتخاب شده</strong>
+                <strong>{formatNumber(selectedMessageIds.size)} پیام انتخاب شده</strong>
                 <button type="button" onClick={() => copyMessages(selectedMessages)}>▣ کپی</button>
                 <button type="button" onClick={beginForwardSelected} disabled={bulkBusy !== null}>↗ فوروارد</button>
                 <button
@@ -3215,7 +2936,7 @@ function App() {
               {showJumpToBottom && (
                 <button className="jump-bottom" type="button" onClick={() => scrollToBottom('smooth')} aria-label="رفتن به آخر گفتگو">
                   <span>↓</span>
-                  {newBelowCount > 0 && <strong>{new Intl.NumberFormat('fa-IR').format(newBelowCount)}</strong>}
+                  {newBelowCount > 0 && <strong>{formatNumber(newBelowCount)}</strong>}
                 </button>
               )}
             </div>
@@ -3242,7 +2963,7 @@ function App() {
               {pendingAttachments.length > 0 && !uploadBusy && (
                 <div className="attachment-tray">
                   <div className="attachment-tray-header">
-                    <strong>{new Intl.NumberFormat('fa-IR').format(pendingAttachments.length)} پیوست آماده ارسال</strong>
+                    <strong>{formatNumber(pendingAttachments.length)} پیوست آماده ارسال</strong>
                     <button type="button" onClick={clearPendingAttachments}>حذف همه</button>
                   </div>
                   <div className="attachment-items">
@@ -3364,7 +3085,7 @@ function App() {
               <div><span>نوع</span><strong>{dialogTypeLabel(chatInfo?.dialog_type || selected.dialog_type)}</strong></div>
               {chatInfo?.status && <div><span>وضعیت</span><strong>{presenceLabel(chatInfo.status)}</strong></div>}
               {chatInfo?.participants_count != null && (
-                <div><span>اعضا</span><strong>{new Intl.NumberFormat('fa-IR').format(chatInfo.participants_count)}</strong></div>
+                <div><span>اعضا</span><strong>{formatNumber(chatInfo.participants_count)}</strong></div>
               )}
               <div><span>شناسه</span><strong dir="ltr">{selected.chat_id}</strong></div>
             </div>
@@ -3417,7 +3138,7 @@ function App() {
                 <strong>
                   {forwarding.length === 1
                     ? 'فوروارد پیام'
-                    : 'فوروارد ' + new Intl.NumberFormat('fa-IR').format(forwarding.length) + ' پیام'}
+                    : 'فوروارد ' + formatNumber(forwarding.length) + ' پیام'}
                 </strong>
                 <small>{messageSnippet(forwarding[0])}</small>
               </div>
@@ -3572,7 +3293,7 @@ function App() {
                 ) : (
                   <>
                     <div className="settings-row"><span>مسیر فعال</span><strong>{status.active_route || (transportStatus?.allow_direct ? 'اتصال مستقیم' : 'نامشخص')}</strong></div>
-                    <div className="settings-row"><span>مسیرهای امن موجود</span><strong>{new Intl.NumberFormat('fa-IR').format(transportStatus?.routes.length || 0)}</strong></div>
+                    <div className="settings-row"><span>مسیرهای امن موجود</span><strong>{formatNumber(transportStatus?.routes.length || 0)}</strong></div>
                     {transportStatus?.routes.map(route => (
                       <div className="transport-row" key={route.index}>
                         <span>{route.name}{route.managed_v2ray ? ' · V2Ray' : ''}</span>
@@ -3667,6 +3388,10 @@ function App() {
             </div>
           </section>
         </div>
+      )}
+
+      {viewerMessage && (
+        <MediaViewer message={viewerMessage} onClose={closeViewer} onDownload={message => void downloadMedia(message)} />
       )}
 
       {error && <button className="error-toast" onClick={() => setError('')}>{error}</button>}

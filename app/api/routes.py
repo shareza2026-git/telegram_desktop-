@@ -20,6 +20,7 @@ from app.models import (
     SetReactionRequest,
     TypingRequest,
 )
+from app.telegram.service import MediaUnavailable
 from app.telegram.uploads import cleanup_staged_upload, stage_upload, validate_album_size
 
 router = APIRouter()
@@ -34,7 +35,14 @@ def relay(request: Request):
 
 
 def error_response(error: Exception) -> HTTPException:
+    if isinstance(error, MediaUnavailable):
+        return HTTPException(status_code=404, detail=str(error))
     return HTTPException(status_code=409, detail=str(error))
+
+
+# Message media never changes under the same (chat, message) id, so the
+# webview may keep it for the whole session.
+MEDIA_CACHE = "private, max-age=86400"
 
 
 @router.get("/api/telegram/status")
@@ -225,19 +233,24 @@ async def media(
     message_id: int,
     request: Request,
     download: bool = False,
+    thumb: bool = False,
 ):
     try:
-        item = await service(request).download_media(chat_id, message_id)
+        if thumb:
+            item = await service(request).download_media_preview(chat_id, message_id)
+        else:
+            item = await service(request).download_media(chat_id, message_id)
     except DesktopError as exc:
         raise error_response(exc) from None
 
     disposition = "attachment" if download else "inline"
+    # FileResponse answers Range requests, so <video>/<audio> can seek.
     return FileResponse(
         path=item.path,
         media_type=item.mime_type or "application/octet-stream",
         headers={
             "Content-Disposition": f'{disposition}; filename="{item.filename}"',
-            "Cache-Control": "private, max-age=3600",
+            "Cache-Control": MEDIA_CACHE,
         },
     )
 
@@ -343,6 +356,19 @@ async def recent_media(request: Request):
         return await service(request).recent_media()
     except DesktopError as exc:
         raise error_response(exc) from None
+
+
+@router.get("/api/telegram/media/recent/{kind}/{media_id}/preview")
+async def recent_media_preview(kind: str, media_id: str, request: Request):
+    try:
+        item = await service(request).recent_media_preview(kind, media_id)
+    except DesktopError as exc:
+        raise error_response(exc) from None
+    return FileResponse(
+        path=item.path,
+        media_type=item.mime_type or "image/jpeg",
+        headers={"Cache-Control": MEDIA_CACHE},
+    )
 
 
 @router.post("/api/telegram/chats/{chat_id}/media/recent/{kind}/{media_id}")
@@ -524,19 +550,7 @@ async def relay_retry_failed(request: Request):
 
 @router.websocket("/ws/telegram")
 async def websocket(websocket: WebSocket, chat_id: int | None = None):
-    origin = websocket.headers.get("origin")
-    allowed = {
-        None,
-        "http://127.0.0.1:1420",
-        "http://localhost:1420",
-        "http://tauri.localhost",
-        "https://tauri.localhost",
-        "tauri://localhost",
-    }
-    if origin not in allowed:
-        await websocket.close(code=1008)
-        return
-
+    # Origin, Host and token are enforced by DesktopGuard before this point.
     await websocket.accept()
     desktop = websocket.app.state.telegram_desktop
     queue = desktop.events.subscribe(chat_id)

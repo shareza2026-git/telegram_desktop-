@@ -160,6 +160,9 @@ def main() -> None:
         str(data_root / "proxies.json"),
     )
 
+    # The request guard only accepts this instance's own Host header.
+    os.environ["TELEGRAM_BACKEND_PORT"] = str(args.port)
+
     import uvicorn
     from app.main import app
 

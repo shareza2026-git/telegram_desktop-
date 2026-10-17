@@ -143,6 +143,12 @@ class FakeStore:
     async def upsert_message(self, message) -> None:
         self.messages.append(message)
 
+    async def upsert_messages(self, messages) -> None:
+        self.messages.extend(messages)
+
+    async def chats_for_shared_ids(self, message_ids):
+        return {7: [value for value in message_ids if value == 11]}
+
     async def mark_outgoing_read(self, chat_id: int, max_id: int) -> None:
         self.read_ranges.append((chat_id, max_id))
 
