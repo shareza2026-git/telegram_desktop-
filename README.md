@@ -268,6 +268,14 @@ Speed:
 
 Telegram parity: text formatting (bold, italic, code, links, mentions, spoilers, quotes), albums, stickers, GIFs, inline video, voice and music playback, video messages, forwarded-from headers, link previews, service messages, channel view counts, sender colours and grouped avatars, typing in the chat list, read ticks in the chat list, live online status and a photo/video viewer.
 
+## Quote priority
+
+Chats whose title contains a quote keyword (اتاق، لفظ، مظنه، قیمت، نقدی، آبشده، سکه، طلا، دلار) are priority chats and show ⚡ in the chat list. Any chat can be switched on or off from its ⋮ menu; the choice is stored in `priority_chats.json` in the client data folder, so it travels with a portable folder.
+
+Priority messages overtake ordinary ones on the way to the window (a separate WebSocket lane) and are drawn immediately instead of in the 16 ms batch used for everything else. This removes waiting behind bursts of channel posts; the network delay of the proxy itself is unchanged.
+
+Auto forward (relay) is reached from the main menu item "Auto Forward" or from Settings.
+
 ## Local configuration
 
 Copy .env.example to .env locally and fill in values without committing the file.
