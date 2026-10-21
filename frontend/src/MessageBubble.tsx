@@ -234,7 +234,7 @@ function BubbleView({
       <small className="message-meta">
         {message.views != null && message.post && <span className="views">👁 {formatCompact(message.views)}</span>}
         {message.edited && <span>ویرایش‌شده</span>}
-        <span>{formatTime(message.date)}</span>
+        <span dir="ltr">{formatTime(message.date)}</span>
         {message.outgoing && (
           <span
             className={'read-receipt ' + (message.failed ? 'failed' : message.pending ? 'pending' : message.read ? 'read' : 'sent')}

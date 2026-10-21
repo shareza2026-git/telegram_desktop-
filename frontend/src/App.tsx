@@ -10,6 +10,7 @@ import {
   dialogTypeLabel,
   errorMessage,
   formatBytes,
+  formatCompact,
   formatDialogTime,
   formatMessageDate,
   messageDayKey,
@@ -124,6 +125,19 @@ function useStableHandlers<T extends object>(handlers: T): T {
     }
     return stable as T
   }, [])
+}
+
+// Header subtitle in Telegram's words: presence for people, size for groups.
+function headerStatus(dialog: Dialog, info: ChatInfo | null) {
+  const presence: Record<string, string> = {
+    online: 'online', offline: 'last seen recently', recently: 'last seen recently',
+    last_week: 'last seen within a week', last_month: 'last seen within a month'
+  }
+  if (dialog.dialog_type === 'user') return info?.is_bot ? 'bot' : presence[info?.status || ''] || 'last seen recently'
+  const count = info?.participants_count
+  const noun = dialog.dialog_type === 'channel' ? 'subscribers' : 'members'
+  if (count != null) return new Intl.NumberFormat('en-US').format(count) + ' ' + noun
+  return dialog.dialog_type === 'channel' ? 'channel' : 'group'
 }
 
 function isGroupType(value: string) {
@@ -377,7 +391,7 @@ function App() {
             <div className="date-separator"><span>{formatMessageDate(lead.date)}</span></div>
           )}
           {unreadBoundaryId !== null && row.items.some(item => item.message_id === unreadBoundaryId) && (
-            <div className="unread-divider"><span>پیام‌های خوانده‌نشده</span></div>
+            <div className="unread-divider"><span>Unread Messages</span></div>
           )}
           <MessageBubble
             message={lead}
@@ -2799,21 +2813,18 @@ function App() {
               <button className="menu-night" type="button" aria-label="حالت شب" onClick={() => updatePreferences({ theme: preferences.theme === 'dark' ? 'light' : 'dark' })}>☾</button>
               <strong>{status.display_name || 'Telegram'}</strong>
               <small dir="ltr">{status.phone ? '+' + status.phone : 'Telegram account'}</small>
-              <span className="menu-chevron">⌃</span>
             </section>
+            <button className="menu-item menu-current-account" type="button" onClick={() => setMainMenuOpen(false)}>
+              <ChatAvatar chatId={status.user_id || 0} title={status.display_name || 'Telegram'} className="menu-small-avatar" />
+              <span>{status.display_name || 'Telegram'}</span>
+              {totalUnread > 0 && <b className="menu-badge">{formatCompact(totalUnread)}</b>}
+            </button>
+            <hr />
             <button className="menu-item" type="button" onClick={() => openCreateChat('group')}><Icon name="group" /><span>New Group</span></button>
             <button className="menu-item" type="button" onClick={() => openCreateChat('channel')}><Icon name="channel" /><span>New Channel</span></button>
             <button className="menu-item" type="button" onClick={() => void openContacts()}><Icon name="contacts" /><span>Contacts</span></button>
             <button className="menu-item" type="button" onClick={openSelfChat}><Icon name="saved" /><span>Saved Messages</span></button>
             <button className="menu-item" type="button" onClick={() => void openSettings()}><Icon name="settings" /><span>Settings</span></button>
-            <button
-              className="menu-item menu-toggle"
-              type="button"
-              onClick={() => updatePreferences({ theme: preferences.theme === 'dark' ? 'light' : 'dark' })}
-            >
-              <Icon name="night" /><span>Night Mode</span>
-              <span className={'tg-switch' + (preferences.theme === 'dark' ? ' on' : '')} aria-hidden="true" />
-            </button>
           </nav>
         </div>
       )}
@@ -2897,20 +2908,16 @@ function App() {
                 <strong>{selected.title}</strong>
                 {selectedChatAction ? (
                   <small className="chat-action-live">
-                    {selected.dialog_type !== 'user' && selectedChatAction.user_name
-                      ? selectedChatAction.user_name + ' · '
-                      : ''}
-                    {chatActionLabel(selectedChatAction.action)}
+                    <span className="typing-dots" aria-hidden="true"><i /><i /><i /></span>
+                    {(selected.dialog_type !== 'user' && selectedChatAction.user_name ? firstName(selectedChatAction.user_name) + ' is ' : '')
+                      + ({ typing: 'typing', uploading: 'sending a file', recording: 'recording', cancel: '' } as Record<string, string>)[selectedChatAction.action]}
                   </small>
                 ) : (
-                  <small>
-                    {selected.muted ? 'بی‌صدا · ' : ''}
-                    {presenceLabel(chatInfo?.status) || dialogTypeLabel(chatInfo?.dialog_type || selected.dialog_type)}
-                  </small>
+                  <small>{headerStatus(selected, chatInfo)}</small>
                 )}
               </div>
               <div className="header-actions">
-                <button className={'icon-button ' + (messageSearchOpen ? 'active' : '')} aria-label="جست‌وجوی پیام" onClick={toggleMessageSearch}>⌕</button>
+                <button className={'icon-button ' + (messageSearchOpen ? 'active' : '')} aria-label="جست‌وجوی پیام" onClick={toggleMessageSearch}><Icon name="search" /></button>
                 <button
                   className={'icon-button ' + (chatMenuOpen ? 'active' : '')}
                   aria-label="تنظیمات گفتگو"
@@ -3002,10 +3009,10 @@ function App() {
             )}
             {pinnedMessage && (
               <button className="pinned-banner" type="button" onClick={openPinnedMessage}>
-                <span className="pinned-mark">⌖</span>
+                <span className="pinned-mark" aria-hidden="true" />
                 <span>
-                  <strong>پیام سنجاق‌شده</strong>
-                  <small>{messageSnippet(pinnedMessage)}</small>
+                  <strong>Pinned Message</strong>
+                  <small dir="auto">{messageSnippet(pinnedMessage)}</small>
                 </span>
               </button>
             )}

@@ -220,3 +220,51 @@
 .tg-create { gap: 14px; padding: 18px 22px 22px; }
 .tg-create .tg-login-single { text-align: start; letter-spacing: 0; }
 .tg-create .tg-login-next { margin-top: 10px; }
+
+/* ---- Look pass against Telegram Desktop ---- */
+/* Header: avatar on the left, name and status, actions on the right. */
+.chat-header { direction: ltr; height: 54px; padding: 0 12px; gap: 12px; background: #fff; box-shadow: none; border-bottom: 1px solid #e7e7e7; }
+.chat-header > div:not(.header-actions) { min-width: 0; flex: 1; display: flex; flex-direction: column; text-align: left; }
+.chat-header strong { font-size: 15px; font-weight: 600; color: #000; unicode-bidi: plaintext; }
+.chat-header small { font-size: 13px; color: #8a8a8a; }
+.chat-header small.chat-action-live { display: flex; align-items: center; gap: 5px; color: #40a7e3; }
+.chat-header .icon-button { width: 36px; height: 36px; display: grid; place-items: center; color: #999; font-size: 20px; }
+.chat-header .icon-button .tg-icon { width: 22px; height: 22px; color: inherit; }
+.typing-dots { display: inline-flex; gap: 2px; }
+.typing-dots i { width: 4px; height: 4px; background: currentColor; border-radius: 50%; animation: tg-dot 1.2s infinite ease-in-out; }
+.typing-dots i:nth-child(2) { animation-delay: .15s; }
+.typing-dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes tg-dot { 0%, 80%, 100% { opacity: .3; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-2px); } }
+
+/* Pinned bar */
+.pinned-banner { direction: ltr; min-height: 48px; padding: 6px 14px; display: flex; align-items: center; gap: 10px; background: #fff; border-bottom: 1px solid #e7e7e7; text-align: left; }
+.pinned-banner .pinned-mark { width: 2px; height: 34px; flex: 0 0 2px; background: #40a7e3; border-radius: 1px; }
+.pinned-banner span:last-child { min-width: 0; display: flex; flex-direction: column; }
+.pinned-banner strong { color: #40a7e3; font-size: 13.5px; font-weight: 600; }
+.pinned-banner small { overflow: hidden; color: #000; font-size: 13.5px; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Bubbles: Telegram size and shape */
+.message { padding: 7px 11px 6px; font-size: 15px; line-height: 1.35; border-radius: 16px 16px 16px 6px; box-shadow: 0 1px 1px rgba(0, 0, 0, .12); }
+.message.outgoing { border-radius: 16px 16px 6px 16px; }
+.message .message-text { font-size: 15px; }
+.message .message-meta, .message small.message-meta { align-self: flex-end; font-size: 12px; color: #a0acb6; }
+.message.outgoing .message-meta { color: #6fb06b; }
+.message .sender-name { font-size: 13.5px; font-weight: 600; }
+.message .avatar.message-avatar { width: 34px; height: 34px; flex-basis: 34px; left: -42px; }
+
+/* Unread Messages: full-width translucent strip */
+.unread-divider { align-self: stretch; height: 28px; margin: 8px -60px; display: grid; place-items: center; color: #fff; background: rgba(0, 0, 0, .22); font-size: 13px; font-weight: 600; }
+.unread-divider::before, .unread-divider::after { display: none; }
+
+/* Composer: floating rounded box, as in current Telegram Desktop */
+.composer-shell { padding: 6px 12px 10px; background: transparent; border-top: 0; }
+.composer-input-shell { min-height: 46px; padding: 0 6px; background: #fff; border-radius: 23px; box-shadow: 0 1px 2px rgba(0, 0, 0, .15); }
+.composer-input-shell input { font-size: 15px; }
+
+/* Main menu */
+.main-menu-drawer { width: 280px; }
+.main-menu-drawer .menu-item { min-height: 46px; gap: 26px; font-size: 15px; }
+.main-menu-drawer .tg-icon { width: 24px; height: 24px; flex-basis: 24px; color: #707579; }
+.menu-current-account { position: relative; }
+.menu-current-account .menu-small-avatar { width: 28px; height: 28px; flex: 0 0 28px; font-size: 12px; margin-inline-start: -2px; }
+.menu-badge { margin-inline-start: auto; padding: 1px 8px; color: #fff; background: #40a7e3; border-radius: 10px; font-size: 12px; }
