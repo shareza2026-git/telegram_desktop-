@@ -691,6 +691,18 @@ class TelegramDesktopService:
         )
 
     @staticmethod
+    def _can_post(entity: Any) -> bool:
+        if getattr(entity, "creator", False):
+            return True
+        admin = getattr(entity, "admin_rights", None)
+        if getattr(entity, "broadcast", False):
+            return bool(admin and getattr(admin, "post_messages", False))
+        if admin is not None:
+            return True
+        banned = getattr(entity, "banned_rights", None) or getattr(entity, "default_banned_rights", None)
+        return not (banned and getattr(banned, "send_messages", False))
+
+    @staticmethod
     def _entity_dialog_type(entity: Any) -> str:
         if hasattr(entity, "first_name"):
             return "user"
@@ -1297,6 +1309,7 @@ class TelegramDesktopService:
             scam=bool(getattr(entity, "scam", False)),
             fake=bool(getattr(entity, "fake", False)),
             photo_available=bool(getattr(entity, "photo", None)),
+            can_post=self._can_post(entity),
         )
         cache[chat_id] = (now, value)
         return value
@@ -2191,6 +2204,16 @@ class TelegramDesktopService:
             return None
 
     async def verify_code(self, code: str) -> dict:
+        lock = getattr(self, "_sign_in_lock", None)
+        if lock is None:
+            lock = self._sign_in_lock = asyncio.Lock()
+        async with lock:
+            if self.status.authorized:
+                # A duplicate submit (auto-submit plus "Next") after success.
+                return {"code_sent": True, "requires_2fa": False, "authorized": True}
+            return await self._verify_code(code)
+
+    async def _verify_code(self, code: str) -> dict:
         if self.client is None or not self.login_phone or not self.login_code_hash:
             raise DesktopError("Request a new login code")
         try:

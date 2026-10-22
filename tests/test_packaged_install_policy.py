@@ -31,7 +31,7 @@ def test_windows_install_keeps_portable_state_instance_local():
     assert "$LOCALAPPDATA\\local.telegram.desktop" not in hooks
     assert '"binaries/xray"' in windows_config
     assert '"identifier": "local.telegram.desktop"' in tauri_config
-    assert '"version": "0.1.34"' in tauri_config
+    assert '"version": "0.1.36"' in tauri_config
     assert 'Delete "$INSTDIR\\telegram-session.session"' in template
     assert 'Delete "$INSTDIR\\telegram-api.env"' in template
     assert 'Delete "$INSTDIR\\telegram-proxies.json"' in template
@@ -44,7 +44,8 @@ def test_each_executable_folder_gets_isolated_runtime_state():
     app_tsx = (ROOT / "frontend" / "src" / "App.tsx").read_text(encoding="utf-8")
     tauri_config = (ROOT / "frontend" / "src-tauri" / "tauri.conf.json").read_text(encoding="utf-8")
 
-    assert 'shared_root.join("instances").join(&instance_id)' in main_rs
+    assert ".join(\"instances\").join(&instance_id)" in main_rs
+    assert "portable_data_root(&executable_dir, &legacy_root)" in main_rs
     assert 'backend_port_for_instance(instance_hash)' in main_rs
     assert 'RunEvent::ExitRequested { .. } | RunEvent::Exit' in main_rs
     assert '"--port"' in main_rs

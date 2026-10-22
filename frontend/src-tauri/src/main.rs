@@ -40,6 +40,110 @@ fn generate_token() -> String {
     token
 }
 
+fn install_dir() -> Result<std::path::PathBuf, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    Ok(exe.parent().unwrap_or_else(|| std::path::Path::new(".")).to_path_buf())
+}
+
+fn instance_name(dir: &std::path::Path) -> String {
+    std::fs::read_to_string(dir.join("instance-name.txt"))
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())
+}
+
+/// Other accounts = sibling folders that hold a copy of this app.
+#[tauri::command]
+fn list_instances() -> Result<Vec<(String, String, bool)>, String> {
+    let current = install_dir()?;
+    let parent = current.parent().ok_or("no parent folder")?;
+    let mut values = Vec::new();
+    for entry in std::fs::read_dir(parent).map_err(|e| e.to_string())?.flatten() {
+        let path = entry.path();
+        if path.join("telegram-desktop.exe").is_file() && path.join("telegram-desktop-backend.exe").is_file() {
+            values.push((instance_name(&path), path.to_string_lossy().into_owned(), path == current));
+        }
+    }
+    values.sort();
+    Ok(values)
+}
+
+fn copy_tree(source: &std::path::Path, target: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(target)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let destination = target.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_tree(&entry.path(), &destination)?;
+        } else {
+            std::fs::copy(entry.path(), destination)?;
+        }
+    }
+    Ok(())
+}
+
+/// Add Account: copy the program (never the account data) into a sibling
+/// folder and start it; the new window asks for the phone number.
+#[tauri::command]
+async fn add_instance(name: String) -> Result<(), String> {
+    let clean: String = name
+        .trim()
+        .chars()
+        .filter(|c| !"\\/:*?\"<>|".contains(*c) && !c.is_control())
+        .collect();
+    if clean.is_empty() {
+        return Err("نام حساب معتبر نیست.".into());
+    }
+    let current = install_dir()?;
+    let parent = current.parent().ok_or("no parent folder")?.to_path_buf();
+    let target = parent.join(&clean);
+    if target.exists() {
+        return Err("پوشه‌ای با این نام از قبل وجود دارد.".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        // Program files only: this account's data, session and ids stay here.
+        let private = ["data", "app.pid", "backend.pid", "instance-id.txt", "instance-name.txt", "telegram-session.session", "uninstall.exe"];
+        std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+        for entry in std::fs::read_dir(&current).map_err(|e| e.to_string())?.flatten() {
+            let file_name = entry.file_name();
+            if private.iter().any(|item| file_name.to_string_lossy().eq_ignore_ascii_case(item)) {
+                continue;
+            }
+            let destination = target.join(&file_name);
+            let result = if entry.path().is_dir() {
+                copy_tree(&entry.path(), &destination)
+            } else {
+                std::fs::copy(entry.path(), &destination).map(|_| ())
+            };
+            result.map_err(|e| e.to_string())?;
+        }
+        std::fs::write(target.join("instance-name.txt"), &clean).map_err(|e| e.to_string())?;
+        std::process::Command::new(target.join("telegram-desktop.exe"))
+            .current_dir(&target)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Switch account: open (or focus) the window of a sibling install.
+#[tauri::command]
+fn open_instance(path: String) -> Result<(), String> {
+    let dir = std::path::PathBuf::from(path);
+    let parent = install_dir()?.parent().map(|p| p.to_path_buf());
+    if dir.parent().map(|p| p.to_path_buf()) != parent {
+        return Err("not a sibling account".into());
+    }
+    std::process::Command::new(dir.join("telegram-desktop.exe"))
+        .current_dir(&dir)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn backend_token(token: tauri::State<'_, BackendToken>) -> String {
     token.0.clone()
@@ -225,7 +329,10 @@ fn main() {
             runtime_instance_id,
             close_current_window,
             backend_token,
-            open_external
+            open_external,
+            list_instances,
+            add_instance,
+            open_instance
         ]);
 
     #[cfg(not(debug_assertions))]

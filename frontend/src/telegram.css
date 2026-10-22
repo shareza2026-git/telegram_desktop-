@@ -281,3 +281,9 @@
 
 .call-missed { color: #e53935 !important; }
 .tg-info { margin: 0; color: #333; font-size: 14px; line-height: 1.7; text-align: right; }
+
+/* Channels you only read: Telegram shows Mute/Unmute instead of a composer. */
+.channel-bar { padding: 8px 12px 10px; }
+.channel-bar button { width: 100%; height: 46px; color: #40a7e3; background: #fff; border-radius: 23px; box-shadow: 0 1px 2px rgba(0, 0, 0, .15); font-size: 14px; font-weight: 600; letter-spacing: .4px; }
+.channel-bar button:hover { background: #f5f9fc; }
+.tg-add-account { display: flex; flex-direction: column; gap: 12px; }

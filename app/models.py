@@ -125,6 +125,8 @@ class ChatInfo(BaseModel):
     scam: bool = False
     fake: bool = False
     photo_available: bool = False
+    # False for channels you only read and groups where sending is banned.
+    can_post: bool = True
 
 
 class Message(BaseModel):

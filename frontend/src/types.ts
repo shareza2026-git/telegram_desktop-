@@ -56,6 +56,7 @@ export type ChatInfo = {
   scam: boolean
   fake: boolean
   photo_available: boolean
+  can_post?: boolean
 }
 
 export type MediaKind = 'photo' | 'video' | 'video_note' | 'gif' | 'sticker' | 'voice' | 'audio' | 'file' | 'other'

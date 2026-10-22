@@ -298,6 +298,10 @@ function App() {
   const [showProxyAdd, setShowProxyAdd] = useState(false)
   const [showAuthProxyManager, setShowAuthProxyManager] = useState(false)
   const [mainMenuOpen, setMainMenuOpen] = useState(false)
+  const verifyInFlightRef = useRef(false)
+  const [instances, setInstances] = useState<Array<[string, string, boolean]>>([])
+  const [newAccountName, setNewAccountName] = useState('')
+  const [addAccountBusy, setAddAccountBusy] = useState(false)
   const [transportStatus, setTransportStatus] = useState<TransportStatus | null>(null)
   const [deviceSessions, setDeviceSessions] = useState<DeviceSession[]>([])
   const [settingsBusy, setSettingsBusy] = useState(false)
@@ -1615,11 +1619,14 @@ function App() {
 
   async function verifyCode(event: FormEvent) {
     event.preventDefault()
+    // Auto-submit at 5 digits plus a click on "Next" must not send twice.
+    if (verifyInFlightRef.current) return
     if (!code.trim()) {
       setError('کد تأیید را وارد کنید.')
       return
     }
     setAuthBusy(true)
+    verifyInFlightRef.current = true
     setError('')
     try {
       const result = await api<AuthResponse>('/api/telegram/auth/verify-code', {
@@ -1635,6 +1642,7 @@ function App() {
     } catch (caught) {
       if (!await recoverLoginResponse()) setError(errorMessage(caught, 'تأیید کد انجام نشد.'))
     } finally {
+      verifyInFlightRef.current = false
       setAuthBusy(false)
     }
   }
@@ -1910,6 +1918,28 @@ function App() {
       setRelayError(errorMessage(caught, 'خروج از اکانت دوم انجام نشد.'))
     } finally {
       setRelayBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!mainMenuOpen || !('__TAURI_INTERNALS__' in window)) return
+    invoke<Array<[string, string, boolean]>>('list_instances').then(setInstances).catch(() => setInstances([]))
+  }, [mainMenuOpen])
+
+  async function addAccount(event: FormEvent) {
+    event.preventDefault()
+    const name = newAccountName.trim()
+    if (!name || addAccountBusy) return
+    setAddAccountBusy(true)
+    try {
+      await invoke('add_instance', { name })
+      setAddAccountOpen(false)
+      setNewAccountName('')
+      setError('پنجرهٔ حساب «' + name + '» باز شد؛ در آن پنجره وارد شوید.')
+    } catch (caught) {
+      setError(typeof caught === 'string' ? caught : errorMessage(caught, 'ساخت حساب جدید انجام نشد.'))
+    } finally {
+      setAddAccountBusy(false)
     }
   }
 
@@ -2847,6 +2877,15 @@ function App() {
               {totalUnread > 0 && <b className="menu-badge">{formatCompact(totalUnread)}</b>}
             </button>
             <hr />
+            {instances.filter(item => !item[2]).map(([name, path]) => (
+              <button className="menu-item menu-current-account" type="button" key={path} onClick={() => {
+                setMainMenuOpen(false)
+                invoke('open_instance', { path }).catch(() => setError('باز کردن این حساب انجام نشد.'))
+              }}>
+                <span className="avatar menu-small-avatar" style={{ background: '#8e99a4' }}><span className="avatar-fallback">{Array.from(name)[0]}</span></span>
+                <span>{name}</span>
+              </button>
+            ))}
             <button className="menu-item" type="button" onClick={() => { setMainMenuOpen(false); setAddAccountOpen(true) }}><Icon name="addAccount" /><span>Add Account</span></button>
             <hr />
             <button className="menu-item" type="button" onClick={openSelfChat}><Icon name="saved" /><span>Saved Messages</span></button>
@@ -3071,6 +3110,13 @@ function App() {
                 </button>
               )}
             </div>
+            {chatInfo && chatInfo.can_post === false ? (
+              <div className="channel-bar">
+                <button type="button" onClick={() => updateDialogState('mute', !selected.muted)} disabled={dialogActionBusy !== null}>
+                  {selected.muted ? 'UNMUTE' : 'MUTE'}
+                </button>
+              </div>
+            ) : (
             <div className="composer-shell">
               <input
                 ref={fileInputRef}
@@ -3193,6 +3239,7 @@ function App() {
                 </div>
               </form>
             </div>
+            )}
           </>
         ) : (
           <div className="empty-chat"><div className="brand-mark">✈</div><h2>یک گفتگو را انتخاب کنید</h2><p>پیام‌های تلگرام در اینجا نمایش داده می‌شوند.</p></div>
@@ -3593,11 +3640,20 @@ function App() {
               <div><strong>Add Account</strong></div>
               <button className="icon-button" type="button" aria-label="بستن" onClick={() => setAddAccountOpen(false)}>×</button>
             </header>
-            <p className="tg-info">
-              در این نسخه هر پوشهٔ برنامه یک حساب جداگانه است. برای حساب دوم، پوشهٔ برنامه را کپی کنید،
-              نسخهٔ کپی را اجرا کنید و با شمارهٔ دیگر وارد شوید. هر دو با هم و جدا از هم کار می‌کنند.
-            </p>
-            <button className="tg-login-next" type="button" onClick={() => setAddAccountOpen(false)}>OK</button>
+            <form onSubmit={addAccount} className="tg-add-account">
+              <input
+                className="tg-login-single"
+                value={newAccountName}
+                onChange={event => setNewAccountName(event.target.value)}
+                placeholder="Account name (e.g. Work)"
+                maxLength={40}
+                autoFocus
+              />
+              <p className="tg-info">یک نسخهٔ جدا کنار همین برنامه ساخته و در پنجرهٔ جدید باز می‌شود؛ آنجا با شمارهٔ دیگر وارد شوید.</p>
+              <button className="tg-login-next" type="submit" disabled={addAccountBusy || !newAccountName.trim()}>
+                {addAccountBusy ? <span className="tg-login-spinner" aria-label="در حال ساخت" /> : 'Add'}
+              </button>
+            </form>
           </section>
         </div>
       )}
