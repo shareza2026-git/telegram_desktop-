@@ -15,6 +15,11 @@ $version = (Get-Content (Join-Path $tauri 'tauri.conf.json') -Raw | ConvertFrom-
 foreach ($inputFile in @($ApiFile, $ProxyFile, $PythonExe, $XrayExe)) {
     if (-not (Test-Path -LiteralPath $inputFile -PathType Leaf)) { throw 'Required build input is missing.' }
 }
+# Resolve now: the build changes directory later, which broke relative paths.
+$ApiFile = (Resolve-Path -LiteralPath $ApiFile).Path
+$ProxyFile = (Resolve-Path -LiteralPath $ProxyFile).Path
+$PythonExe = (Resolve-Path -LiteralPath $PythonExe).Path
+$XrayExe = (Resolve-Path -LiteralPath $XrayExe).Path
 $proxyBuildFile = (Resolve-Path -LiteralPath $ProxyFile).Path
 if ($PreferredProxyIndex -gt 0) {
     $proxyPayload = Get-Content -LiteralPath $ProxyFile -Raw | ConvertFrom-Json
