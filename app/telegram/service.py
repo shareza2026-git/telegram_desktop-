@@ -362,6 +362,7 @@ class TelegramDesktopService:
                     route_options,
                     session=runtime_session,
                 )
+                self._make_entity_lookup_resilient(client)
                 await asyncio.wait_for(client.connect(), timeout=12.0)
                 authorized = await asyncio.wait_for(client.is_user_authorized(), timeout=8.0)
                 self.client = client
@@ -1277,7 +1278,13 @@ class TelegramDesktopService:
             self._no_photo = missing
         if time.monotonic() < missing.get(chat_id, 0):
             raise MediaUnavailable("Chat photo is not available")
-        entity = await client.get_entity(chat_id)
+        try:
+            entity = await client.get_entity(chat_id)
+        except ValueError:
+            # A group member Telegram has not described to us yet; their
+            # details arrive with the chat history, so retry soon.
+            missing[chat_id] = time.monotonic() + 120
+            raise MediaUnavailable("Chat photo is not available yet") from None
         photo = getattr(entity, "photo", None)
         if not photo or isinstance(photo, (types.UserProfilePhotoEmpty, types.ChatPhotoEmpty)):
             # Remember it: a chat list full of photo-less users must not cost
@@ -1440,6 +1447,41 @@ class TelegramDesktopService:
         finally:
             if tasks.get(key) is task and task.done():
                 tasks.pop(key, None)
+
+    def _make_entity_lookup_resilient(self, client: TelegramClient) -> None:
+        """Teach the client about a chat it has not seen yet instead of failing.
+
+        The runtime session lives in memory, so right after start Telethon does
+        not know any chat's access hash. Opening a chat before the dialog list
+        finished loading used to fail with "Could not find the input entity".
+        On such a miss, load the dialog list once (shared by all callers) and
+        retry; Telethon caches every entity it sees there.
+        """
+        original = client.get_input_entity
+
+        async def get_input_entity(peer):
+            try:
+                return await original(peer)
+            except ValueError:
+                if client is not self.client or not self.status.authorized:
+                    raise
+                # Only for chats in the user's list: an unknown group member
+                # (e.g. an avatar request) must not trigger a full rescan.
+                try:
+                    peer_id = int(utils.get_peer_id(peer))
+                except Exception:
+                    raise
+                if not any(item.chat_id == peer_id for item in self._dialog_snapshot):
+                    raise
+                task = self._dialog_scan_task
+                if task is None or task.done():
+                    task = asyncio.create_task(self._scan_dialogs())
+                    self._dialog_scan_task = task
+                with suppress(Exception):
+                    await asyncio.wait_for(asyncio.shield(task), timeout=20.0)
+                return await original(peer)
+
+        client.get_input_entity = get_input_entity
 
     async def _scan_dialogs(self) -> list[Dialog]:
         client = self._require_authorized()

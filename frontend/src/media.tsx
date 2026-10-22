@@ -4,14 +4,21 @@ import { avatarUrl, mediaUrl } from './backend'
 import { formatBytes, formatDuration, mediaKindLabel, senderColor } from './format'
 import type { MediaState, Message } from './types'
 
-// Avatars that 404'd this session; never ask the backend for them again.
-const missingAvatars = new Set<number>()
+// Avatars that failed recently: chat id -> retry time. A member's photo can
+// become available once their details arrive, so failures expire.
+const missingAvatars = new Map<number, number>()
+const AVATAR_RETRY_MS = 3 * 60 * 1000
+
+function avatarMissing(chatId: number) {
+  const until = missingAvatars.get(chatId)
+  return until !== undefined && until > Date.now()
+}
 
 function AvatarView({ chatId, title, className = '' }: { chatId: number; title: string; className?: string }) {
-  const [failed, setFailed] = useState(() => missingAvatars.has(chatId))
+  const [failed, setFailed] = useState(() => avatarMissing(chatId))
 
   useEffect(() => {
-    setFailed(missingAvatars.has(chatId))
+    setFailed(avatarMissing(chatId))
   }, [chatId])
 
   return (
@@ -25,7 +32,7 @@ function AvatarView({ chatId, title, className = '' }: { chatId: number; title: 
           decoding="async"
           draggable={false}
           onError={() => {
-            missingAvatars.add(chatId)
+            missingAvatars.set(chatId, Date.now() + AVATAR_RETRY_MS)
             setFailed(true)
           }}
         />
