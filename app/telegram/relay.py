@@ -13,6 +13,7 @@ from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
 
 from telethon.errors import SessionPasswordNeededError
+from telethon.tl.types import MessageMediaWebPage
 
 from app.models import DesktopError
 from app.telegram.client import build_client
@@ -225,7 +226,8 @@ class RelayStore:
     def _retry_failed(self) -> int:
         with self._connect() as connection:
             sent = connection.execute(
-                "UPDATE relay_deliveries SET status='pending', error_code=NULL WHERE status='failed'"
+                "UPDATE relay_deliveries SET status='pending', error_code=NULL "
+                "WHERE status='failed' OR (status='blocked' AND error_code='CONTENT_PROTECTED')"
             ).rowcount
             deleted = connection.execute(
                 "UPDATE relay_deliveries SET status='delete_pending', error_code=NULL WHERE status='delete_failed'"
@@ -551,20 +553,12 @@ class RelayService:
             if message is None:
                 await self.store.finish(mapping_id, message_id, "failed", error_code="SOURCE_MISSING")
                 return
-            if getattr(message, "noforwards", False):
-                await self.store.finish(mapping_id, message_id, "blocked", error_code="CONTENT_PROTECTED")
-                return
-            if getattr(getattr(message, "chat", None), "noforwards", False):
-                await self.store.finish(mapping_id, message_id, "blocked", error_code="CONTENT_PROTECTED")
-                return
             if await self.store.is_source_deleted(source_id, message_id):
                 return
             text = str(getattr(message, "raw_text", None) or "")
-            if getattr(message, "media", None):
-                size = int(getattr(getattr(message, "file", None), "size", 0) or 0)
-                if size > 100 * 1024 * 1024:
-                    await self.store.finish(mapping_id, message_id, "failed", error_code="MEDIA_TOO_LARGE")
-                    return
+            media = getattr(message, "media", None)
+            # Link previews are sent as text, not downloaded as file attachments.
+            if media and not isinstance(media, MessageMediaWebPage):
                 source = self.primary._require_authorized()
                 with TemporaryDirectory(prefix="relay-", dir=self.settings.data_root) as directory:
                     path = await source.download_media(message, file=directory)
