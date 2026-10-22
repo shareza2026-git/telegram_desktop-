@@ -85,6 +85,38 @@ fn instance_identity(executable_dir: &std::path::Path) -> (String, u64) {
 }
 
 #[cfg(not(debug_assertions))]
+fn copy_dir(source: &std::path::Path, target: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(target)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let destination = target.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir(&entry.path(), &destination)?;
+        } else if !destination.exists() {
+            std::fs::copy(entry.path(), destination)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(debug_assertions))]
+fn portable_data_root(executable_dir: &std::path::Path, legacy_root: &std::path::Path) -> std::path::PathBuf {
+    let portable = executable_dir.join("data");
+    let probe = portable.join(".write-test");
+    let writable = std::fs::create_dir_all(&portable).is_ok()
+        && std::fs::write(&probe, b"ok").is_ok();
+    let _ = std::fs::remove_file(&probe);
+    if !writable {
+        return legacy_root.to_path_buf();
+    }
+    let has_session = portable.join("accounts").join("default").join("client.session").is_file();
+    if !has_session && legacy_root.is_dir() {
+        let _ = copy_dir(legacy_root, &portable);
+    }
+    portable
+}
+
+#[cfg(not(debug_assertions))]
 fn backend_port_for_instance(hash: u64) -> u16 {
     // Stable port per executable folder. Reopening the same instance must never
     // create a second backend against the same Telegram session/database.
@@ -210,8 +242,13 @@ fn main() {
         let (instance_id, instance_hash) = instance_identity(&executable_dir);
         let backend_port = backend_port_for_instance(instance_hash);
         std::fs::write(executable_dir.join("instance-id.txt"), &instance_id)?;
-        let shared_root = app.path().app_data_dir()?;
-        let data_root = shared_root.join("instances").join(&instance_id);
+        // All state lives in a "data" folder inside the install folder, so
+        // copying the folder to another PC moves the account, settings and
+        // cache with it, and installing an update over it keeps everything.
+        // Older builds kept it in AppData; move that once. If the folder is
+        // not writable (e.g. Program Files), fall back to AppData.
+        let legacy_root = app.path().app_data_dir()?.join("instances").join(&instance_id);
+        let data_root = portable_data_root(&executable_dir, &legacy_root);
         std::fs::create_dir_all(&data_root)?;
         app.manage(RuntimeState {
             backend_port,

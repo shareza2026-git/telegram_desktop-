@@ -590,6 +590,10 @@ Section Uninstall
     Delete "$SMPROGRAMS\$InstanceName.lnk"
   ${EndIf}
 
+  ; This instance's account, settings and cache (kept inside its own folder).
+  RmDir /r "$INSTDIR\data"
+  RMDir "$INSTDIR"
+
   ; Remove only this folder-derived AppData instance. Never delete sibling instances.
   ${If} $InstanceId != ""
     SetShellVarContext current
