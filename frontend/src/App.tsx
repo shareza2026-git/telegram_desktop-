@@ -302,6 +302,8 @@ function App() {
   const [instances, setInstances] = useState<Array<[string, string, boolean]>>([])
   const [newAccountName, setNewAccountName] = useState('')
   const [addAccountBusy, setAddAccountBusy] = useState(false)
+  const [addAccountError, setAddAccountError] = useState('')
+  const [newAccountCountry, setNewAccountCountry] = useState('+98')
   const [transportStatus, setTransportStatus] = useState<TransportStatus | null>(null)
   const [deviceSessions, setDeviceSessions] = useState<DeviceSession[]>([])
   const [settingsBusy, setSettingsBusy] = useState(false)
@@ -1600,6 +1602,10 @@ function App() {
       setError('شماره تلفن را وارد کنید.')
       return
     }
+    await requestCode(value)
+  }
+
+  async function requestCode(value: string) {
     setAuthBusy(true)
     setError('')
     setAuthNotice('')
@@ -1921,6 +1927,23 @@ function App() {
     }
   }
 
+  const pendingLoginRef = useRef<string | null | undefined>(undefined)
+  useEffect(() => {
+    if (!status || status.authorized || status.state !== 'AUTH_REQUIRED' || !('__TAURI_INTERNALS__' in window)) return
+    if (pendingLoginRef.current !== undefined) return
+    pendingLoginRef.current = null
+    invoke<string | null>('take_pending_login').then(value => {
+      if (!value) return
+      const digits = value.replace(/\D/g, '')
+      const code = Object.keys(COUNTRY_NAMES).filter(item => digits.startsWith(item.slice(1))).sort((a, b) => b.length - a.length)[0]
+      if (code) {
+        setCountryCode(code)
+        setPhone(digits.slice(code.length - 1))
+      }
+      void requestCode('+' + digits)
+    }).catch(() => undefined)
+  }, [status?.state, status?.authorized])
+
   useEffect(() => {
     if (!mainMenuOpen || !('__TAURI_INTERNALS__' in window)) return
     invoke<Array<[string, string, boolean]>>('list_instances').then(setInstances).catch(() => setInstances([]))
@@ -1928,16 +1951,21 @@ function App() {
 
   async function addAccount(event: FormEvent) {
     event.preventDefault()
-    const name = newAccountName.trim()
-    if (!name || addAccountBusy) return
+    const digits = newAccountName.replace(/\D/g, '').replace(/^0+/, '')
+    if (digits.length < 6 || addAccountBusy) {
+      setAddAccountError('شماره تلفن را کامل وارد کنید.')
+      return
+    }
+    const fullPhone = newAccountCountry + digits
     setAddAccountBusy(true)
+    setAddAccountError('')
     try {
-      await invoke('add_instance', { name })
+      // A separate copy of the app for this account, opened at the code step.
+      await invoke('add_instance', { name: 'Telegram ' + fullPhone, phone: fullPhone })
       setAddAccountOpen(false)
       setNewAccountName('')
-      setError('پنجرهٔ حساب «' + name + '» باز شد؛ در آن پنجره وارد شوید.')
     } catch (caught) {
-      setError(typeof caught === 'string' ? caught : errorMessage(caught, 'ساخت حساب جدید انجام نشد.'))
+      setAddAccountError(typeof caught === 'string' ? caught : errorMessage(caught, 'ساخت حساب جدید انجام نشد.'))
     } finally {
       setAddAccountBusy(false)
     }
@@ -3634,27 +3662,38 @@ function App() {
       )}
 
       {addAccountOpen && (
-        <div className="forward-backdrop" onMouseDown={() => setAddAccountOpen(false)}>
-          <section className="forward-modal tg-panel tg-create" role="dialog" aria-modal="true" onMouseDown={event => event.stopPropagation()}>
-            <header>
-              <div><strong>Add Account</strong></div>
-              <button className="icon-button" type="button" aria-label="بستن" onClick={() => setAddAccountOpen(false)}>×</button>
-            </header>
-            <form onSubmit={addAccount} className="tg-add-account">
-              <input
-                className="tg-login-single"
-                value={newAccountName}
-                onChange={event => setNewAccountName(event.target.value)}
-                placeholder="Account name (e.g. Work)"
-                maxLength={40}
-                autoFocus
-              />
-              <p className="tg-info">یک نسخهٔ جدا کنار همین برنامه ساخته و در پنجرهٔ جدید باز می‌شود؛ آنجا با شمارهٔ دیگر وارد شوید.</p>
-              <button className="tg-login-next" type="submit" disabled={addAccountBusy || !newAccountName.trim()}>
-                {addAccountBusy ? <span className="tg-login-spinner" aria-label="در حال ساخت" /> : 'Add'}
+        <div className="tg-add-account-screen auth-screen tg-login">
+          <button className="tg-add-account-back" type="button" aria-label="بازگشت" onClick={() => !addAccountBusy && setAddAccountOpen(false)}>←</button>
+          <div className="auth-card">
+            <div className="brand-mark tg-login-logo"><span className="paper-plane" aria-hidden="true" /></div>
+            <h1>Your Phone Number</h1>
+            <p className="tg-login-lead">Please confirm your country code and enter your phone number.</p>
+            <form className="auth-form" onSubmit={addAccount}>
+              <div className="tg-login-country" dir="ltr"><span>{countryName(newAccountCountry)}</span></div>
+              <div className="tg-login-phone" dir="ltr">
+                <input
+                  className="tg-login-code"
+                  value={newAccountCountry}
+                  onChange={event => setNewAccountCountry('+' + event.target.value.replace(/\D/g, '').slice(0, 4))}
+                  inputMode="numeric"
+                  aria-label="کد کشور"
+                />
+                <input
+                  value={newAccountName}
+                  onChange={event => setNewAccountName(event.target.value.replace(/[^\d ]/g, ''))}
+                  placeholder="--- --- ----"
+                  inputMode="tel"
+                  aria-label="شماره تلفن"
+                  autoFocus
+                />
+              </div>
+              {addAccountError && <small className="tg-login-error">{addAccountError}</small>}
+              <button className="tg-login-next" type="submit" disabled={addAccountBusy}>
+                {addAccountBusy ? <span className="tg-login-spinner" aria-label="در حال آماده‌سازی" /> : 'NEXT'}
               </button>
+              {addAccountBusy && <small className="tg-login-connecting">در حال آماده‌سازی حساب جدید… چند ثانیه صبر کنید</small>}
             </form>
-          </section>
+          </div>
         </div>
       )}
 

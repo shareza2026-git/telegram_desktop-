@@ -287,3 +287,8 @@
 .channel-bar button { width: 100%; height: 46px; color: #40a7e3; background: #fff; border-radius: 23px; box-shadow: 0 1px 2px rgba(0, 0, 0, .15); font-size: 14px; font-weight: 600; letter-spacing: .4px; }
 .channel-bar button:hover { background: #f5f9fc; }
 .tg-add-account { display: flex; flex-direction: column; gap: 12px; }
+
+/* Add Account: Telegram's own phone page, over the app */
+.tg-add-account-screen { position: fixed; inset: 0; z-index: 90; }
+.tg-add-account-back { position: absolute; top: 14px; left: 16px; width: 36px; height: 36px; color: #707579; background: transparent; border-radius: 50%; font-size: 20px; }
+.tg-add-account-back:hover { background: #f1f1f1; }

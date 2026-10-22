@@ -86,7 +86,7 @@ fn copy_tree(source: &std::path::Path, target: &std::path::Path) -> std::io::Res
 /// Add Account: copy the program (never the account data) into a sibling
 /// folder and start it; the new window asks for the phone number.
 #[tauri::command]
-async fn add_instance(name: String) -> Result<(), String> {
+async fn add_instance(name: String, phone: Option<String>) -> Result<(), String> {
     let clean: String = name
         .trim()
         .chars()
@@ -103,7 +103,7 @@ async fn add_instance(name: String) -> Result<(), String> {
     }
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
         // Program files only: this account's data, session and ids stay here.
-        let private = ["data", "app.pid", "backend.pid", "instance-id.txt", "instance-name.txt", "telegram-session.session", "uninstall.exe"];
+        let private = ["data", "app.pid", "backend.pid", "instance-id.txt", "instance-name.txt", "telegram-session.session", "uninstall.exe", "pending-login.txt"];
         std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
         for entry in std::fs::read_dir(&current).map_err(|e| e.to_string())?.flatten() {
             let file_name = entry.file_name();
@@ -119,6 +119,9 @@ async fn add_instance(name: String) -> Result<(), String> {
             result.map_err(|e| e.to_string())?;
         }
         std::fs::write(target.join("instance-name.txt"), &clean).map_err(|e| e.to_string())?;
+        if let Some(phone) = phone.as_ref().filter(|value| !value.trim().is_empty()) {
+            std::fs::write(target.join("pending-login.txt"), phone.trim()).map_err(|e| e.to_string())?;
+        }
         std::process::Command::new(target.join("telegram-desktop.exe"))
             .current_dir(&target)
             .spawn()
@@ -127,6 +130,15 @@ async fn add_instance(name: String) -> Result<(), String> {
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Phone number handed over by Add Account; read once, then removed.
+#[tauri::command]
+fn take_pending_login() -> Option<String> {
+    let path = install_dir().ok()?.join("pending-login.txt");
+    let value = std::fs::read_to_string(&path).ok()?;
+    let _ = std::fs::remove_file(&path);
+    Some(value.trim().to_string()).filter(|value| !value.is_empty())
 }
 
 /// Switch account: open (or focus) the window of a sibling install.
@@ -332,7 +344,8 @@ fn main() {
             open_external,
             list_instances,
             add_instance,
-            open_instance
+            open_instance,
+            take_pending_login
         ]);
 
     #[cfg(not(debug_assertions))]
