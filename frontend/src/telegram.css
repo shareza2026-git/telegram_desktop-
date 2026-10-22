@@ -268,3 +268,13 @@
 .menu-current-account { position: relative; }
 .menu-current-account .menu-small-avatar { width: 28px; height: 28px; flex: 0 0 28px; font-size: 12px; margin-inline-start: -2px; }
 .menu-badge { margin-inline-start: auto; padding: 1px 8px; color: #fff; background: #40a7e3; border-radius: 10px; font-size: 12px; }
+
+/* Menu spacing as in Telegram Desktop; no sideways scroll in chats */
+.message-list { overflow-x: hidden; }
+.unread-divider { margin: 8px 0; }
+.main-menu-drawer .menu-account { height: auto; min-height: 0; padding: 14px 16px 8px; }
+.main-menu-drawer .menu-item { min-height: 40px; padding: 0 16px; gap: 18px; font-size: 14.5px; color: #000; }
+.main-menu-drawer .tg-icon { width: 22px; height: 22px; flex-basis: 22px; color: #3c3c3c; }
+.main-menu-drawer hr { margin: 4px 0; }
+.menu-current-account { min-height: 36px !important; }
+.menu-current-account .menu-small-avatar { width: 24px; height: 24px; flex-basis: 24px; }

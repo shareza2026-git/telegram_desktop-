@@ -2820,10 +2820,12 @@ function App() {
               {totalUnread > 0 && <b className="menu-badge">{formatCompact(totalUnread)}</b>}
             </button>
             <hr />
+            <button className="menu-item" type="button" onClick={openSelfChat}><Icon name="saved" /><span>Saved Messages</span></button>
+            <button className="menu-item" type="button" onClick={() => void openSettings()}><Icon name="account" /><span>My Profile</span></button>
+            <hr />
             <button className="menu-item" type="button" onClick={() => openCreateChat('group')}><Icon name="group" /><span>New Group</span></button>
             <button className="menu-item" type="button" onClick={() => openCreateChat('channel')}><Icon name="channel" /><span>New Channel</span></button>
             <button className="menu-item" type="button" onClick={() => void openContacts()}><Icon name="contacts" /><span>Contacts</span></button>
-            <button className="menu-item" type="button" onClick={openSelfChat}><Icon name="saved" /><span>Saved Messages</span></button>
             <button className="menu-item" type="button" onClick={() => void openSettings()}><Icon name="settings" /><span>Settings</span></button>
           </nav>
         </div>
