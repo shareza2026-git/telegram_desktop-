@@ -852,6 +852,48 @@ class TelegramDesktopService:
         await self.store.upsert_dialog(dialog)
         return dialog
 
+    async def call_history(self) -> list[dict]:
+        """Recent calls, read the way Telegram apps do (phone-call search)."""
+        client = self._require_authorized()
+        result = await client(
+            functions.messages.SearchRequest(
+                peer=types.InputPeerEmpty(), q="", filter=types.InputMessagesFilterPhoneCalls(missed=False),
+                min_date=None, max_date=None, offset_id=0, add_offset=0, limit=60, max_id=0, min_id=0, hash=0,
+            )
+        )
+        users = {int(user.id): user for user in getattr(result, "users", None) or []}
+        calls = []
+        for message in getattr(result, "messages", None) or []:
+            action = getattr(message, "action", None)
+            if not isinstance(action, types.MessageActionPhoneCall):
+                continue
+            chat_id = int(utils.get_peer_id(message.peer_id))
+            user = users.get(chat_id)
+            reason = type(getattr(action, "reason", None)).__name__
+            calls.append({
+                "chat_id": chat_id,
+                "title": self._entity_title(user, chat_id) if user is not None else str(chat_id),
+                "date": self._as_utc(message.date).isoformat(),
+                "outgoing": bool(message.out),
+                "missed": reason in {"PhoneCallDiscardReasonMissed", "PhoneCallDiscardReasonBusy"},
+                "video": bool(getattr(action, "video", False)),
+                "duration": int(getattr(action, "duration", 0) or 0),
+            })
+        return calls
+
+    async def resolve_username(self, username: str) -> Dialog:
+        client = self._require_authorized()
+        try:
+            entity = await client.get_entity(username.strip().lstrip("@"))
+        except Exception:
+            raise MediaUnavailable("این نام کاربری پیدا نشد.") from None
+        chat_id = int(utils.get_peer_id(entity))
+        known = next((item for item in self._dialog_snapshot if item.chat_id == chat_id), None)
+        if known is not None:
+            return known
+        return Dialog(chat_id=chat_id, title=self._entity_title(entity, chat_id),
+                      dialog_type=self._entity_dialog_type(entity), username=getattr(entity, "username", None))
+
     async def set_dialog_priority(self, chat_id: int, enabled: bool) -> dict:
         title = next((item.title for item in self._dialog_snapshot if item.chat_id == chat_id), "")
         await asyncio.to_thread(self.priority.set, chat_id, title, enabled)
@@ -1457,7 +1499,9 @@ class TelegramDesktopService:
         On such a miss, load the dialog list once (shared by all callers) and
         retry; Telethon caches every entity it sees there.
         """
-        original = client.get_input_entity
+        original = getattr(client, "get_input_entity", None)
+        if original is None:
+            return
 
         async def get_input_entity(peer):
             try:

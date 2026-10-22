@@ -21,7 +21,9 @@ const PATHS: Record<string, string> = {
   mute: 'M4 9h4l5-4v14l-5-4H4zm13 0 4 6m0-6-4 6',
   archive: 'M4 5h16v4H4zm1 4v10h14V9m-9 4h4',
   window: 'M4 5h16v14H4zm0 4h16',
-  search: 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14Zm5-2 4 4'
+  search: 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14Zm5-2 4 4',
+  chats: 'M4 5h16v11H9l-5 4V5Z',
+  addAccount: 'M10 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 8a7 7 0 0 1 11-5.7M18 14v6m-3-3h6'
 }
 
 export function Icon({ name, className = '' }: { name: keyof typeof PATHS | string; className?: string }) {

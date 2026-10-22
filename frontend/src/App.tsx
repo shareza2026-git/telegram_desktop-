@@ -31,6 +31,7 @@ import type {
   AuthStep,
   ChatAction,
   ChatInfo,
+  CallEntry,
   ContactInfo,
   DeviceSession,
   Dialog,
@@ -242,6 +243,9 @@ function App() {
   const [viewerMessage, setViewerMessage] = useState<Message | null>(null)
   const [countryCode, setCountryCode] = useState('+98')
   const [contactsOpen, setContactsOpen] = useState(false)
+  const [addAccountOpen, setAddAccountOpen] = useState(false)
+  const [calls, setCalls] = useState<CallEntry[] | null>(null)
+  const [callsOpen, setCallsOpen] = useState(false)
   const [contacts, setContacts] = useState<ContactInfo[] | null>(null)
   const [contactsQuery, setContactsQuery] = useState('')
   const [createKind, setCreateKind] = useState<'group' | 'channel' | null>(null)
@@ -1909,6 +1913,29 @@ function App() {
     }
   }
 
+  async function openCalls() {
+    setMainMenuOpen(false)
+    setCalls(null)
+    setCallsOpen(true)
+    try {
+      setCalls(await api<CallEntry[]>('/api/telegram/calls'))
+    } catch (caught) {
+      setCalls([])
+      setError(errorMessage(caught, 'فهرست تماس‌ها دریافت نشد.'))
+    }
+  }
+
+  async function openUsername(username: string) {
+    setMainMenuOpen(false)
+    try {
+      const dialog = await api<Dialog>('/api/telegram/resolve/' + encodeURIComponent(username))
+      if (!dialogsRef.current.some(item => item.chat_id === dialog.chat_id)) setDialogs(current => [dialog, ...current])
+      openDialog(dialog)
+    } catch (caught) {
+      setError(errorMessage(caught, 'باز کردن کانال انجام نشد.'))
+    }
+  }
+
   async function openContacts() {
     setMainMenuOpen(false)
     setContactsQuery('')
@@ -2820,13 +2847,20 @@ function App() {
               {totalUnread > 0 && <b className="menu-badge">{formatCompact(totalUnread)}</b>}
             </button>
             <hr />
+            <button className="menu-item" type="button" onClick={() => { setMainMenuOpen(false); setAddAccountOpen(true) }}><Icon name="addAccount" /><span>Add Account</span></button>
+            <hr />
             <button className="menu-item" type="button" onClick={openSelfChat}><Icon name="saved" /><span>Saved Messages</span></button>
             <button className="menu-item" type="button" onClick={() => void openSettings()}><Icon name="account" /><span>My Profile</span></button>
             <hr />
             <button className="menu-item" type="button" onClick={() => openCreateChat('group')}><Icon name="group" /><span>New Group</span></button>
             <button className="menu-item" type="button" onClick={() => openCreateChat('channel')}><Icon name="channel" /><span>New Channel</span></button>
+            <button className="menu-item" type="button" onClick={() => setMainMenuOpen(false)}><Icon name="chats" /><span>Chats</span></button>
             <button className="menu-item" type="button" onClick={() => void openContacts()}><Icon name="contacts" /><span>Contacts</span></button>
+            <button className="menu-item" type="button" onClick={() => void openCalls()}><Icon name="calls" /><span>Calls</span></button>
             <button className="menu-item" type="button" onClick={() => void openSettings()}><Icon name="settings" /><span>Settings</span></button>
+            <hr />
+            <button className="menu-item" type="button" onClick={() => { setMainMenuOpen(false); openLink('https://telegram.org/tour') }}><Icon name="help" /><span>Telegram Features</span></button>
+            <button className="menu-item" type="button" onClick={() => void openUsername('telegram')}><Icon name="channel" /><span>News</span></button>
           </nav>
         </div>
       )}
@@ -3517,6 +3551,53 @@ function App() {
               ))}
               {contacts?.length === 0 && <div className="search-empty">مخاطبی پیدا نشد.</div>}
             </div>
+          </section>
+        </div>
+      )}
+
+      {callsOpen && (
+        <div className="forward-backdrop" onMouseDown={() => setCallsOpen(false)}>
+          <section className="forward-modal tg-panel" role="dialog" aria-modal="true" aria-label="Calls" onMouseDown={event => event.stopPropagation()}>
+            <header>
+              <div><strong>Calls</strong></div>
+              <button className="icon-button" type="button" aria-label="بستن" onClick={() => setCallsOpen(false)}>×</button>
+            </header>
+            <div className="forward-dialogs">
+              {calls === null && <div className="search-empty">در حال دریافت…</div>}
+              {calls?.map((call, index) => (
+                <button className="forward-dialog-row" type="button" key={index} onClick={() => {
+                  setCallsOpen(false)
+                  openContact({ chat_id: call.chat_id, title: call.title })
+                }}>
+                  <ChatAvatar chatId={call.chat_id} title={call.title} />
+                  <span>
+                    <strong className={call.missed ? 'call-missed' : ''}>{call.title}</strong>
+                    <small>
+                      {(call.outgoing ? '↗ ' : '↙ ') + (call.video ? 'Video · ' : '')}
+                      {new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(call.date))}
+                      {call.duration ? ' · ' + Math.floor(call.duration / 60) + ':' + String(call.duration % 60).padStart(2, '0') : call.missed ? ' · Missed' : ''}
+                    </small>
+                  </span>
+                </button>
+              ))}
+              {calls?.length === 0 && <div className="search-empty">تماسی ثبت نشده است.</div>}
+            </div>
+          </section>
+        </div>
+      )}
+
+      {addAccountOpen && (
+        <div className="forward-backdrop" onMouseDown={() => setAddAccountOpen(false)}>
+          <section className="forward-modal tg-panel tg-create" role="dialog" aria-modal="true" onMouseDown={event => event.stopPropagation()}>
+            <header>
+              <div><strong>Add Account</strong></div>
+              <button className="icon-button" type="button" aria-label="بستن" onClick={() => setAddAccountOpen(false)}>×</button>
+            </header>
+            <p className="tg-info">
+              در این نسخه هر پوشهٔ برنامه یک حساب جداگانه است. برای حساب دوم، پوشهٔ برنامه را کپی کنید،
+              نسخهٔ کپی را اجرا کنید و با شمارهٔ دیگر وارد شوید. هر دو با هم و جدا از هم کار می‌کنند.
+            </p>
+            <button className="tg-login-next" type="button" onClick={() => setAddAccountOpen(false)}>OK</button>
           </section>
         </div>
       )}

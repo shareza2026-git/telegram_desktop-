@@ -230,6 +230,16 @@ export type DeviceSession = {
   region?: string | null
 }
 
+export type CallEntry = {
+  chat_id: number
+  title: string
+  date: string
+  outgoing: boolean
+  missed: boolean
+  video: boolean
+  duration: number
+}
+
 export type ContactInfo = {
   chat_id: number
   title: string

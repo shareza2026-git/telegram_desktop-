@@ -173,6 +173,22 @@ async def contacts(request: Request):
         raise error_response(exc) from None
 
 
+@router.get("/api/telegram/calls")
+async def calls(request: Request):
+    try:
+        return await service(request).call_history()
+    except DesktopError as exc:
+        raise error_response(exc) from None
+
+
+@router.get("/api/telegram/resolve/{username}")
+async def resolve_username(username: str, request: Request):
+    try:
+        return await service(request).resolve_username(username)
+    except DesktopError as exc:
+        raise error_response(exc) from None
+
+
 @router.post("/api/telegram/chats/create")
 async def create_chat(values: CreateChatRequest, request: Request):
     try:

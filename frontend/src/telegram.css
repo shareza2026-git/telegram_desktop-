@@ -278,3 +278,6 @@
 .main-menu-drawer hr { margin: 4px 0; }
 .menu-current-account { min-height: 36px !important; }
 .menu-current-account .menu-small-avatar { width: 24px; height: 24px; flex-basis: 24px; }
+
+.call-missed { color: #e53935 !important; }
+.tg-info { margin: 0; color: #333; font-size: 14px; line-height: 1.7; text-align: right; }
